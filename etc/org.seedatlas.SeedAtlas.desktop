@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Seed Atlas
+Comment=Minecraft seed finder and map viewer
+Exec=seed-atlas
+Icon=org.seedatlas.SeedAtlas
+Terminal=false
+StartupNotify=false
+Categories=Game;Qt;

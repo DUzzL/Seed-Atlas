@@ -1,0 +1,782 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="minimumSize">
+   <size>
+    <width>1024</width>
+    <height>680</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Seed Atlas</string>
+  </property>
+  <property name="windowIcon">
+   <iconset resource="../rc/icons.qrc">
+    <normaloff>:/icons/logo.png</normaloff>:/icons/logo.png</iconset>
+  </property>
+  <widget class="QWidget" name="centralWidget">
+   <layout class="QGridLayout" name="gridLayout_6">
+    <property name="spacing">
+     <number>0</number>
+    </property>
+    <property name="leftMargin">
+     <number>0</number>
+    </property>
+    <property name="topMargin">
+     <number>0</number>
+    </property>
+    <property name="rightMargin">
+     <number>0</number>
+    </property>
+    <property name="bottomMargin">
+     <number>0</number>
+    </property>
+    <item row="0" column="0">
+     <widget class="QSplitter" name="splitterMap">
+      <property name="orientation">
+       <enum>Qt::Horizontal</enum>
+      </property>
+      <widget class="QFrame" name="controlFrame">
+       <property name="frameShape">
+        <enum>QFrame::NoFrame</enum>
+       </property>
+       <layout class="QVBoxLayout" name="verticalLayout_5">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+        <item>
+         <layout class="QGridLayout" name="gridMCSeed">
+          <property name="horizontalSpacing">
+           <number>10</number>
+          </property>
+          <property name="verticalSpacing">
+           <number>8</number>
+          </property>
+          <property name="leftMargin">
+           <number>14</number>
+          </property>
+          <property name="topMargin">
+           <number>12</number>
+          </property>
+          <property name="rightMargin">
+           <number>14</number>
+          </property>
+          <property name="bottomMargin">
+           <number>10</number>
+          </property>
+          <item row="1" column="0" colspan="2">
+           <widget class="QCheckBox" name="checkLarge">
+            <property name="text">
+             <string>Large biomes</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="StyledComboBox" name="comboBoxMC">
+            <property name="toolTip">
+             <string>Minecraft version</string>
+            </property>
+            <property name="minimumContentsLength">
+             <number>8</number>
+            </property>
+            <property name="iconSize">
+             <size>
+              <width>0</width>
+              <height>16</height>
+             </size>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="7">
+           <widget class="StyledComboBox" name="comboY">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="editable">
+             <bool>true</bool>
+            </property>
+            <property name="maxVisibleItems">
+             <number>12</number>
+            </property>
+            <item>
+             <property name="text">
+              <string>256 (Surface)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>128 (Nether Roof)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>62 (Sea Level)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>48</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>32</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>16</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>0</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>-16</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>-32</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>-48</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>-64 (Bedrock)</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelMC">
+            <property name="toolTip">
+             <string>Minecraft version</string>
+            </property>
+            <property name="text">
+             <string>MC</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="7">
+           <layout class="QHBoxLayout" name="horizontalLayout_2">
+            <property name="spacing">
+             <number>0</number>
+            </property>
+            <item>
+             <widget class="QLineEdit" name="seedEdit">
+              <property name="toolTip">
+               <string>Press enter to accept</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="3">
+           <widget class="QLabel" name="labelY">
+            <property name="toolTip">
+             <string>Show map for this y-level</string>
+            </property>
+            <property name="text">
+             <string>Y:</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="2">
+           <widget class="QLabel" name="labelMono">
+            <property name="font">
+             <font>
+              <family>Courier New</family>
+             </font>
+            </property>
+            <property name="text">
+             <string/>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="2" colspan="2">
+           <widget class="QLabel" name="labelSeed">
+            <property name="toolTip">
+             <string>Seed can be an integer or text. Leave empty for a random seed</string>
+            </property>
+            <property name="text">
+             <string>seed:</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QTabWidget" name="tabContainer">
+          <property name="documentMode">
+           <bool>true</bool>
+          </property>
+          <property name="currentIndex">
+           <number>0</number>
+          </property>
+          <widget class="QWidget" name="tabSearch">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <attribute name="title">
+            <string>Search</string>
+           </attribute>
+           <layout class="QGridLayout" name="gridLayout_3">
+            <property name="leftMargin">
+             <number>0</number>
+            </property>
+            <item row="0" column="0">
+             <widget class="QSplitter" name="splitterSearch">
+              <property name="orientation">
+               <enum>Qt::Vertical</enum>
+              </property>
+              <widget class="Collapsible" name="collapseConstraints" native="true">
+               <property name="sizePolicy">
+                <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+                 <horstretch>0</horstretch>
+                 <verstretch>0</verstretch>
+                </sizepolicy>
+               </property>
+              </widget>
+              <widget class="QWidget" name="gridLayoutWidget">
+               <layout class="QGridLayout" name="gridLayout">
+                <property name="leftMargin">
+                 <number>18</number>
+                </property>
+                <item row="0" column="0">
+                 <widget class="QTabWidget" name="tabContainerSearch">
+                  <property name="currentIndex">
+                   <number>0</number>
+                  </property>
+                  <widget class="QWidget" name="tabSeeds">
+                   <attribute name="title">
+                    <string>Seeds</string>
+                   </attribute>
+                   <layout class="QGridLayout" name="gridLayout_2">
+                    <property name="leftMargin">
+                     <number>0</number>
+                    </property>
+                    <property name="bottomMargin">
+                     <number>0</number>
+                    </property>
+                    <item row="0" column="0">
+                     <widget class="QSplitter" name="splitterSeeds">
+                      <property name="orientation">
+                       <enum>Qt::Vertical</enum>
+                      </property>
+                      <widget class="Collapsible" name="collapseGen48" native="true">
+                       <property name="sizePolicy">
+                        <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+                         <horstretch>0</horstretch>
+                         <verstretch>0</verstretch>
+                        </sizepolicy>
+                       </property>
+                      </widget>
+                      <widget class="Collapsible" name="collapseControl" native="true">
+                       <property name="sizePolicy">
+                        <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+                         <horstretch>0</horstretch>
+                         <verstretch>0</verstretch>
+                        </sizepolicy>
+                       </property>
+                      </widget>
+                     </widget>
+                    </item>
+                   </layout>
+                  </widget>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     <widget class="QFrame" name="frameMap">
+      <property name="frameShape">
+        <enum>QFrame::NoFrame</enum>
+       </property>
+       <layout class="QGridLayout" name="gridLayout_4">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+       </layout>
+      </widget>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="ScrollableToolBar" name="toolBar">
+   <property name="windowTitle">
+    <string>Map controls</string>
+   </property>
+   <property name="layoutDirection">
+    <enum>Qt::RightToLeft</enum>
+   </property>
+   <property name="autoFillBackground">
+    <bool>false</bool>
+   </property>
+   <property name="iconSize">
+    <size>
+       <width>32</width>
+       <height>32</height>
+    </size>
+   </property>
+   <property name="movable">
+    <bool>true</bool>
+   </property>
+   <property name="allowedAreas">
+     <set>Qt::RightToolBarArea</set>
+   </property>
+   <property name="orientation">
+    <enum>Qt::Vertical</enum>
+   </property>
+     <property name="floatable">
+      <bool>false</bool>
+   </property>
+   <attribute name="toolBarArea">
+    <enum>RightToolBarArea</enum>
+   </attribute>
+   <attribute name="toolBarBreak">
+    <bool>false</bool>
+   </attribute>
+  </widget>
+  <widget class="QMenuBar" name="menuBar">
+   <widget class="QMenu" name="menuMap">
+    <property name="title">
+     <string>Map</string>
+    </property>
+    <widget class="QMenu" name="menuHistory">
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
+     <property name="title">
+      <string>Previous seeds</string>
+     </property>
+     <addaction name="separator"/>
+    </widget>
+    <addaction name="menuHistory"/>
+    <addaction name="actionOpenShadow"/>
+    <addaction name="separator"/>
+    <addaction name="actionDock"/>
+    <addaction name="actionGoto"/>
+    <addaction name="separator"/>
+    <addaction name="actionScreenshot"/>
+    <addaction name="actionExportImg"/>
+    <addaction name="separator"/>
+   </widget>
+   <widget class="QMenu" name="menuHelp">
+    <property name="title">
+     <string>Help</string>
+    </property>
+    <addaction name="actionExamples"/>
+    <addaction name="separator"/>
+    <addaction name="actionAbout"/>
+   </widget>
+   <widget class="QMenu" name="menuFile">
+    <property name="title">
+     <string>File</string>
+    </property>
+    <addaction name="actionLoad"/>
+    <addaction name="actionSave"/>
+    <addaction name="separator"/>
+    <addaction name="actionPresetLoad"/>
+    <addaction name="separator"/>
+    <addaction name="actionSearch_seed_list"/>
+    <addaction name="actionSearch_full_seed_space"/>
+    <addaction name="separator"/>
+    <addaction name="actionQuit"/>
+   </widget>
+   <widget class="QMenu" name="menuEdit">
+    <property name="title">
+     <string>Edit</string>
+    </property>
+    <addaction name="actionCopy"/>
+    <addaction name="actionPaste"/>
+    <addaction name="separator"/>
+    <addaction name="actionAddShadow"/>
+    <addaction name="separator"/>
+    <addaction name="actionRedistribute"/>
+    <addaction name="separator"/>
+    <addaction name="actionExtGen"/>
+    <addaction name="actionBiomeColors"/>
+    <addaction name="actionToolbarConfig"/>
+    <addaction name="actionPreferences"/>
+   </widget>
+   <widget class="QMenu" name="menuLayer">
+    <property name="title">
+     <string>Layer</string>
+    </property>
+    <addaction name="actionLayerDisplay"/>
+    <addaction name="separator"/>
+    <addaction name="actionBiomes"/>
+    <addaction name="separator"/>
+    <addaction name="actionParaTemperature"/>
+    <addaction name="actionParaHumidity"/>
+    <addaction name="actionParaContinentalness"/>
+    <addaction name="actionParaErosion"/>
+    <addaction name="actionParaDepth"/>
+    <addaction name="actionParaWeirdness"/>
+    <addaction name="separator"/>
+    <addaction name="actionRiver"/>
+    <addaction name="actionOceanTemp"/>
+    <addaction name="separator"/>
+    <addaction name="actionNoOceans"/>
+    <addaction name="actionBetaTemperature"/>
+    <addaction name="actionBetaHumidity"/>
+    <addaction name="separator"/>
+    <addaction name="actionHeight"/>
+    <addaction name="actionStructures"/>
+    <addaction name="separator"/>
+   </widget>
+   <addaction name="menuFile"/>
+   <addaction name="menuEdit"/>
+   <addaction name="menuMap"/>
+   <addaction name="menuLayer"/>
+   <addaction name="menuHelp"/>
+  </widget>
+  <action name="actionAbout">
+   <property name="text">
+    <string>About</string>
+   </property>
+  </action>
+  <action name="actionOpenShadow">
+   <property name="text">
+    <string>Open shadow seed</string>
+   </property>
+  </action>
+  <action name="actionSave">
+   <property name="text">
+    <string>Save session...</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+S</string>
+   </property>
+  </action>
+  <action name="actionLoad">
+   <property name="text">
+    <string>Load session...</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+O</string>
+   </property>
+  </action>
+  <action name="actionSearch_seed_list">
+   <property name="text">
+    <string>Search seed list...</string>
+   </property>
+   <property name="toolTip">
+    <string>Load seeds from file for search</string>
+   </property>
+  </action>
+  <action name="actionSearch_full_seed_space">
+   <property name="text">
+    <string>Search full seed space</string>
+   </property>
+  </action>
+  <action name="actionCopy">
+   <property name="text">
+    <string>Copy seeds from list</string>
+   </property>
+  </action>
+  <action name="actionPaste">
+   <property name="text">
+    <string>Paste seeds into list</string>
+   </property>
+  </action>
+  <action name="actionPreferences">
+   <property name="text">
+    <string>Edit preferences...</string>
+   </property>
+  </action>
+  <action name="actionQuit">
+   <property name="text">
+    <string>Quit</string>
+   </property>
+  </action>
+  <action name="actionAddShadow">
+   <property name="text">
+    <string>Add shadow for all seeds</string>
+   </property>
+  </action>
+  <action name="actionExtGen">
+   <property name="text">
+    <string>Advanced world settings...</string>
+   </property>
+  </action>
+  <action name="actionExamples">
+   <property name="text">
+    <string>Example filters...</string>
+   </property>
+  </action>
+  <action name="actionPresetSave">
+   <property name="text">
+    <string>Save filter as preset...</string>
+   </property>
+  </action>
+  <action name="actionPresetLoad">
+   <property name="text">
+    <string>Load filter preset...</string>
+   </property>
+  </action>
+  <action name="actionBiomeColors">
+   <property name="text">
+    <string>Edit biome colors...</string>
+   </property>
+  </action>
+  <action name="actionBiomes">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Biome scales (default)</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+B</string>
+   </property>
+  </action>
+  <action name="actionGoto">
+   <property name="text">
+    <string>Go to...</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+G</string>
+   </property>
+  </action>
+  <action name="actionOceanTemp">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(1.13 - 1.17) O. Temp. 1:256</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+O</string>
+   </property>
+  </action>
+  <action name="actionRiver">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(1.13 - 1.17) River Mix 1:4</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+R</string>
+   </property>
+  </action>
+  <action name="actionExportImg">
+   <property name="text">
+    <string>Export biomes as image...</string>
+   </property>
+  </action>
+  <action name="actionToolbarConfig">
+   <property name="text">
+    <string>Edit map tools...</string>
+   </property>
+  </action>
+  <action name="actionParaTemperature">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(1.18+) Temperature</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+T</string>
+   </property>
+  </action>
+  <action name="actionParaHumidity">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(1.18+) Humidity</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+H</string>
+   </property>
+  </action>
+  <action name="actionParaContinentalness">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(1.18+) Continentalness</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+C</string>
+   </property>
+  </action>
+  <action name="actionParaErosion">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(1.18+) Erosion</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+E</string>
+   </property>
+  </action>
+  <action name="actionParaWeirdness">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(1.18+) Weirdness</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+W</string>
+   </property>
+  </action>
+  <action name="actionParaDepth">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(1.18+) Depth</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+D</string>
+   </property>
+  </action>
+  <action name="actionStructures">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Structure potential (48-bit)</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+S</string>
+   </property>
+  </action>
+  <action name="actionScreenshot">
+   <property name="text">
+    <string>Take screenshot</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+S</string>
+   </property>
+  </action>
+  <action name="actionDock">
+   <property name="text">
+    <string>Undock map</string>
+   </property>
+  </action>
+  <action name="actionHeight">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Approx. surface height</string>
+   </property>
+   <property name="shortcut">
+    <string>Alt+Y</string>
+   </property>
+  </action>
+  <action name="actionLayerDisplay">
+   <property name="text">
+    <string>Display options...</string>
+   </property>
+  </action>
+  <action name="actionNoOceans">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(Beta 1.7) No beta oceans</string>
+   </property>
+  </action>
+  <action name="actionBetaTemperature">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(Beta 1.7) Temperature</string>
+   </property>
+  </action>
+  <action name="actionBetaHumidity">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>(Beta 1.7) Humidity</string>
+   </property>
+  </action>
+  <action name="actionRedistribute">
+   <property name="text">
+    <string>Redistribute condition IDs</string>
+   </property>
+  </action>
+ </widget>
+ <layoutdefault spacing="6" margin="11"/>
+ <customwidgets>
+ <customwidget>
+   <class>ScrollableToolBar</class>
+   <extends>QToolBar</extends>
+   <header>src/widgets.h</header>
+  </customwidget>
+  <customwidget>
+   <class>StyledComboBox</class>
+   <extends>QComboBox</extends>
+   <header>src/widgets.h</header>
+  </customwidget>
+  <customwidget>
+   <class>Collapsible</class>
+   <extends>QWidget</extends>
+   <header>src/widgets.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
+ <resources>
+  <include location="../rc/icons.qrc"/>
+ </resources>
+ <connections/>
+</ui>
