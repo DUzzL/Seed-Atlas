@@ -1,7 +1,6 @@
 # Seed Atlas
 
-Seed Atlas is a fast map viewer and seed-finding tool for Minecraft: Java
-Edition.
+Seed Atlas is a fast map viewer and seed-finding tool for Minecraft.
 
 
 
