@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/">
+        <file>modern.qss</file>
+    </qresource>
+</RCC>

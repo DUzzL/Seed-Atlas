@@ -6,7 +6,8 @@ identify the actual dependencies and are not product branding.
 ## cubiomes
 
 Copyright (c) 2020 Cubitect. Licensed under the MIT License. The complete
-license is included in the corresponding source archive at `cubiomes/LICENSE`.
+license is included in the corresponding source archive at
+`seedatlas-engine/LICENSE`.
 
 ## Qt 6.8.3
 
