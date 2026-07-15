@@ -3,7 +3,7 @@
 Seed Atlas is a fast map viewer and seed-finding tool for Minecraft: Java
 Edition.
 
-![Seed Atlas](etc/screenshot_seeds-fs8.png)
+
 
 ## Download
 
@@ -19,7 +19,7 @@ warning when it is opened for the first time.
 - Use all available CPU threads for faster searches
 - Create advanced seed searches with combined conditions and Lua filters
 - Save and resume searches with session files
-- Supports stable Minecraft: Java Edition releases from 1.21.1 through 26.2
+- Supports stable Minecraft releases
 
 ## Usage
 
