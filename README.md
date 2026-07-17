@@ -35,3 +35,7 @@ component licenses are documented in [LEGAL_NOTICE.md](LEGAL_NOTICE.md) and
 
 Seed Atlas is not an official Minecraft product and is not associated with
 Mojang or Microsoft.
+
+<img width="2560" height="1392" alt="Screenshot 2026-07-17 220702" src="https://github.com/user-attachments/assets/def90d1e-630b-4441-9fb3-526a4435c78d" />
+<img width="2560" height="1392" alt="Screenshot 2026-07-17 221002" src="https://github.com/user-attachments/assets/9946fa84-132f-4c52-9c92-744a1c9ec165" />
+<img width="2560" height="1392" alt="Screenshot 2026-07-17 221150" src="https://github.com/user-attachments/assets/d93c183e-cfb0-4d2b-8fba-8b2a253850f0" />
