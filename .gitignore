@@ -1,0 +1,18 @@
+# Build output
+build-*/
+dist/
+*.o
+*.a
+
+# Qt Creator and qmake
+*.pro.user*
+.qmake.stash
+Makefile
+Makefile.Debug
+Makefile.Release
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

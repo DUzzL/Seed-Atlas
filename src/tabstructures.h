@@ -1,0 +1,95 @@
+#ifndef TABSTRUCTURES_H
+#define TABSTRUCTURES_H
+
+#include "mainwindow.h"
+#include "mappingworkers.h"
+
+namespace Ui {
+class TabStructures;
+}
+
+class AnalysisStructures : public QThread
+{
+    Q_OBJECT
+public:
+    explicit AnalysisStructures(QObject *parent = nullptr)
+        : QThread(parent),stop(false),idx(),workDone(),workTotal(),resultCount(),workersUsed() {}
+
+    virtual void run() override;
+    void runStructs(Generator *g);
+    void runQuads(Generator *g);
+    bool shouldStop() const { return stop || (cancel && *cancel); }
+
+signals:
+    void itemDone(QTreeWidgetItem *item);
+    void quadDone(QTreeWidgetItem *item);
+
+public:
+    std::vector<uint64_t> seeds;
+    WorldInfo wi;
+    int dim;
+    std::atomic_bool stop;
+    std::atomic_int idx;
+    std::atomic_size_t workDone;
+    std::atomic_size_t workTotal;
+    std::atomic_uint64_t resultCount;
+    std::atomic_size_t workersUsed;
+    MappingWorkerState workers;
+    struct Dat { int x1, z1, x2, z2; } area;
+    bool mapshow[D_STRUCT_NUM];
+    bool collect;
+    bool quad;
+    bool parallelInner;
+    bool quadHuts;
+    bool quadMonuments;
+    int hutQuality;
+    int monumentCoverage;
+    std::atomic_bool *cancel = nullptr;
+};
+
+class TabStructures : public QWidget, public ISaveTab
+{
+    Q_OBJECT
+
+public:
+    explicit TabStructures(MainWindow *parent = nullptr);
+    ~TabStructures();
+
+    virtual bool event(QEvent *e) override;
+
+    virtual void save(QSettings& settings) override;
+    virtual void load(QSettings& settings) override;
+
+private slots:
+    void onHeaderClick(QTreeView *tree);
+
+    void onAnalysisItemDone(QTreeWidgetItem *item);
+    void onAnalysisQuadDone(QTreeWidgetItem *item);
+    void onAnalysisFinished();
+    void onBufferTimeout();
+
+    void onTreeItemClicked(QTreeWidgetItem *item, int column);
+
+    void on_pushStart_clicked();
+    void on_pushExport_clicked();
+    void on_buttonFromVisible_clicked();
+    void on_tabWidget_currentChanged(int index);
+
+private:
+    void exportResults(QTextStream& stream);
+
+private:
+    Ui::TabStructures *ui;
+    MainWindow *parent;
+    AnalysisStructures thread;
+    AnalysisStructures::Dat dats, datq;
+    int sortcols, sortcolq;
+
+    QElapsedTimer elapsed;
+    uint64_t nextupdate;
+    uint64_t updt;
+    QList<QTreeWidgetItem*> qbufs;
+    QList<QTreeWidgetItem*> qbufq;
+};
+
+#endif // TABSTRUCTURES_H
