@@ -163,45 +163,57 @@
        </item>
       </layout>
      </widget>
-     <widget class="QWidget" name="tabQuads">
+     <widget class="QWidget" name="tabDensity">
       <attribute name="title">
-       <string>Quad-Structures</string>
+       <string>Density</string>
       </attribute>
      <layout class="QGridLayout" name="gridLayout_3">
        <item row="0" column="0">
-        <layout class="QGridLayout" name="gridQuadOptions">
+        <layout class="QGridLayout" name="gridDensityOptions">
          <item row="0" column="0">
-          <widget class="QCheckBox" name="checkQuadHuts">
-           <property name="text"><string>Quad-hut</string></property>
-           <property name="toolTip"><string>Uses the same 48-bit geometric potential definition as Seed Finding. Biome viability is not required.</string></property>
+          <widget class="QCheckBox" name="checkDensityHuts">
+           <property name="text"><string>Swamp huts</string></property>
+           <property name="toolTip"><string>Counts only swamp huts that are valid for the seed's biomes.</string></property>
            <property name="checked"><bool>true</bool></property>
           </widget>
          </item>
          <item row="0" column="1">
-          <widget class="StyledComboBox" name="comboHutQuality">
-           <item><property name="text"><string>Ideal</string></property></item>
-           <item><property name="text"><string>Classic or better</string></property></item>
-           <item><property name="text"><string>Normal or better</string></property></item>
-           <item><property name="text"><string>Barely or better</string></property></item>
-          </widget>
-         </item>
-         <item row="1" column="0">
-          <widget class="QCheckBox" name="checkQuadMonuments">
-           <property name="text"><string>Quad-ocean-monument</string></property>
-           <property name="toolTip"><string>Uses the same 48-bit geometric potential definition as Seed Finding. Biome viability is not required.</string></property>
+          <widget class="QCheckBox" name="checkDensityMonuments">
+           <property name="text"><string>Ocean monuments</string></property>
+           <property name="toolTip"><string>Counts only ocean monuments that are valid for the seed's biomes.</string></property>
            <property name="checked"><bool>true</bool></property>
           </widget>
          </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="labelDensityRadius">
+           <property name="text"><string>Radius</string></property>
+          </widget>
+         </item>
          <item row="1" column="1">
-          <widget class="StyledComboBox" name="comboMonumentCoverage">
-           <item><property name="text"><string>&gt;95% coverage</string></property></item>
-           <item><property name="text"><string>&gt;90% coverage</string></property></item>
+          <widget class="QSpinBox" name="spinDensityRadius">
+           <property name="minimum"><number>32</number></property>
+           <property name="maximum"><number>100000</number></property>
+           <property name="singleStep"><number>32</number></property>
+           <property name="value"><number>128</number></property>
+           <property name="suffix"><string> blocks</string></property>
+          </widget>
+         </item>
+         <item row="2" column="0">
+          <widget class="QLabel" name="labelDensityMinimum">
+           <property name="text"><string>Minimum structures</string></property>
+          </widget>
+         </item>
+         <item row="2" column="1">
+          <widget class="QSpinBox" name="spinDensityMinimum">
+           <property name="minimum"><number>2</number></property>
+           <property name="maximum"><number>1000</number></property>
+           <property name="value"><number>3</number></property>
           </widget>
          </item>
         </layout>
        </item>
        <item row="1" column="0">
-        <widget class="QTreeWidget" name="treeQuads">
+        <widget class="QTreeWidget" name="treeDensity">
          <property name="font">
           <font>
            <family>Courier New</family>
@@ -238,12 +250,12 @@
          </column>
          <column>
           <property name="text">
-           <string>type</string>
+           <string>structure</string>
           </property>
          </column>
          <column>
           <property name="text">
-           <string>distance</string>
+           <string>count</string>
           </property>
          </column>
          <column>
@@ -263,9 +275,97 @@
          </column>
          <column>
           <property name="text">
-           <string>spawn area</string>
+           <string>details</string>
           </property>
          </column>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tabFortresses">
+      <attribute name="title">
+       <string>Fortresses</string>
+      </attribute>
+      <layout class="QGridLayout" name="gridLayoutFortresses">
+       <item row="0" column="0">
+        <layout class="QHBoxLayout" name="layoutFortressOptions">
+         <item>
+          <widget class="QCheckBox" name="checkFortress2x2">
+           <property name="toolTip">
+            <string>Finds four adjacent bridge-crossing or start pieces forming a square at the same Y level.</string>
+           </property>
+           <property name="text">
+            <string>2x2 bridge-crossing square</string>
+           </property>
+           <property name="checked">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QCheckBox" name="checkFortress3x1">
+           <property name="toolTip">
+            <string>Finds at least three consecutive bridge-crossing or start pieces in a straight line at the same Y level.</string>
+           </property>
+           <property name="text">
+            <string>3x1 bridge-crossing line</string>
+           </property>
+           <property name="checked">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="spacerFortressOptions">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item row="1" column="0">
+        <widget class="QTreeWidget" name="treeFortresses">
+         <property name="font">
+          <font>
+           <family>Courier New</family>
+          </font>
+         </property>
+         <property name="editTriggers">
+          <set>QAbstractItemView::NoEditTriggers</set>
+         </property>
+         <property name="selectionBehavior">
+          <enum>QAbstractItemView::SelectRows</enum>
+         </property>
+         <property name="verticalScrollMode">
+          <enum>QAbstractItemView::ScrollPerPixel</enum>
+         </property>
+         <property name="horizontalScrollMode">
+          <enum>QAbstractItemView::ScrollPerPixel</enum>
+         </property>
+         <property name="sortingEnabled">
+          <bool>true</bool>
+         </property>
+         <property name="animated">
+          <bool>true</bool>
+         </property>
+         <column><property name="text"><string>seed</string></property></column>
+         <column><property name="text"><string>layout(s)</string></property></column>
+         <column><property name="text"><string>start x</string></property></column>
+         <column><property name="text"><string>start z</string></property></column>
+         <column><property name="text"><string>match x</string></property></column>
+         <column><property name="text"><string>match z</string></property></column>
+         <column><property name="text"><string>orientation</string></property></column>
+         <column><property name="text"><string>qualifying</string></property></column>
+         <column><property name="text"><string>size</string></property></column>
+         <column><property name="text"><string>spawners</string></property></column>
+         <column><property name="text"><string>nether wart</string></property></column>
         </widget>
        </item>
       </layout>

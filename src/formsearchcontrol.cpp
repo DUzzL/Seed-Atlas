@@ -114,6 +114,7 @@ FormSearchControl::FormSearchControl(MainWindow *parent)
     , smin(0)
     , smax(~(uint64_t)0)
     , qbuf()
+    , resultSeeds()
     , nextupdate()
     , updt(20)
 {
@@ -128,6 +129,7 @@ FormSearchControl::FormSearchControl(MainWindow *parent)
     proxy = new SeedSortProxy(ui->results);
 
     proxy->setSourceModel(model);
+    proxy->setDynamicSortFilter(false);
     ui->results->setModel(proxy);
 
     ui->results->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
@@ -150,9 +152,9 @@ FormSearchControl::FormSearchControl(MainWindow *parent)
 
     searchProgressReset();
     ui->spinThreads->setMaximum(std::max(1, QThread::idealThreadCount()));
-    ui->spinThreads->setValue(std::max(1, QThread::idealThreadCount()));
+    ui->spinThreads->setValue(configuredThreadCount());
     ui->spinThreads->setEnabled(false);
-    ui->spinThreads->setToolTip(tr("Seed Atlas automatically uses all available logical processors."));
+    ui->spinThreads->setToolTip(tr("Controlled by the CPU usage limit in Settings > Performance."));
 
     searchLockUi(false);
 }
@@ -189,7 +191,7 @@ SearchConfig FormSearchControl::getSearchConfig()
 {
     SearchConfig s;
     s.searchtype = ui->comboSearchType->currentData().toInt();
-    s.threads = std::max(1, QThread::idealThreadCount());
+    s.threads = configuredThreadCount();
     s.slist64path = slist64path;
     s.startseed = ui->lineStart->text().toLongLong();
     s.stoponres = ui->checkStop->isChecked();
@@ -211,7 +213,7 @@ bool FormSearchControl::setSearchConfig(SearchConfig s, bool quiet)
         ok = false;
     }
 
-    ui->spinThreads->setValue(std::max(1, QThread::idealThreadCount()));
+    ui->spinThreads->setValue(configuredThreadCount());
     ui->checkStop->setChecked(s.stoponres);
     smin = s.smin;
     smax = s.smax;
@@ -353,6 +355,7 @@ bool FormSearchControl::getSeed(int row, uint64_t *seed)
 void FormSearchControl::on_buttonClear_clicked()
 {
     model->reset();
+    resultSeeds.clear();
     searchProgressReset();
     ui->lineStart->setText("0");
 }
@@ -656,29 +659,22 @@ int FormSearchControl::searchResultsAdd(std::vector<uint64_t> seeds, bool counto
         seeds.resize(config.maxMatching - n);
     }
 
-    QSet<uint64_t> current;
-    current.reserve(n + seeds.size());
-    for (int i = 0; i < n; i++)
-        current.insert(model->seeds[i].seed);
+    resultSeeds.reserve(n + seeds.size());
 
     QVector<uint64_t> newseeds;
     for (uint64_t s : seeds)
     {
-        if (current.contains(s))
+        if (resultSeeds.contains(s))
             continue;
         if (!countonly)
         {
-            current.insert(s);
+            resultSeeds.insert(s);
             newseeds.append(s);
         }
         n++;
     }
     if (!newseeds.empty())
-    {
-        ui->results->setSortingEnabled(false);
         model->insertSeeds(newseeds);
-        ui->results->setSortingEnabled(true);
-    }
 
     int addcnt = n - nold;
     if (ui->checkStop->isChecked() && addcnt)
@@ -781,6 +777,8 @@ void FormSearchControl::searchFinish(bool done)
 {
     stimer.stop();
     onBufferTimeout();
+    if (proxy->column >= 0)
+        proxy->sort(proxy->column, proxy->order);
     progressTimeout();
     if (done)
     {
@@ -816,6 +814,7 @@ void FormSearchControl::removeCurrent()
     int row = proxy->mapToSource(index).row();
     if (row >= 0)
     {
+        resultSeeds.remove(model->seeds.at(row).seed);
         model->removeRow(row);
     }
 }

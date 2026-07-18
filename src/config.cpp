@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QFontDatabase>
 
+#include <atomic>
 #include <cmath>
 
 /// globals
@@ -19,6 +20,25 @@ ExtGenConfig g_extgen;
 
 qreal g_fontscale = 1;
 qreal g_iconscale = 1;
+
+static std::atomic_int g_cpuUsagePercent{80};
+
+int threadCountForCpuUsage(int percent)
+{
+    const int logicalProcessors = std::max(1, QThread::idealThreadCount());
+    percent = qBound(1, percent, 100);
+    return std::max(1, logicalProcessors * percent / 100);
+}
+
+int configuredThreadCount()
+{
+    return threadCountForCpuUsage(g_cpuUsagePercent.load(std::memory_order_relaxed));
+}
+
+void setConfiguredCpuUsagePercent(int percent)
+{
+    g_cpuUsagePercent.store(qBound(1, percent, 100), std::memory_order_relaxed);
+}
 
 
 void ExtGenConfig::reset()
@@ -186,6 +206,7 @@ QString mapopt2display(int opt)
     case D_FORTESS:     return QApplication::translate("Map", "Nether Fortress");
     case D_BASTION:     return QApplication::translate("Map", "Bastion Remnant");
     case D_ENDCITY:     return QApplication::translate("Map", "End City");
+    case D_ENDCITYSHIP: return QApplication::translate("Map", "End City (Ship)");
     case D_GATEWAY:     return QApplication::translate("Map", "End Gateway");
     default: return "";
     }
@@ -222,6 +243,7 @@ const char *mapopt2str(int opt) // to resource string
     case D_FORTESS:     return "fortress";
     case D_BASTION:     return "bastion";
     case D_ENDCITY:     return "endcity";
+    case D_ENDCITYSHIP: return "end_ship";
     case D_GATEWAY:     return "gateway";
     default:            return "";
     }
@@ -255,6 +277,7 @@ int str2mapopt(const char *s) // from resource string
     if (!strcmp(s, "fortress"))     return D_FORTESS;
     if (!strcmp(s, "bastion"))      return D_BASTION;
     if (!strcmp(s, "endcity"))      return D_ENDCITY;
+    if (!strcmp(s, "end_ship"))     return D_ENDCITYSHIP;
     if (!strcmp(s, "gateway"))      return D_GATEWAY;
     if (!strcmp(s, "orevein"))      return D_OREVEIN;
     return D_NONE;
@@ -286,6 +309,7 @@ int mapopt2stype(int opt)
     case D_FORTESS:     return Fortress;
     case D_BASTION:     return Bastion;
     case D_ENDCITY:     return End_City;
+    case D_ENDCITYSHIP: return End_City;
     case D_GATEWAY:     return End_Gateway;
     default:
         return -1;
@@ -395,7 +419,8 @@ void Config::reset()
     gridSpacing = 0;
     gridMultiplier = 0;
     mapCacheSize = 512;
-    mapThreads = std::max(1, QThread::idealThreadCount());
+    cpuUsagePercent = 80;
+    mapThreads = threadCountForCpuUsage(cpuUsagePercent);
     biomeColorPath = "";
     separator = ";";
     quote = "";
@@ -429,9 +454,10 @@ void Config::load(QSettings& settings)
         gridMultiplier != 5 && gridMultiplier != 10)
         gridMultiplier = 0;
     mapCacheSize = qBound(16, settings.value("config/mapCacheSize", mapCacheSize).toInt(), 8192);
-    // Always use every logical processor. Older versions stored a lower map
-    // thread limit, so deliberately migrate that value here.
-    mapThreads = std::max(1, QThread::idealThreadCount());
+    cpuUsagePercent = qBound(1,
+        settings.value("config/cpuUsagePercent", cpuUsagePercent).toInt(), 100);
+    setConfiguredCpuUsagePercent(cpuUsagePercent);
+    mapThreads = threadCountForCpuUsage(cpuUsagePercent);
     settings.remove("config/toolbarSide");
     settings.remove("toolbar/area");
     settings.remove("config/lang");
@@ -460,6 +486,7 @@ void Config::save(QSettings& settings)
     settings.setValue("config/gridSpacing", gridSpacing);
     settings.setValue("config/gridMultiplier", gridMultiplier);
     settings.setValue("config/mapCacheSize", mapCacheSize);
+    settings.setValue("config/cpuUsagePercent", cpuUsagePercent);
     settings.setValue("config/mapThreads", mapThreads);
     settings.remove("config/toolbarSide");
     settings.remove("toolbar/area");
@@ -570,7 +597,7 @@ void SearchConfig::reset()
 {
     searchtype = SEARCH_INC;
     slist64path = "";
-    threads = std::max(1, QThread::idealThreadCount());
+    threads = configuredThreadCount();
     startseed = 0;
     stoponres = true;
     smin = 0;

@@ -18,31 +18,48 @@ class QHBoxLayout;
 class QLabel;
 class QScrollArea;
 class QResizeEvent;
+class QPropertyAnimation;
 
 // A dockable toolbar whose action strip remains accessible through a scroll
 // area instead of hiding overflow actions in Qt's extension menu.
 class ScrollableToolBar : public QToolBar
 {
     Q_OBJECT
+    Q_PROPERTY(int sidebarWidth READ sidebarWidth WRITE setSidebarWidth)
 public:
     explicit ScrollableToolBar(QWidget *parent = nullptr);
 
     QAction *addAction(QAction *action);
     QAction *addSeparator();
+    bool isCollapsed() const { return collapsed; }
+    int sidebarWidth() const { return currentWidth; }
+    void setCollapsed(bool collapsed, bool animated = true);
+    void setSidebarWidth(int width);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+
+signals:
+    void collapsedChanged(bool collapsed);
 
 private slots:
     void updateDirection(Qt::Orientation orientation);
     void updateButtons(const QSize& size);
 
 private:
+    int expandedWidth() const;
+    int collapsedWidth() const;
+    void updateToggleButton();
+
     QScrollArea *scroll;
     QWidget *strip;
     QBoxLayout *stripLayout;
     QVector<QToolButton*> buttons;
     QVector<QFrame*> separators;
+    QToolButton *toggleButton;
+    QPropertyAnimation *widthAnimation;
+    int currentWidth;
+    bool collapsed;
 };
 
 class Collapsible : public QWidget

@@ -337,11 +337,34 @@ QVariant BiomeTableModel::data(const QModelIndex& index, int role) const
         return align;
     if (role == Qt::DisplayRole)
     {
-        int id = ids[index.column()];
-        uint64_t seed = seeds[index.row()];
-        return cnt[id][seed];
+        const int id = ids[index.column()];
+        const auto biomes = cnt.constFind(id);
+        if (biomes == cnt.cend())
+            return QVariant();
+        return biomes->value(seeds[index.row()]);
     }
     return QVariant();
+}
+
+qulonglong BiomeTableModel::valueAt(int row, int column) const
+{
+    if (row < 0 || row >= seeds.size() || column < 0 || column >= ids.size())
+        return 0;
+    const auto biomes = cnt.constFind(ids[column]);
+    if (biomes == cnt.cend())
+        return 0;
+    const auto value = biomes->constFind(seeds[row]);
+    return value == biomes->cend() ? 0 : value->toULongLong();
+}
+
+bool BiomeSortProxy::lessThan(const QModelIndex& a, const QModelIndex& b) const
+{
+    const BiomeTableModel *table = static_cast<const BiomeTableModel*>(sourceModel());
+    const qulonglong av = a.row() < sortValues.size()
+        ? sortValues[a.row()] : table->valueAt(a.row(), a.column());
+    const qulonglong bv = b.row() < sortValues.size()
+        ? sortValues[b.row()] : table->valueAt(b.row(), b.column());
+    return bv < av;
 }
 
 QVariant BiomeTableModel::headerData(int section, Qt::Orientation orientation, int role) const
@@ -523,7 +546,6 @@ TabBiomes::TabBiomes(MainWindow *parent)
     , thread()
     , model(new BiomeTableModel(this))
     , proxy(new BiomeSortProxy(this))
-    , sortcol(-1)
     , selectedBiomes()
     , elapsed()
     , updt(20)
@@ -532,6 +554,7 @@ TabBiomes::TabBiomes(MainWindow *parent)
     ui->setupUi(this);
 
     proxy->setSourceModel(model);
+    proxy->setDynamicSortFilter(false);
     ui->table->setModel(proxy);
 
     BiomeHeader *header = new BiomeHeader(ui->table);
@@ -540,9 +563,10 @@ TabBiomes::TabBiomes(MainWindow *parent)
     connect(ui->table->verticalHeader(), &QHeaderView::sectionClicked, this, &TabBiomes::onVHeaderClicked);
 
     ui->table->setSortingEnabled(true);
+    ui->table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    ui->table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 
-    ui->treeLocate->sortByColumn(-1, Qt::DescendingOrder);
-    ui->treeLocate->setSortingEnabled(true);
+    configureResultTree(ui->treeLocate);
     ui->treeLocate->header()->setMinimumSectionSize(24);
     ui->treeLocate->header()->setSectionResizeMode(QHeaderView::Stretch);
     ui->treeLocate->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -749,15 +773,9 @@ void TabBiomes::updateBiomeSelectionControls()
     }
 }
 
-void TabBiomes::onLocateHeaderClick()
+void TabBiomes::onLocateHeaderClick(int section)
 {
-    int section =  ui->treeLocate->header()->sortIndicatorSection();
-    if (ui->treeLocate->header()->sortIndicatorOrder() == Qt::AscendingOrder && sortcol == section)
-    {
-        ui->treeLocate->sortByColumn(-1, Qt::DescendingOrder);
-        section = -1;
-    }
-    sortcol = section;
+    cycleResultTreeSort(ui->treeLocate, section);
 }
 
 void TabBiomes::onTableSort(int, Qt::SortOrder)
@@ -815,6 +833,10 @@ void TabBiomes::onAnalysisSeedItem(QTreeWidgetItem *item)
 void TabBiomes::onAnalysisFinished()
 {
     onBufferTimeout();
+    if (!thread.dat.locateBiomes.isEmpty())
+        resortResultTree(ui->treeLocate);
+    else if (proxy->column >= 0)
+        proxy->sort(proxy->column, proxy->order);
     on_tabWidget_currentChanged(-1);
     ui->pushStart->setChecked(false);
     ui->pushStart->setText(tr("Analyze"));
@@ -854,7 +876,6 @@ void TabBiomes::onBufferTimeout()
 
     if (!qbufs.empty())
     {
-        ui->table->setSortingEnabled(false);
         ui->table->setUpdatesEnabled(false);
 
         // store column widths to track which columns need to widen
@@ -889,7 +910,6 @@ void TabBiomes::onBufferTimeout()
         model->insertSeeds(new_seeds);
 
         ui->table->setUpdatesEnabled(true);
-        ui->table->setSortingEnabled(true);
 
         //ui->table->resizeColumnsToContents();
         for (int i = 0, n = proxy->columnCount(); i < n; i++)
@@ -898,18 +918,15 @@ void TabBiomes::onBufferTimeout()
             ui->table->setColumnWidth(i, colwidth[id]);
         }
         int rowheight = fm.height() + 4;
-        for (int i = 0, n = proxy->rowCount(); i < n; i++)
-            ui->table->setRowHeight(i, rowheight);
+        ui->table->verticalHeader()->setDefaultSectionSize(rowheight);
         qbufs.clear();
     }
 
     if (!qbufl.empty())
     {
-        ui->treeLocate->setSortingEnabled(false);
         ui->treeLocate->setUpdatesEnabled(false);
         ui->treeLocate->addTopLevelItems(qbufl);
         ui->treeLocate->setUpdatesEnabled(true);
-        ui->treeLocate->setSortingEnabled(true);
         qbufl.clear();
     }
 
@@ -980,10 +997,7 @@ void TabBiomes::on_pushStart_clicked()
             return;
         }
         //ui->treeWidget->clear();
-        ui->treeLocate->setSortingEnabled(false);
-        while (ui->treeLocate->topLevelItemCount() > 0)
-            delete ui->treeLocate->takeTopLevelItem(0);
-        ui->treeLocate->setSortingEnabled(true);
+        ui->treeLocate->clear();
         thread.dat.locateBiomes = selectedBiomeList();
         thread.dat.locate = thread.dat.locateBiomes.isEmpty()
                 ? -1 : thread.dat.locateBiomes.constFirst();

@@ -48,6 +48,8 @@
 #include <QStandardPaths>
 #include <QStyleFactory>
 #include <QPushButton>
+#include <QEasingCurve>
+#include <QPropertyAnimation>
 #include <QToolButton>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
 #include <QStyleHints>
@@ -114,7 +116,9 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     , dimactions{}
     , dimgroup()
     , sidePanelToggle()
+    , sidePanelAnimation(new QPropertyAnimation(this, "sidePanelAnimationWidth", this))
     , sidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH)
+    , sidePanelCurrentWidth(SIDE_PANEL_DEFAULT_WIDTH)
     , sidePanelCollapsed(false)
     , sidePanelChanging(false)
 {
@@ -341,7 +345,13 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     addMapAction(D_BASTION);
     ui->toolBar->addSeparator();
     addMapAction(D_ENDCITY);
+    addMapAction(D_ENDCITYSHIP);
     addMapAction(D_GATEWAY);
+
+    connect(ui->toolBar, &ScrollableToolBar::collapsedChanged, this, [](bool collapsed) {
+        QSettings settings(appSettingsId(), appSettingsId());
+        settings.setValue("ui/rightSidebarCollapsed", collapsed);
+    });
 
     saction[D_GRID]->setChecked(true);
     saction[D_SPAWN]->setChecked(true);
@@ -364,6 +374,10 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
         "QToolButton:hover { background: palette(button); }");
     connect(sidePanelToggle, &QToolButton::clicked, this, &MainWindow::onSidePanelToggle);
     connect(ui->splitterMap, &QSplitter::splitterMoved, this, &MainWindow::onSplitterMapMoved);
+    sidePanelAnimation->setDuration(220);
+    sidePanelAnimation->setEasingCurve(QEasingCurve::OutCubic);
+    connect(sidePanelAnimation, &QPropertyAnimation::finished,
+        this, &MainWindow::onSidePanelAnimationFinished);
     QTimer::singleShot(0, this, &MainWindow::updateSidePanelToggle);
 
     qRegisterMetaType< int64_t >("int64_t");
@@ -490,28 +504,37 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     QTimer::singleShot(0, this, &MainWindow::updateSidePanelToggle);
 }
 
+void MainWindow::setRightSidebarCollapsed(bool collapsed, bool animated)
+{
+    ui->toolBar->setCollapsed(collapsed, animated);
+}
+
 void MainWindow::setSidePanelCollapsed(bool collapsed)
 {
-    if (sidePanelChanging || sidePanelCollapsed == collapsed)
+    if (sidePanelCollapsed == collapsed &&
+        sidePanelAnimation->state() == QAbstractAnimation::Stopped)
         return;
+
+    const int startWidth = ui->controlFrame->isVisible() ? ui->controlFrame->width() : 0;
+    sidePanelAnimation->stop();
     sidePanelChanging = true;
     if (collapsed)
     {
-        const int currentWidth = ui->controlFrame->width();
-        if (currentWidth >= SIDE_PANEL_MINIMUM_WIDTH)
-            sidePanelWidth = currentWidth;
-        ui->controlFrame->hide();
-        ui->splitterMap->setSizes({0, ui->splitterMap->width()});
+        if (startWidth >= SIDE_PANEL_MINIMUM_WIDTH)
+            sidePanelWidth = startWidth;
     }
     else
     {
         ui->controlFrame->show();
-        const int width = qMax(SIDE_PANEL_MINIMUM_WIDTH, sidePanelWidth);
-        ui->splitterMap->setSizes({width, qMax(1, ui->splitterMap->width() - width)});
     }
     sidePanelCollapsed = collapsed;
-    sidePanelChanging = false;
-    QTimer::singleShot(0, this, &MainWindow::updateSidePanelToggle);
+    ui->controlFrame->setMinimumWidth(0);
+    const int targetWidth = collapsed ? 0 : qMax(SIDE_PANEL_MINIMUM_WIDTH, sidePanelWidth);
+    setSidePanelAnimationWidth(startWidth);
+    sidePanelAnimation->setStartValue(startWidth);
+    sidePanelAnimation->setEndValue(targetWidth);
+    sidePanelAnimation->start();
+    updateSidePanelToggle();
 }
 
 void MainWindow::onSidePanelToggle()
@@ -531,6 +554,23 @@ void MainWindow::onSplitterMapMoved(int, int)
         sidePanelWidth = width;
         updateSidePanelToggle();
     }
+}
+
+void MainWindow::setSidePanelAnimationWidth(int width)
+{
+    sidePanelCurrentWidth = qMax(0, width);
+    ui->controlFrame->setMaximumWidth(sidePanelCurrentWidth);
+    ui->splitterMap->setSizes({sidePanelCurrentWidth,
+        qMax(1, ui->splitterMap->width() - sidePanelCurrentWidth)});
+}
+
+void MainWindow::onSidePanelAnimationFinished()
+{
+    if (sidePanelCollapsed)
+        ui->controlFrame->hide();
+    ui->controlFrame->setMaximumWidth(QWIDGETSIZE_MAX);
+    sidePanelChanging = false;
+    QTimer::singleShot(0, this, &MainWindow::updateSidePanelToggle);
 }
 
 void MainWindow::updateSidePanelToggle()
@@ -595,6 +635,7 @@ QAction *MainWindow::addMapAction(int opt)
     case D_FORTESS:     label = tr("Fortress"); break;
     case D_BASTION:     label = tr("Bastion"); break;
     case D_ENDCITY:     label = tr("End City"); break;
+    case D_ENDCITYSHIP: label = tr("End City (Ship)"); break;
     case D_GATEWAY:     label = tr("Gateway"); break;
     default: break;
     }
@@ -757,6 +798,7 @@ void MainWindow::saveSettings()
     settings.setValue("mainwindow/size", size());
     settings.setValue("mainwindow/pos", pos());
     settings.setValue("mainwindow/prevdir", prevdir);
+    settings.setValue("ui/rightSidebarCollapsed", ui->toolBar->isCollapsed());
 
     config.save(settings);
 
@@ -794,6 +836,8 @@ void MainWindow::loadSettings()
     QSettings settings(appSettingsId(), appSettingsId());
     const bool hasStoredSeed = settings.contains("map/seed");
     const bool hasStoredVersion = settings.contains("map/mc");
+
+    setRightSidebarCollapsed(settings.value("ui/rightSidebarCollapsed", false).toBool(), false);
 
     getMapView()->deleteWorld();
 
@@ -1468,6 +1512,7 @@ void MainWindow::onUpdateConfig()
 {
     Config old = config;
     config.load();
+    QThreadPool::globalInstance()->setMaxThreadCount(config.mapThreads);
 
     int searchTab = ui->tabContainer->indexOf(ui->tabSearch);
     if (searchTab >= 0)

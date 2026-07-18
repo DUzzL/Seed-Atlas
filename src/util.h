@@ -103,5 +103,17 @@ QIcon getColorIcon(const QColor& col, const QPen& pen = QPen(Qt::black, 1));
 
 QIcon getBiomeIcon(int id, bool warn = false);
 
+class QTreeWidget;
+
+// QTreeWidget's convenience-model sorting repeatedly converts cell data and
+// performs layout work while items are arriving. These helpers keep the same
+// interactive three-state sorting behaviour, but sort complete sibling batches
+// using one cached key per item and one view update at the end.
+void configureResultTree(QTreeWidget *tree);
+void setResultTreeSort(QTreeWidget *tree, int column, Qt::SortOrder order,
+    bool sortNow = true);
+void cycleResultTreeSort(QTreeWidget *tree, int column);
+void resortResultTree(QTreeWidget *tree);
+
 
 #endif // UTIL_H

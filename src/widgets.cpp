@@ -17,9 +17,11 @@
 #include <QParallelAnimationGroup>
 #include <QPropertyAnimation>
 #include <QPushButton>
+#include <QEasingCurve>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QSpinBox>
+#include <QStyle>
 #include <QStyleOptionSlider>
 #include <QTextEdit>
 #include <QToolButton>
@@ -50,6 +52,10 @@ ScrollableToolBar::ScrollableToolBar(QWidget *parent)
     , stripLayout(new QBoxLayout(QBoxLayout::TopToBottom, strip))
     , buttons()
     , separators()
+    , toggleButton(new QToolButton(parent ? parent : this))
+    , widthAnimation(new QPropertyAnimation(this, "sidebarWidth", this))
+    , currentWidth(200)
+    , collapsed(false)
 {
     stripLayout->setContentsMargins(4, 4, 4, 4);
     stripLayout->setSpacing(3);
@@ -61,17 +67,31 @@ ScrollableToolBar::ScrollableToolBar(QWidget *parent)
     scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scroll->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     QToolBar::addWidget(scroll);
+    toggleButton->setObjectName("rightSidebarToggle");
+    toggleButton->setFixedSize(18, 72);
+    toggleButton->setAutoRaise(false);
+    toggleButton->setCursor(Qt::PointingHandCursor);
+    toggleButton->setStyleSheet(
+        "QToolButton { background: palette(window); border: 1px solid palette(mid); "
+        "border-radius: 4px; padding: 0; margin: 0; }"
+        "QToolButton:hover { background: palette(button); }");
+    connect(toggleButton, &QToolButton::clicked, this, [this]() {
+        setCollapsed(!collapsed);
+    });
+    widthAnimation->setDuration(220);
+    widthAnimation->setEasingCurve(QEasingCurve::OutCubic);
     connect(this, &QToolBar::orientationChanged, this, &ScrollableToolBar::updateDirection);
     connect(this, &QToolBar::iconSizeChanged, this, &ScrollableToolBar::updateButtons);
     updateDirection(orientation());
+    updateToggleButton();
 }
 
 QAction *ScrollableToolBar::addAction(QAction *action)
 {
     QToolButton *button = new QToolButton(strip);
-    button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    button->setToolButtonStyle(collapsed ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
     button->setIconSize(iconSize());
-    button->setMinimumWidth(164);
+    button->setMinimumWidth(collapsed ? 0 : 164);
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     button->setStyleSheet("QToolButton { text-align: left; padding: 5px 8px; }");
     const auto update = [button, action]() {
@@ -91,6 +111,8 @@ QAction *ScrollableToolBar::addAction(QAction *action)
     strip->adjustSize();
     scroll->updateGeometry();
     updateGeometry();
+    if (collapsed)
+        setSidebarWidth(collapsedWidth());
     return action;
 }
 
@@ -117,6 +139,74 @@ void ScrollableToolBar::resizeEvent(QResizeEvent *event)
     QToolBar::resizeEvent(event);
     if (QToolButton *extension = findChild<QToolButton *>("qt_toolbar_ext_button"))
         extension->hide();
+    QWidget *overlayParent = toggleButton->parentWidget();
+    const QPoint origin = mapTo(overlayParent, QPoint(0, 0));
+    toggleButton->move(origin.x() - toggleButton->width()/2,
+        origin.y() + qMax(0, (height() - toggleButton->height()) / 2));
+    toggleButton->raise();
+}
+
+void ScrollableToolBar::setCollapsed(bool value, bool animated)
+{
+    if (collapsed == value &&
+        (widthAnimation->state() == QAbstractAnimation::Stopped || !animated))
+        return;
+
+    const int startWidth = width();
+    widthAnimation->stop();
+    collapsed = value;
+    for (QToolButton *button : buttons)
+    {
+        button->setToolButtonStyle(collapsed ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
+        button->setMinimumWidth(collapsed ? 0 : 164);
+    }
+    scroll->setMinimumWidth(orientation() == Qt::Horizontal ? 0 : (collapsed ? 0 : 190));
+    strip->adjustSize();
+    const int targetWidth = collapsed ? collapsedWidth() : expandedWidth();
+    updateToggleButton();
+    emit collapsedChanged(collapsed);
+
+    if (!animated || startWidth == targetWidth)
+    {
+        setSidebarWidth(targetWidth);
+        return;
+    }
+
+    setSidebarWidth(startWidth);
+    widthAnimation->setStartValue(startWidth);
+    widthAnimation->setEndValue(targetWidth);
+    widthAnimation->start();
+}
+
+void ScrollableToolBar::setSidebarWidth(int width)
+{
+    currentWidth = qMax(1, width);
+    setMinimumWidth(currentWidth);
+    setMaximumWidth(currentWidth);
+    updateGeometry();
+}
+
+int ScrollableToolBar::expandedWidth() const
+{
+    return qMax(200, qMax(width(), scroll->minimumSizeHint().width()));
+}
+
+int ScrollableToolBar::collapsedWidth() const
+{
+    int buttonWidth = 0;
+    for (const QToolButton *button : buttons)
+        buttonWidth = qMax(buttonWidth, button->sizeHint().width());
+
+    const QMargins margins = stripLayout->contentsMargins();
+    const int scrollBarWidth = style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, scroll);
+    return qMax(toggleButton->width(), buttonWidth + margins.left() + margins.right() + scrollBarWidth);
+}
+
+void ScrollableToolBar::updateToggleButton()
+{
+    toggleButton->setArrowType(collapsed ? Qt::LeftArrow : Qt::RightArrow);
+    toggleButton->setToolTip(collapsed ? tr("Expand side panel") : tr("Collapse side panel"));
+    toggleButton->raise();
 }
 
 void ScrollableToolBar::updateDirection(Qt::Orientation orientation)
@@ -129,8 +219,9 @@ void ScrollableToolBar::updateDirection(Qt::Orientation orientation)
     scroll->setVerticalScrollBarPolicy(horizontal ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
     strip->setSizePolicy(horizontal ? QSizePolicy::Minimum : QSizePolicy::Maximum,
         horizontal ? QSizePolicy::Maximum : QSizePolicy::Minimum);
-    scroll->setMinimumWidth(horizontal ? 0 : 190);
-    setMinimumWidth(horizontal ? 0 : 200);
+    scroll->setMinimumWidth(horizontal ? 0 : (collapsed ? 0 : 190));
+    if (!collapsed)
+        setMinimumWidth(horizontal ? 0 : 200);
     setMinimumHeight(horizontal ? iconSize().height() + 16 : 0);
     for (QFrame *separator : separators)
     {
@@ -228,7 +319,8 @@ void Collapsible::toggle(bool collapsed)
         anim = (QPropertyAnimation*) animgroup->animationAt(i);
         anim->setStartValue(0);
         anim->setEndValue(contentHeight);
-        anim->setDuration(200);
+        anim->setDuration(190);
+        anim->setEasingCurve(QEasingCurve::OutCubic);
     }
 
     animgroup->start();

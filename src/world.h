@@ -33,7 +33,7 @@ const QPixmap& getMapIcon(int opt, VarPos *variation = 0);
 
 uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
         WorldInfo wi, int dim, int x0, int z0, int x1, int z1, bool nogen = false,
-        const std::atomic_bool *abort = nullptr);
+        const std::atomic_bool *abort = nullptr, int endCityVariant = 0);
 
 enum {
     HV_GRAYSCALE        = 0,

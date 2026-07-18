@@ -35,9 +35,11 @@ ConfigDialog::ConfigDialog(QWidget *parent, Config *config)
         ui->labelMatching->setEnabled(enabled);
         ui->lineMatching->setEnabled(enabled);
     });
-    ui->spinThreads->setRange(1, std::max(1, QThread::idealThreadCount()));
-    ui->spinThreads->setEnabled(false);
-    ui->spinThreads->setToolTip(tr("Seed Atlas automatically uses all available logical processors."));
+    ui->label_9->setText(tr("CPU usage limit:"));
+    ui->spinThreads->setRange(1, 100);
+    ui->spinThreads->setSingleStep(5);
+    ui->spinThreads->setSuffix(tr(" %"));
+    ui->spinThreads->setToolTip(tr("Limits CPU-heavy work by restricting the number of parallel workers. The actual CPU load can vary by task."));
     ui->lineIconScale->setValidator(new QDoubleValidator(1.0/8, 16.0, 3, ui->lineIconScale));
 
     QSize size = sizeHint();
@@ -148,7 +150,7 @@ void ConfigDialog::initConfig(Config *config)
     ui->lineGridSpacing->setText(config->gridSpacing ? QString::number(config->gridSpacing) : "");
     ui->comboGridMult->setCurrentText(config->gridMultiplier ? QString::number(config->gridMultiplier) : tr("None"));
     ui->spinCacheSize->setValue(config->mapCacheSize);
-    ui->spinThreads->setValue(std::max(1, QThread::idealThreadCount()));
+    ui->spinThreads->setValue(config->cpuUsagePercent);
     ui->lineSep->setText(config->separator);
     int idx = config->quote == "\'" ? 1 : config->quote== "\"" ? 2 : 0;
     ui->comboQuote->setCurrentIndex(idx);
@@ -173,7 +175,8 @@ Config ConfigDialog::getConfig()
     conf.gridSpacing = ui->lineGridSpacing->text().toInt();
     conf.gridMultiplier = ui->comboGridMult->currentText().toInt();
     conf.mapCacheSize = ui->spinCacheSize->value();
-    conf.mapThreads = std::max(1, QThread::idealThreadCount());
+    conf.cpuUsagePercent = ui->spinThreads->value();
+    conf.mapThreads = threadCountForCpuUsage(conf.cpuUsagePercent);
     conf.separator = ui->lineSep->text();
     int idx = ui->comboQuote->currentIndex();
     conf.quote = idx == 1 ? "\'" : idx == 2 ? "\"" : "";

@@ -309,7 +309,7 @@ bool SearchMaster::set(QWidget *widget, const Session& s)
     this->mc = s.wi.mc;
     this->large = s.wi.large;
     this->itemsize = 1;
-    this->threadcnt = std::max(1, QThread::idealThreadCount());
+    this->threadcnt = std::min(configuredThreadCount(), std::max(1, s.sc.threads));
     this->slist = s.slist;
     this->gen48 = s.gen48;
     this->idx = 0;

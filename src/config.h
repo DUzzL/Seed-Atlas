@@ -133,6 +133,7 @@ enum {
     D_FORTESS,
     D_BASTION,
     D_ENDCITY,
+    D_ENDCITYSHIP,
     D_GATEWAY,
     // non-recurring structures
     D_SPAWN,
@@ -191,6 +192,7 @@ struct Config
     int gridSpacing;
     int gridMultiplier;
     int mapCacheSize;
+    int cpuUsagePercent;
     int mapThreads;
     QString biomeColorPath;
     QString separator;
@@ -207,6 +209,10 @@ struct Config
     void load() { QSettings s(appSettingsId(), appSettingsId()); load(s); }
     void save() { QSettings s(appSettingsId(), appSettingsId()); save(s); }
 };
+
+int threadCountForCpuUsage(int percent);
+int configuredThreadCount();
+void setConfiguredCpuUsagePercent(int percent);
 
 enum { GEN48_AUTO, GEN48_QH, GEN48_QM, GEN48_LIST, GEN48_NONE };
 enum { IDEAL, CLASSIC, NORMAL, BARELY, IDEAL_SALTED };

@@ -1,4 +1,5 @@
 #include "search.h"
+#include "fortresslayout.h"
 
 #include "config.h"
 #include "scripts.h"
@@ -835,10 +836,12 @@ static bool isVariantOk(const Condition *c, SearchThreadEnv *e, int stype, int v
     }
     else if (stype == End_City)
     {
-        if (!(c->varflags & Condition::VAR_ENDSHIP)) return true;
+        const bool forceShip = c->type == F_ENDCITYSHIP;
+        const bool forceNoShip = c->type == F_ENDCITY;
+        if (!forceShip && !forceNoShip && !(c->varflags & Condition::VAR_ENDSHIP)) return true;
         Piece pieces[END_CITY_PIECES_MAX];
         int i, n = getEndCityPieces(pieces, e->seed, pos->x >> 4, pos->z >> 4);
-        bool withship = !(c->varflags & Condition::VAR_NOT);
+        bool withship = forceShip || (!(c->varflags & Condition::VAR_NOT) && !forceNoShip);
         for (i = 0; i < n; i++)
             if (pieces[i].type == END_SHIP)
                 return withship;
@@ -846,30 +849,33 @@ static bool isVariantOk(const Condition *c, SearchThreadEnv *e, int stype, int v
     }
     else if (stype == Fortress)
     {
-        if (!(c->varflags & Condition::VAR_DENSE_BB)) return true;
+        const bool find2x2 = c->varflags & Condition::VAR_DENSE_BB;
+        const bool find3x1 = c->varflags & Condition::VAR_FORTRESS_3X1;
+        if (!find2x2 && !find3x1) return true;
         enum { FP_MAX = 400 };
         Piece p[FP_MAX];
-        int i, n, b;
-        n = getFortressPieces(p, FP_MAX, e->mc, e->seed, pos->x >> 4, pos->z >> 4);
-        for (b = i = 0; i < n; i++)
-            if (p[i].type == FORTRESS_START || p[i].type == BRIDGE_CROSSING)
-                p[b++] = p[i];
-        if (b < 4) return false;
-        for (i = 0; i < b; i++)
+        const int n = getFortressPieces(p, FP_MAX, e->mc, e->seed,
+            pos->x >> 4, pos->z >> 4);
+        const FortressLayoutResult layouts = findFortressLayouts(p, n,
+            find2x2, find3x1);
+
+        // A 2x2 result wins when both options match. This preserves the exact
+        // position yielded by old saved conditions when the new option is also
+        // enabled.
+        if (find2x2 && layouts.has2x2)
         {
-            int j, adj = 0;
-            for (j = 0; j < b; j++)
+            *pos = layouts.legacy2x2Position;
+            return true;
+        }
+        if (find3x1 && layouts.has3x1)
+        {
+            for (const FortressLayoutMatch& match : layouts.matches)
             {
-                if (p[i].bb0.y != p[j].bb0.y) continue;
-                if (p[i].bb1.x != p[j].bb1.x && p[i].bb1.x+1 != p[j].bb0.x) continue;
-                if (p[i].bb1.z != p[j].bb1.z && p[i].bb1.z+1 != p[j].bb0.z) continue;
-                adj++;
-            }
-            if (adj >= 4)
-            {
-                pos->x = p[i].bb1.x;
-                pos->z = p[i].bb1.z;
-                return true;
+                if (match.type == FORTRESS_LAYOUT_3X1)
+                {
+                    *pos = match.position;
+                    return true;
+                }
             }
         }
         return false;
@@ -1295,6 +1301,7 @@ L_qm_any:
     case F_BASTION:
 
     case F_ENDCITY:
+    case F_ENDCITYSHIP:
     case F_GATEWAY:
 
         if (sconf.regionSize == 32)
@@ -1375,7 +1382,7 @@ L_qm_any:
                         if (!isViableEndCityTerrain(&env->g, &env->sn, pc.x, pc.z))
                             continue;
                     }
-                    if (cond->varflags)
+                    if (cond->varflags || cond->type == F_ENDCITY || cond->type == F_ENDCITYSHIP)
                     {
                         if (!isVariantOk(cond, env, st, id, &pc))
                             continue;

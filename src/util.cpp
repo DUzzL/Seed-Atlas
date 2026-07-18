@@ -6,6 +6,11 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
+#include <QHeaderView>
+#include <QSignalBlocker>
+#include <QTreeWidget>
+
+#include <algorithm>
 
 QString getStartPieceName(int stype, const StructureVariant *sv)
 {
@@ -271,6 +276,195 @@ bool IdCmp::isPrimary(int id)
    if (dim != DIM_UNDEF && getDimension(id) != dim)
        return false;
    return true;
+}
+
+namespace {
+
+const char *RESULT_SORT_COLUMN = "seedAtlasResultSortColumn";
+const char *RESULT_SORT_ORDER = "seedAtlasResultSortOrder";
+
+struct ResultSortKey
+{
+    enum Kind { Empty, Signed, Unsigned, Real, Text } kind = Empty;
+    qint64 signedValue = 0;
+    quint64 unsignedValue = 0;
+    double realValue = 0;
+    QString text;
+};
+
+static bool isSignedMetaType(int type)
+{
+    return type == QMetaType::Char || type == QMetaType::Short ||
+        type == QMetaType::Int || type == QMetaType::Long ||
+        type == QMetaType::LongLong;
+}
+
+static bool isUnsignedMetaType(int type)
+{
+    return type == QMetaType::UChar || type == QMetaType::UShort ||
+        type == QMetaType::UInt || type == QMetaType::ULong ||
+        type == QMetaType::ULongLong;
+}
+
+static ResultSortKey resultSortKey(QTreeWidgetItem *item, int column)
+{
+    const QVariant display = item->data(column, Qt::DisplayRole);
+    const QVariant user = item->data(column, Qt::UserRole);
+    const QVariant value = user.isValid() ? user : display;
+    ResultSortKey key;
+    if (!value.isValid() || value.isNull())
+        return key;
+
+    const int type = value.userType();
+    if (isSignedMetaType(type))
+    {
+        key.kind = ResultSortKey::Signed;
+        key.signedValue = value.toLongLong();
+    }
+    else if (isUnsignedMetaType(type))
+    {
+        // Seeds are stored as uint64_t but displayed as signed Minecraft seeds.
+        // Use the displayed sign when present to retain the historical order.
+        if (display.userType() == QMetaType::QString &&
+                display.toString().trimmed().startsWith(QLatin1Char('-')))
+        {
+            key.kind = ResultSortKey::Signed;
+            key.signedValue = static_cast<qint64>(value.toULongLong());
+        }
+        else
+        {
+            key.kind = ResultSortKey::Unsigned;
+            key.unsignedValue = value.toULongLong();
+        }
+    }
+    else if (type == QMetaType::Float || type == QMetaType::Double)
+    {
+        key.kind = ResultSortKey::Real;
+        key.realValue = value.toDouble();
+    }
+    else
+    {
+        key.kind = ResultSortKey::Text;
+        key.text = display.isValid() ? display.toString() : value.toString();
+    }
+    return key;
+}
+
+static long double numericValue(const ResultSortKey& key)
+{
+    if (key.kind == ResultSortKey::Signed) return key.signedValue;
+    if (key.kind == ResultSortKey::Unsigned) return key.unsignedValue;
+    return key.realValue;
+}
+
+static int compareResultKeys(const ResultSortKey& a, const ResultSortKey& b)
+{
+    const bool numericA = a.kind >= ResultSortKey::Signed && a.kind <= ResultSortKey::Real;
+    const bool numericB = b.kind >= ResultSortKey::Signed && b.kind <= ResultSortKey::Real;
+    if (numericA && numericB)
+    {
+        const long double av = numericValue(a), bv = numericValue(b);
+        return av < bv ? -1 : av > bv ? 1 : 0;
+    }
+    if (a.kind != b.kind)
+        return a.kind < b.kind ? -1 : 1;
+    if (a.kind == ResultSortKey::Text)
+        return QString::localeAwareCompare(a.text, b.text);
+    return 0;
+}
+
+static void sortResultSiblings(QTreeWidget *tree, QTreeWidgetItem *parent,
+        int column, Qt::SortOrder order)
+{
+    const int count = parent ? parent->childCount() : tree->topLevelItemCount();
+    if (!count)
+        return;
+
+    // Sort descendants as independent sibling tables, preserving the complete
+    // hierarchy and the same column semantics as QTreeWidget sorting.
+    for (int i = 0; i < count; i++)
+    {
+        QTreeWidgetItem *item = parent ? parent->child(i) : tree->topLevelItem(i);
+        sortResultSiblings(tree, item, column, order);
+    }
+    if (count < 2)
+        return;
+
+    struct Entry
+    {
+        QTreeWidgetItem *item;
+        ResultSortKey key;
+    };
+    QList<Entry> entries;
+    entries.reserve(count);
+    for (int i = 0; i < count; i++)
+    {
+        QTreeWidgetItem *item = parent ? parent->child(i) : tree->topLevelItem(i);
+        entries.push_back({item, resultSortKey(item, column)});
+    }
+    std::stable_sort(entries.begin(), entries.end(), [order](const Entry& a, const Entry& b) {
+        const int comparison = compareResultKeys(a.key, b.key);
+        return order == Qt::AscendingOrder ? comparison < 0 : comparison > 0;
+    });
+
+    QTreeWidgetItem *container = parent ? parent : tree->invisibleRootItem();
+    QList<QTreeWidgetItem*> items = container->takeChildren();
+    items.clear();
+    for (const Entry& entry : entries)
+        items.push_back(entry.item);
+    container->addChildren(items);
+}
+
+} // namespace
+
+void configureResultTree(QTreeWidget *tree)
+{
+    tree->setSortingEnabled(false);
+    tree->setUniformRowHeights(true);
+    tree->setAnimated(false);
+    tree->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    tree->setProperty(RESULT_SORT_COLUMN, -1);
+    tree->setProperty(RESULT_SORT_ORDER, int(Qt::DescendingOrder));
+    tree->header()->setSortIndicatorShown(false);
+}
+
+void setResultTreeSort(QTreeWidget *tree, int column, Qt::SortOrder order,
+        bool sortNow)
+{
+    tree->setProperty(RESULT_SORT_COLUMN, column);
+    tree->setProperty(RESULT_SORT_ORDER, int(order));
+    tree->header()->setSortIndicatorShown(column >= 0);
+    if (column >= 0)
+        tree->header()->setSortIndicator(column, order);
+    if (sortNow && column >= 0)
+        resortResultTree(tree);
+}
+
+void cycleResultTreeSort(QTreeWidget *tree, int column)
+{
+    const int previous = tree->property(RESULT_SORT_COLUMN).toInt();
+    const Qt::SortOrder oldOrder = Qt::SortOrder(
+        tree->property(RESULT_SORT_ORDER).toInt());
+    if (previous != column)
+        setResultTreeSort(tree, column, Qt::DescendingOrder);
+    else if (oldOrder == Qt::DescendingOrder)
+        setResultTreeSort(tree, column, Qt::AscendingOrder);
+    else
+        setResultTreeSort(tree, -1, Qt::DescendingOrder, false);
+}
+
+void resortResultTree(QTreeWidget *tree)
+{
+    const int column = tree->property(RESULT_SORT_COLUMN).toInt();
+    if (column < 0 || tree->topLevelItemCount() < 1)
+        return;
+    const Qt::SortOrder order = Qt::SortOrder(
+        tree->property(RESULT_SORT_ORDER).toInt());
+    const QSignalBlocker blocker(tree);
+    tree->setUpdatesEnabled(false);
+    sortResultSiblings(tree, nullptr, column, order);
+    tree->setUpdatesEnabled(true);
+    tree->viewport()->update();
 }
 
 

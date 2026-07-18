@@ -93,6 +93,7 @@ enum
     F_NOISE_SAMPLE,
     F_CHAMBERS,
     // new filters should be added here at the end to keep some downwards compatibility
+    F_ENDCITYSHIP,
     FILTER_MAX,
 };
 
@@ -543,7 +544,7 @@ static const struct FilterList : private FilterInfo
         list[F_ENDCITY] = FilterInfo{
             CAT_STRUCT, 0, LOC_RAD, End_City, 1, BR_CLUST, MC_1_9, MC_NEWEST, +1, 0, disp++,
             "endcity",
-            QT_TRANSLATE_NOOP("Filter", "End city"),
+            QT_TRANSLATE_NOOP("Filter", "End City"),
             ""
         };
 
@@ -554,6 +555,13 @@ static const struct FilterList : private FilterInfo
             QT_TRANSLATE_NOOP("Filter",
             "Checks only scattered return gateways. Does not include those generated "
             "when defeating the dragon.")
+        };
+
+        list[F_ENDCITYSHIP] = FilterInfo{
+            CAT_STRUCT, 0, LOC_RAD, End_City, 1, BR_CLUST, MC_1_9, MC_NEWEST, +1, 0, disp++,
+            "end_ship",
+            QT_TRANSLATE_NOOP("Filter", "End City (Ship)"),
+            ""
         };
     }
 }
@@ -589,6 +597,7 @@ struct /*__attribute__((packed))*/ Condition
         VAR_DENSE_BB    = 0x0008, // fortress with a 2x2 arrangement of start/crossings
         VAR_NOT         = 0x0010, // invert flag (e.g. not abandoned)
         VAR_BASEMENT    = 0x0020, // igloo with basement
+        VAR_FORTRESS_3X1= 0x0040, // fortress with a 3x1 line of start/crossings
     };
     enum { // min/max
         // legacy 0:min<= 1:max>= 2:min>= 3:max<=

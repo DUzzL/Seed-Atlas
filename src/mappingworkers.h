@@ -1,6 +1,8 @@
 #ifndef MAPPINGWORKERS_H
 #define MAPPINGWORKERS_H
 
+#include "config.h"
+
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QThread>
@@ -61,7 +63,7 @@ private:
 
 inline size_t mappingThreadCount()
 {
-    return size_t(std::max(1, QThread::idealThreadCount()));
+    return size_t(configuredThreadCount());
 }
 
 inline void waitForMappingThread(QThread& thread)

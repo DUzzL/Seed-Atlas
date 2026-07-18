@@ -38,10 +38,12 @@ struct ISaveTab
 class MapView;
 class QResizeEvent;
 class QToolButton;
+class QPropertyAnimation;
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
+    Q_PROPERTY(int sidePanelAnimationWidth READ sidePanelAnimationWidth WRITE setSidePanelAnimationWidth)
 
 public:
     explicit MainWindow(QString sessionpath, QString resultspath, QWidget *parent = 0);
@@ -128,9 +130,13 @@ private slots:
     void onDockFloating(bool floating);
     void onSidePanelToggle();
     void onSplitterMapMoved(int position, int index);
+    void onSidePanelAnimationFinished();
 
 private:
+    void setRightSidebarCollapsed(bool collapsed, bool animated);
     void setSidePanelCollapsed(bool collapsed);
+    int sidePanelAnimationWidth() const { return sidePanelCurrentWidth; }
+    void setSidePanelAnimationWidth(int width);
     void updateSidePanelToggle();
 
 public:
@@ -158,7 +164,9 @@ public:
     QAction *dimactions[3];
     QActionGroup *dimgroup;
     QToolButton *sidePanelToggle;
+    QPropertyAnimation *sidePanelAnimation;
     int sidePanelWidth;
+    int sidePanelCurrentWidth;
     bool sidePanelCollapsed;
     bool sidePanelChanging;
 };

@@ -70,6 +70,7 @@ public:
     void insertIds(QSet<int>& ids);
     void insertSeeds(QList<uint64_t>& seeds);
     void reset(int mc);
+    qulonglong valueAt(int row, int column) const;
 
     QList<int> ids; // biome column
     QList<uint64_t> seeds; // seed rows
@@ -84,27 +85,28 @@ class BiomeSortProxy : public QSortFilterProxyModel
 public:
     BiomeSortProxy(QObject *parent = nullptr) : QSortFilterProxyModel(parent),column(),order(Qt::AscendingOrder) {}
 
-    virtual bool lessThan(const QModelIndex& a, const QModelIndex& b) const override
-    {
-        QVariant av = sourceModel()->data(a, Qt::DisplayRole);
-        QVariant bv = sourceModel()->data(b, Qt::DisplayRole);
-        return bv.toInt() < av.toInt();
-    }
+    virtual bool lessThan(const QModelIndex& a, const QModelIndex& b) const override;
 
     virtual void sort(int column, Qt::SortOrder order) override
     {
         if (column >= columnCount())
             return;
-        if (column == -1)
-            QSortFilterProxyModel::sort(-1, order);
-        else
-            QSortFilterProxyModel::sort(column, order);
         this->column = column;
         this->order = order;
+        sortValues.clear();
+        if (column >= 0)
+        {
+            const BiomeTableModel *table = static_cast<const BiomeTableModel*>(sourceModel());
+            sortValues.reserve(table->rowCount(QModelIndex()));
+            for (int row = 0; row < table->rowCount(QModelIndex()); ++row)
+                sortValues.push_back(table->valueAt(row, column));
+        }
+        QSortFilterProxyModel::sort(column, order);
     }
 
     int column;
     Qt::SortOrder order;
+    QVector<qulonglong> sortValues;
 };
 
 class BiomeHeader : public QHeaderView
@@ -142,7 +144,7 @@ public:
     void updateBiomeSelectionControls();
 
 private slots:
-    void onLocateHeaderClick();
+    void onLocateHeaderClick(int section);
     void onTableSort(int column, Qt::SortOrder);
     void onVHeaderClicked(int row);
     void onAnalysisSeedDone(uint64_t seed, QVector<uint64_t> idcnt);
@@ -170,7 +172,6 @@ private:
     BiomeSortProxy *proxy;
     QMap<QString, int> str2biome;
     AnalysisBiomes::Dat dats, datl;
-    int sortcol;
     QSet<int> selectedBiomes;
 
     QElapsedTimer elapsed;
