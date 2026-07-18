@@ -124,10 +124,12 @@ SOURCES += \
         src/formconditions.cpp \
         src/formgen48.cpp \
         src/formsearchcontrol.cpp \
+        src/fortresslayout.cpp \
         src/gotodialog.cpp \
         src/headless.cpp \
         src/maptoolsdialog.cpp \
         src/message.cpp \
+        src/motioncontroller.cpp \
         src/presetdialog.cpp \
         src/layerdialog.cpp \
         src/mapview.cpp \
@@ -190,10 +192,12 @@ HEADERS += \
         src/formconditions.h \
         src/formgen48.h \
         src/formsearchcontrol.h \
+        src/fortresslayout.h \
         src/gotodialog.h \
         src/headless.h \
         src/maptoolsdialog.h \
         src/message.h \
+        src/motioncontroller.h \
         src/presetdialog.h \
         src/layerdialog.h \
         src/mapview.h \

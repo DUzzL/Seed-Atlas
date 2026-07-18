@@ -7,6 +7,7 @@
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QSortFilterProxyModel>
+#include <QSet>
 #include <QTimer>
 #include <QWidget>
 
@@ -66,12 +67,14 @@ public:
 
     virtual bool lessThan(const QModelIndex& a, const QModelIndex& b) const override
     {
-        uint64_t av = sourceModel()->data(a, Qt::UserRole).toULongLong();
-        uint64_t bv = sourceModel()->data(b, Qt::UserRole).toULongLong();
+        const SeedTableModel *seeds = static_cast<const SeedTableModel*>(sourceModel());
+        const uint64_t as = seeds->seeds.at(a.row()).seed;
+        const uint64_t bs = seeds->seeds.at(b.row()).seed;
         if (a.column() == SeedTableModel::COL_SEED)
-            return (int64_t) bv < (int64_t) av;
-        else
-            return bv < av;
+            return (int64_t)bs < (int64_t)as;
+        const uint64_t av = a.column() == SeedTableModel::COL_TOP16 ? as >> 48 : as & MASK48;
+        const uint64_t bv = b.column() == SeedTableModel::COL_TOP16 ? bs >> 48 : bs & MASK48;
+        return bv < av;
     }
 
     virtual void sort(int column, Qt::SortOrder order) override
@@ -173,6 +176,7 @@ private:
 
     // found seeds that are waiting to be added to results
     std::vector<uint64_t> qbuf;
+    QSet<uint64_t> resultSeeds;
     quint64 nextupdate;
     quint64 updt;
 };

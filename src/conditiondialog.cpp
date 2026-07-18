@@ -424,6 +424,7 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
         };
         ui->checkStartPieces->setChecked(cond.varflags & Condition::VAR_WITH_START);
         ui->checkDenseBB->setChecked(cond.varflags & Condition::VAR_DENSE_BB);
+        ui->checkFortress3x1->setChecked(cond.varflags & Condition::VAR_FORTRESS_3X1);
         ui->checkAbandoned->setCheckState(totristate(cond.varflags, Condition::VAR_ABANODONED));
         ui->checkEndShip->setCheckState(totristate(cond.varflags, Condition::VAR_ENDSHIP));
         ui->checkBasement->setCheckState(totristate(cond.varflags, Condition::VAR_BASEMENT));
@@ -626,6 +627,7 @@ void ConditionDialog::updateMode()
     {
         ui->stackedWidget->setCurrentWidget(ui->pageFortress);
         ui->checkDenseBB->setEnabled(true);
+        ui->checkFortress3x1->setEnabled(true);
     }
     else if (filterindex == F_BASTION)
     {
@@ -637,10 +639,11 @@ void ConditionDialog::updateMode()
         ui->stackedWidget->setCurrentWidget(ui->pagePortal);
         ui->checkStartPortal->setEnabled(wi.mc >= MC_1_16_1);
     }
-    else if (filterindex == F_ENDCITY)
+    else if (filterindex == F_ENDCITY || filterindex == F_ENDCITYSHIP)
     {
-        ui->stackedWidget->setCurrentWidget(ui->pageEndCity);
-        ui->checkBasement->setEnabled(wi.mc >= MC_1_9);
+        // The two filter entries already define the variant, so there is no
+        // additional include/exclude choice that could mix their results.
+        ui->stackedWidget->setCurrentWidget(ui->pageNone);
     }
     else if (filterindex == F_IGLOO)
     {
@@ -1151,6 +1154,8 @@ void ConditionDialog::onAccept()
         c.varflags |= Condition::VAR_WITH_START;
     if (ui->checkDenseBB->isChecked())
         c.varflags |= Condition::VAR_DENSE_BB;
+    if (ui->checkFortress3x1->isChecked())
+        c.varflags |= Condition::VAR_FORTRESS_3X1;
     c.varflags |= tristateFlags(ui->checkAbandoned, Condition::VAR_ABANODONED);
     c.varflags |= tristateFlags(ui->checkEndShip, Condition::VAR_ENDSHIP);
     c.varflags |= tristateFlags(ui->checkBasement, Condition::VAR_BASEMENT);
@@ -1209,7 +1214,7 @@ void ConditionDialog::on_comboCat_currentIndexChanged(int)
             ui->comboType->setItemData(slot, false, Qt::UserRole-1); // deactivate
         if (ft == g_filterinfo.list + F_FORTRESS)
             ui->comboType->insertSeparator(slot++);
-        if (ft == g_filterinfo.list + F_ENDCITY)
+        if (ft == g_filterinfo.list + F_ENDCITYSHIP)
             ui->comboType->insertSeparator(slot++);
     }
 

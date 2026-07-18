@@ -1,6 +1,8 @@
 #include "aboutdialog.h"
 #include "headless.h"
+#include "fortresslayout.h"
 #include "mainwindow.h"
+#include "motioncontroller.h"
 #include "mapview.h"
 #include "tabbiomes.h"
 #include "tablocations.h"
@@ -8,6 +10,7 @@
 #include "tabstructures.h"
 #include "world.h"
 #include "seedtables.h"
+#include "util.h"
 
 #include "seedatlas-engine/util.h"
 #include "seedatlas-engine/quadbase.h"
@@ -29,6 +32,7 @@
 #include <QTimer>
 #include <QTextStream>
 #include <QTreeWidgetItem>
+#include <QTreeWidget>
 
 #include <algorithm>
 #include <array>
@@ -73,6 +77,44 @@ static quint64 processCpuTime100ns()
     }
 #endif
     return 0;
+}
+
+bool testResultTreeSorting(QTextStream& report)
+{
+    constexpr int count = 50000;
+    QTreeWidget tree;
+    tree.setColumnCount(1);
+    configureResultTree(&tree);
+    QList<QTreeWidgetItem*> items;
+    items.reserve(count);
+    for (int index = 0; index < count; ++index)
+    {
+        QTreeWidgetItem *item = new QTreeWidgetItem;
+        item->setData(0, Qt::DisplayRole, (index * 7919) % count);
+        items.push_back(item);
+    }
+    tree.addTopLevelItems(items);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    setResultTreeSort(&tree, 0, Qt::AscendingOrder);
+    const qint64 ascendingMs = elapsed.restart();
+    bool ascending = true;
+    for (int index = 0; index < count; ++index)
+        ascending &= tree.topLevelItem(index)->data(0, Qt::DisplayRole).toInt() == index;
+    setResultTreeSort(&tree, 0, Qt::DescendingOrder);
+    const qint64 descendingMs = elapsed.elapsed();
+    bool descending = true;
+    for (int index = 0; index < count; ++index)
+        descending &= tree.topLevelItem(index)->data(0, Qt::DisplayRole).toInt() == count-1-index;
+
+    const bool ok = ascending && descending && tree.uniformRowHeights() &&
+        !tree.isSortingEnabled();
+    report << "result-table-sort-50000: " << (ok ? "PASS" : "FAIL")
+        << ", ascending_ms=" << ascendingMs
+        << ", descending_ms=" << descendingMs << '\n';
+    report.flush();
+    return ok;
 }
 
 template <class Analysis>
@@ -408,6 +450,279 @@ bool testQuadAnalysis(const QString& name, QTextStream& report, int stype,
     return ok;
 }
 
+bool testDensityAnalysis(QTextStream& report)
+{
+    AnalysisStructures analysis;
+    analysis.wi.reset();
+    analysis.wi.mc = MC_NEWEST;
+    analysis.seeds = {6384876098956146605ULL};
+    analysis.dim = DIM_OVERWORLD;
+    analysis.area = {-100000, -100000, 100000, 100000};
+    std::fill(std::begin(analysis.mapshow), std::end(analysis.mapshow), false);
+    analysis.collect = false;
+    analysis.quad = false;
+    analysis.density = true;
+    analysis.parallelInner = true;
+    analysis.densityHuts = true;
+    analysis.densityMonuments = true;
+    analysis.densityRadius = 128;
+    analysis.densityMinimum = 2;
+    uint64_t delivered = 0;
+    QObject::connect(&analysis, &AnalysisStructures::densityDone, &analysis,
+        [&](QTreeWidgetItem *item) {
+            delivered += item->childCount();
+            delete item;
+        }, Qt::DirectConnection);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    analysis.start();
+    const bool joined = analysis.wait(120000);
+    const qint64 elapsedMs = elapsed.elapsed();
+    if (!joined)
+    {
+        analysis.stop.store(true, std::memory_order_relaxed);
+        analysis.wait(2000);
+    }
+    const uint64_t count = analysis.resultCount.load(std::memory_order_relaxed);
+    const uint64_t done = analysis.workDone.load(std::memory_order_relaxed);
+    const uint64_t total = analysis.workTotal.load(std::memory_order_relaxed);
+    const size_t peak = analysis.workers.peak.load(std::memory_order_relaxed);
+    const bool ok = joined && !analysis.stop.load(std::memory_order_relaxed) &&
+        delivered == count && done == total && peak == mappingThreadCount();
+    report << "density-analysis-minimum-2: " << (ok ? "PASS" : "FAIL")
+        << ", results=" << count
+        << ", delivered=" << delivered
+        << ", tasks=" << done << '/' << total
+        << ", threads=" << peak
+        << ", elapsed_ms=" << elapsedMs << '\n';
+    report.flush();
+    return ok;
+}
+
+static Piece syntheticFortressPiece(int type, int x0, int z0, int x1, int z1,
+        int y = 64)
+{
+    Piece piece = {};
+    piece.type = type;
+    piece.bb0 = {x0, y, z0};
+    piece.bb1 = {x1, y + 8, z1};
+    return piece;
+}
+
+static bool hasLayout(const FortressLayoutResult& result,
+    FortressLayoutType type, FortressLineOrientation orientation = FORTRESS_LINE_NONE,
+    int pieceCount = 0)
+{
+    return std::any_of(result.matches.begin(), result.matches.end(),
+        [&](const FortressLayoutMatch& match) {
+            return match.type == type &&
+                (orientation == FORTRESS_LINE_NONE || match.orientation == orientation) &&
+                (!pieceCount || match.pieceCount == pieceCount);
+        });
+}
+
+static bool legacySquareReference(const std::vector<Piece>& source, Pos *position)
+{
+    std::vector<Piece> pieces;
+    for (const Piece& piece : source)
+        if (piece.type == FORTRESS_START || piece.type == BRIDGE_CROSSING)
+            pieces.push_back(piece);
+    if (pieces.size() < 4)
+        return false;
+    for (size_t i = 0; i < pieces.size(); i++)
+    {
+        int adjacent = 0;
+        for (size_t j = 0; j < pieces.size(); j++)
+        {
+            if (pieces[i].bb0.y != pieces[j].bb0.y) continue;
+            if (pieces[i].bb1.x != pieces[j].bb1.x &&
+                    pieces[i].bb1.x+1 != pieces[j].bb0.x) continue;
+            if (pieces[i].bb1.z != pieces[j].bb1.z &&
+                    pieces[i].bb1.z+1 != pieces[j].bb0.z) continue;
+            adjacent++;
+        }
+        if (adjacent >= 4)
+        {
+            *position = {pieces[i].bb1.x, pieces[i].bb1.z};
+            return true;
+        }
+    }
+    return false;
+}
+
+bool testFortressLayoutDetector(QTextStream& report)
+{
+    const auto crossing = [](int x0, int z0, int x1, int z1, int y = 64) {
+        return syntheticFortressPiece(BRIDGE_CROSSING, x0, z0, x1, z1, y);
+    };
+    const std::vector<Piece> square = {
+        crossing(0, 0, 9, 9), crossing(10, 0, 19, 9),
+        crossing(0, 10, 9, 19), crossing(10, 10, 19, 19),
+    };
+    const std::vector<Piece> horizontal = {
+        crossing(0, 0, 9, 9), crossing(10, 0, 19, 9), crossing(20, 0, 29, 9),
+    };
+    const std::vector<Piece> vertical = {
+        crossing(0, 0, 9, 9), crossing(0, 10, 9, 19), crossing(0, 20, 9, 29),
+    };
+    const std::vector<Piece> four = {
+        crossing(0, 0, 9, 9), crossing(10, 0, 19, 9),
+        crossing(20, 0, 29, 9), crossing(30, 0, 39, 9),
+    };
+    const std::vector<Piece> lshape = {
+        crossing(0, 0, 9, 9), crossing(10, 0, 19, 9), crossing(10, 10, 19, 19),
+    };
+    const std::vector<Piece> levels = {
+        crossing(0, 0, 9, 9), crossing(10, 0, 19, 9), crossing(20, 0, 29, 9, 65),
+    };
+    const std::vector<Piece> gap = {
+        crossing(0, 0, 9, 9), crossing(11, 0, 20, 9), crossing(21, 0, 30, 9),
+    };
+    std::vector<Piece> withStart = horizontal;
+    withStart[1].type = FORTRESS_START;
+    std::vector<Piece> unrelated = horizontal;
+    unrelated[1].type = BRIDGE_STRAIGHT;
+
+    const FortressLayoutResult squareResult = findFortressLayouts(
+        square.data(), int(square.size()), true, true);
+    const FortressLayoutResult horizontalResult = findFortressLayouts(
+        horizontal.data(), int(horizontal.size()), true, true);
+    const FortressLayoutResult verticalResult = findFortressLayouts(
+        vertical.data(), int(vertical.size()), true, true);
+    const FortressLayoutResult fourResult = findFortressLayouts(
+        four.data(), int(four.size()), false, true);
+    const FortressLayoutResult lResult = findFortressLayouts(
+        lshape.data(), int(lshape.size()), true, true);
+    const FortressLayoutResult levelsResult = findFortressLayouts(
+        levels.data(), int(levels.size()), true, true);
+    const FortressLayoutResult gapResult = findFortressLayouts(
+        gap.data(), int(gap.size()), true, true);
+    const FortressLayoutResult startResult = findFortressLayouts(
+        withStart.data(), int(withStart.size()), false, true);
+    const FortressLayoutResult unrelatedResult = findFortressLayouts(
+        unrelated.data(), int(unrelated.size()), false, true);
+
+    Pos legacy = {};
+    const bool oldMatch = legacySquareReference(square, &legacy);
+    const bool compatibility = oldMatch && squareResult.has2x2 &&
+        legacy.x == squareResult.legacy2x2Position.x &&
+        legacy.z == squareResult.legacy2x2Position.z &&
+        legacy.x == 9 && legacy.z == 9;
+    const bool ok = hasLayout(squareResult, FORTRESS_LAYOUT_2X2) &&
+        hasLayout(horizontalResult, FORTRESS_LAYOUT_3X1, FORTRESS_LINE_X, 3) &&
+        hasLayout(verticalResult, FORTRESS_LAYOUT_3X1, FORTRESS_LINE_Z, 3) &&
+        hasLayout(fourResult, FORTRESS_LAYOUT_3X1, FORTRESS_LINE_X, 4) &&
+        !lResult.has3x1 && !levelsResult.has3x1 && !gapResult.has3x1 &&
+        startResult.has3x1 && !unrelatedResult.has3x1 && compatibility;
+    report << "fortress-layout-detector: " << (ok ? "PASS" : "FAIL")
+        << ", square=" << squareResult.has2x2
+        << ", horizontal=" << horizontalResult.has3x1
+        << ", vertical=" << verticalResult.has3x1
+        << ", four-piece=" << fourResult.has3x1
+        << ", l-shape=" << lResult.has3x1
+        << ", levels=" << levelsResult.has3x1
+        << ", gap=" << gapResult.has3x1
+        << ", start=" << startResult.has3x1
+        << ", unrelated=" << unrelatedResult.has3x1
+        << ", legacy-pos=" << legacy.x << '/' << legacy.z << '\n';
+    report.flush();
+    return ok;
+}
+
+struct FortressAnalysisSnapshot
+{
+    QStringList rows;
+    std::vector<std::pair<int,int>> starts;
+    uint64_t resultCount = 0;
+    size_t workDone = 0;
+    size_t workTotal = 0;
+    size_t peak = 0;
+};
+
+static FortressAnalysisSnapshot runFortressSnapshot(bool parallel)
+{
+    AnalysisStructures analysis;
+    analysis.wi.reset();
+    analysis.wi.mc = MC_NEWEST;
+    analysis.wi.seed = 6384876098956146605ULL;
+    analysis.dim = DIM_NETHER;
+    analysis.area = {-16384, -16384, 16384, 16384};
+    analysis.parallelInner = parallel;
+    analysis.fortress = true;
+    analysis.fortress2x2 = true;
+    analysis.fortress3x1 = true;
+    FortressAnalysisSnapshot snapshot;
+    QObject::connect(&analysis, &AnalysisStructures::fortressDone, &analysis,
+        [&](QTreeWidgetItem *seedItem) {
+            for (int fortressIndex = 0;
+                    fortressIndex < seedItem->childCount(); fortressIndex++)
+            {
+                QTreeWidgetItem *fortress = seedItem->child(fortressIndex);
+                const int startX = fortress->data(2, Qt::DisplayRole).toInt();
+                const int startZ = fortress->data(3, Qt::DisplayRole).toInt();
+                snapshot.starts.emplace_back(startX, startZ);
+                for (int matchIndex = 0;
+                        matchIndex < fortress->childCount(); matchIndex++)
+                {
+                    QTreeWidgetItem *match = fortress->child(matchIndex);
+                    QStringList columns;
+                    for (int column = 1; column <= 10; column++)
+                        columns << match->text(column);
+                    snapshot.rows << columns.join(QLatin1Char('|'));
+                }
+            }
+            delete seedItem;
+        }, Qt::DirectConnection);
+    Generator generator;
+    setupGenerator(&generator, analysis.wi.mc, analysis.wi.large);
+    analysis.workers.reset();
+    analysis.runFortresses(&generator);
+    snapshot.resultCount = analysis.resultCount.load(std::memory_order_relaxed);
+    snapshot.workDone = analysis.workDone.load(std::memory_order_relaxed);
+    snapshot.workTotal = analysis.workTotal.load(std::memory_order_relaxed);
+    snapshot.peak = analysis.workers.peak.load(std::memory_order_relaxed);
+    return snapshot;
+}
+
+bool testFortressAnalysis(QTextStream& report)
+{
+    QElapsedTimer elapsed;
+    elapsed.start();
+    FortressAnalysisSnapshot serial = runFortressSnapshot(false);
+    FortressAnalysisSnapshot parallel = runFortressSnapshot(true);
+    const bool sorted = std::is_sorted(parallel.starts.begin(), parallel.starts.end());
+    const bool noDuplicates = std::adjacent_find(parallel.starts.begin(),
+        parallel.starts.end()) == parallel.starts.end();
+    const bool same = serial.rows == parallel.rows &&
+        serial.starts == parallel.starts &&
+        serial.resultCount == parallel.resultCount;
+    const bool progress = serial.workDone == serial.workTotal &&
+        parallel.workDone == parallel.workTotal;
+    const QByteArray rows = parallel.rows.join(QLatin1Char('\n')).toUtf8();
+    const QString hash = QString::fromLatin1(
+        QCryptographicHash::hash(rows, QCryptographicHash::Sha256).toHex());
+    const bool expectedRegression = parallel.resultCount == 300 &&
+        parallel.rows.size() == 311 &&
+        hash.compare(QStringLiteral(
+            "7bb43b382790f67e584ab820c9671027729366eb15edb7953b7c93f3d35526c1"),
+            Qt::CaseInsensitive) == 0;
+    const bool ok = same && expectedRegression && sorted && noDuplicates &&
+        parallel.resultCount == parallel.starts.size() && progress &&
+        parallel.peak == mappingThreadCount();
+    report << "fortress-analysis: " << (ok ? "PASS" : "FAIL")
+        << ", fortresses=" << parallel.resultCount
+        << ", matches=" << parallel.rows.size()
+        << ", duplicate-free=" << noDuplicates
+        << ", serial-equal=" << same
+        << ", tasks=" << parallel.workDone << '/' << parallel.workTotal
+        << ", threads=" << parallel.peak
+        << ", sha256=" << hash
+        << ", elapsed_ms=" << elapsed.elapsed() << '\n';
+    report.flush();
+    return ok;
+}
+
 static std::vector<std::pair<int,int>> structureCoordinates(
         const std::vector<VarPos>& positions)
 {
@@ -458,7 +773,7 @@ bool testStructureCompleteness(QTextStream& report)
             for (int groupIndex = 0; groupIndex < seedItem->childCount(); groupIndex++)
             {
                 QTreeWidgetItem *group = seedItem->child(groupIndex);
-                if (group->text(1) != struct2str(Geode))
+                if (group->text(1) != mapopt2display(D_GEODE))
                     continue;
                 reportedCount += group->data(2, Qt::DisplayRole).toULongLong();
                 for (int index = 0; index < group->childCount(); index++)
@@ -607,6 +922,34 @@ int runMappingSelfTest(const QString& reportPath)
     QTextStream report(&file);
     bool ok = true;
 
+    Config defaults;
+    const int ideal = std::max(1, QThread::idealThreadCount());
+    const bool cpuLimitOk = defaults.cpuUsagePercent == 80 &&
+        defaults.mapThreads == threadCountForCpuUsage(80) &&
+        threadCountForCpuUsage(100) == ideal && threadCountForCpuUsage(1) >= 1;
+    report << "cpu-usage-limit: " << (cpuLimitOk ? "PASS" : "FAIL")
+        << ", logical=" << ideal << ", default_percent=" << defaults.cpuUsagePercent
+        << ", default_threads=" << defaults.mapThreads << '\n';
+    ok &= cpuLimitOk;
+    ok &= testResultTreeSorting(report);
+
+    ok &= testFortressLayoutDetector(report);
+    ok &= testFortressAnalysis(report);
+    {
+        AnalysisStructures analysis;
+        analysis.wi.reset();
+        analysis.wi.mc = MC_NEWEST;
+        analysis.seeds = {6384876098956146605ULL};
+        analysis.dim = DIM_NETHER;
+        analysis.area = {-30000000, -30000000, 30000000, 30000000};
+        std::fill(std::begin(analysis.mapshow), std::end(analysis.mapshow), false);
+        analysis.parallelInner = true;
+        analysis.fortress = true;
+        analysis.fortress2x2 = true;
+        analysis.fortress3x1 = true;
+        ok &= testMappingStop("fortress-analysis-stop", analysis, report);
+    }
+
     {
         AnalysisBiomes analysis;
         analysis.wi.reset();
@@ -668,6 +1011,7 @@ int runMappingSelfTest(const QString& reportPath)
         3740936736371ULL, 39);
     ok &= testQuadAnalysis("quad-monuments-analysis", report, Monument,
         3981767442920597ULL, 1);
+    ok &= testDensityAnalysis(report);
     {
         AnalysisStructures analysis;
         analysis.wi.reset();
@@ -793,8 +1137,7 @@ int main(int argc, char *argv[])
         if (reportPath.isEmpty())
             reportPath = QDir::current().absoluteFilePath("mapping-self-test.txt");
         QApplication app(argc, argv);
-        QThreadPool::globalInstance()->setMaxThreadCount(
-            std::max(1, QThread::idealThreadCount()));
+        QThreadPool::globalInstance()->setMaxThreadCount(configuredThreadCount());
         return runMappingSelfTest(reportPath);
     }
 
@@ -823,8 +1166,7 @@ int main(int argc, char *argv[])
     if (nogui)
     {
         QCoreApplication app(argc, argv);
-        QThreadPool::globalInstance()->setMaxThreadCount(
-            std::max(1, QThread::idealThreadCount()));
+        QThreadPool::globalInstance()->setMaxThreadCount(configuredThreadCount());
         Headless headless(sessionpath, resultspath, clear, &app);
 
         QObject::connect(&headless, SIGNAL(finished()), &app, SLOT(quit()));
@@ -838,8 +1180,11 @@ int main(int argc, char *argv[])
         QApplication::setAttribute(Qt::AA_UseStyleSheetPropagationInWidgetStyles, false);
 
         QApplication app(argc, argv);
-        QThreadPool::globalInstance()->setMaxThreadCount(
-            std::max(1, QThread::idealThreadCount()));
+        QThreadPool::globalInstance()->setMaxThreadCount(configuredThreadCount());
+
+        // Installed before any windows are constructed so dynamically created
+        // dialogs, menus, stacked pages and tabs share the same motion language.
+        MotionController motion(&app);
 
         // Keep automated first-run checks separate from the user's real,
         // registry-backed settings. QSettings needs the application object to
@@ -933,6 +1278,36 @@ int main(int argc, char *argv[])
                         nether->trigger(); // the newly active action must also stay selected
                         interactionOk = interactionOk && !overworld->isChecked()
                             && nether->isChecked() && !end->isChecked();
+                    }
+                }
+                if (qEnvironmentVariableIsSet("SEED_ATLAS_UI_TEST_FORTRESSES"))
+                {
+                    TabStructures *structures = mw.findChild<TabStructures *>();
+                    QTabWidget *analysisTabs = structures
+                        ? structures->findChild<QTabWidget *>("tabWidget") : nullptr;
+                    QWidget *fortressTab = structures
+                        ? structures->findChild<QWidget *>("tabFortresses") : nullptr;
+                    QAction *overworld = mw.findChild<QAction *>("dimensionAction0");
+                    QAction *nether = mw.findChild<QAction *>("dimensionAction1");
+                    QAction *end = mw.findChild<QAction *>("dimensionAction2");
+                    const int fortressIndex = analysisTabs && fortressTab
+                        ? analysisTabs->indexOf(fortressTab) : -1;
+                    interactionOk = interactionOk && structures && analysisTabs &&
+                        fortressTab && fortressIndex >= 0 && overworld && nether && end;
+                    if (interactionOk)
+                    {
+                        overworld->trigger();
+                        interactionOk = !analysisTabs->isTabEnabled(fortressIndex);
+                        nether->trigger();
+                        interactionOk = interactionOk &&
+                            analysisTabs->isTabEnabled(fortressIndex);
+                        analysisTabs->setCurrentIndex(fortressIndex);
+                        end->trigger();
+                        interactionOk = interactionOk &&
+                            !analysisTabs->isTabEnabled(fortressIndex) &&
+                            analysisTabs->currentWidget() != fortressTab;
+                        nether->trigger();
+                        analysisTabs->setCurrentIndex(fortressIndex);
                     }
                 }
                 if (qEnvironmentVariableIsSet("SEED_ATLAS_UI_TEST_MAP_CACHE"))

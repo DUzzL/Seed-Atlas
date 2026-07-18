@@ -154,7 +154,8 @@ TabLocations::TabLocations(MainWindow *parent)
     ui->treeWidget->header()->setMinimumSectionSize(24);
     ui->treeWidget->header()->setSectionResizeMode(QHeaderView::Stretch);
     ui->treeWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    ui->treeWidget->setSortingEnabled(false); // sortable triggers are not necessary
+    configureResultTree(ui->treeWidget);
+    ui->treeWidget->header()->setSectionsClickable(false); // sortable triggers are not necessary
 
     ui->comboSampling->addItem(tr("Lattice points in radial order") + ", ||α·n, α·m|| < r", SMODE_RADIAL_GRID);
     ui->comboSampling->addItem(tr("Square spiral") + ", (α·n, α·m)", SMODE_SQUARE_SPIRAL);

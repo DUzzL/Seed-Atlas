@@ -1,0 +1,44 @@
+app-id: org.seedatlas.SeedAtlas
+runtime: org.kde.Platform
+runtime-version: "6.8"
+sdk: org.kde.Sdk
+command: seed-atlas
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --filesystem=home
+
+modules:
+  - name: seed-atlas
+    buildsystem: simple
+    build-commands:
+      - qmake6 CONFIG+=release PREFIX=/app seed-atlas.pro
+      - make -j${FLATPAK_BUILDER_N_JOBS}
+      - install -Dm755 seed-atlas /app/bin/seed-atlas
+      - install -Dm644 etc/org.seedatlas.SeedAtlas.desktop /app/share/applications/org.seedatlas.SeedAtlas.desktop
+      - install -Dm644 etc/org.seedatlas.SeedAtlas.metainfo.xml /app/share/metainfo/org.seedatlas.SeedAtlas.metainfo.xml
+      - install -Dm644 etc/icon.svg /app/share/icons/hicolor/scalable/apps/org.seedatlas.SeedAtlas.svg
+      - install -Dm644 LICENSE /app/share/licenses/org.seedatlas.SeedAtlas/LICENSE
+      - install -Dm644 LEGAL_NOTICE.md /app/share/doc/seed-atlas/LEGAL_NOTICE.md
+      - install -Dm644 THIRD_PARTY_NOTICES.md /app/share/doc/seed-atlas/THIRD_PARTY_NOTICES.md
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - build-*
+          - dist
+          - "*.dll"
+          - "*.exe"
+          - "*.o"
+          - "*.a"
+          - generic
+          - iconengines
+          - imageformats
+          - networkinformation
+          - platforms
+          - styles
+          - tls

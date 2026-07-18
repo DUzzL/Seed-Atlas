@@ -1,0 +1,49 @@
+name: Native packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SEED_ATLAS_VERSION: 4.2.dev0
+
+jobs:
+  flatpak:
+    name: Linux Flatpak
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+      - name: Build Flatpak bundle
+        run: bash installer/flatpak/build-flatpak.sh "$SEED_ATLAS_VERSION"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-Linux-Flatpak
+          path: dist/*.flatpak
+          if-no-files-found: error
+
+  dmg:
+    name: macOS universal DMG
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Qt 6.8.3 universal SDK
+        run: |
+          python3 -m pip install --user aqtinstall
+          python3 -m aqt install-qt mac desktop 6.8.3 clang_64 --outputdir "$HOME/Qt"
+      - name: Build universal DMG
+        env:
+          SEED_ATLAS_UNIVERSAL: "1"
+        run: |
+          export QT_PREFIX="$HOME/Qt/6.8.3/macos"
+          bash installer/macos/build-dmg.sh "$SEED_ATLAS_VERSION"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-macOS-DMG
+          path: dist/*.dmg
+          if-no-files-found: error

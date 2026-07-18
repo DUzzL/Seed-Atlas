@@ -148,7 +148,6 @@ const QPixmap& getMapIcon(int opt, VarPos *vp)
     static QPixmap icons[D_STRUCT_NUM];
     static QPixmap iconzvil;
     static QPixmap icongiant;
-    static QPixmap iconship;
     static QPixmap iconbasement;
     static QPixmap iconorecopper;
     static QMutex mutex;
@@ -162,7 +161,6 @@ const QPixmap& getMapIcon(int opt, VarPos *vp)
         icons[D_PORTALN] = icons[D_PORTAL];
         iconzvil         = getPix("zombie", w);
         icongiant        = getPix("portal_giant", w);
-        iconship         = getPix("end_ship", w);
         iconbasement     = getPix("igloo_basement", w);
         iconorecopper    = getPix("orevein_copper", w);
     }
@@ -178,12 +176,6 @@ const QPixmap& getMapIcon(int opt, VarPos *vp)
         return iconbasement;
     if ((opt == D_PORTAL || opt == D_PORTALN) && vp->v.giant)
         return icongiant;
-    if (opt == D_ENDCITY)
-    {
-        for (Piece& p : vp->pieces)
-            if (p.type == END_SHIP)
-                return iconship;
-    }
     return icons[opt];
 }
 
@@ -302,7 +294,7 @@ Quad::~Quad()
 
 uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
         WorldInfo wi, int dim, int x0, int z0, int x1, int z1, bool nogen,
-        const std::atomic_bool *abort)
+        const std::atomic_bool *abort, int endCityVariant)
 {
     uint64_t count = 0;
     int si0 = floordiv(x0, sconf.regionSize * 16);
@@ -333,41 +325,58 @@ uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
             if (p.x >= x0 && p.x < x1 && p.z >= z0 && p.z < z1)
             {
                 VarPos vp = VarPos(p, sconf.structType);
-                if (nogen)
+                // In structure-only mode most overlays intentionally skip
+                // terrain generation. End cities still need their pieces
+                // generated when a ship/no-ship layer is selected.
+                if (nogen && (sconf.structType != End_City || !endCityVariant))
                 {
                     if (out)
                         out->push_back(vp);
                     count++;
                     continue;
                 }
-                int id = isViableStructurePos(sconf.structType, &g, p.x, p.z, 0);
-                if (!id)
-                    continue;
+                int id = 1;
+                if (!nogen)
+                {
+                    id = isViableStructurePos(sconf.structType, &g, p.x, p.z, 0);
+                    if (!id)
+                        continue;
+                }
                 Piece pieces[1024];
 
                 if (sconf.structType == End_City)
                 {
-                    SurfaceNoise sn;
-                    initSurfaceNoise(&sn, DIM_END, wi.seed);
-                    int y = isViableEndCityTerrain(&g, &sn, p.x, p.z);
-                    if (!y)
-                        continue;
-                    if (out)
+                    int y = 0;
+                    if (!nogen)
                     {
-                        int n = getEndCityPieces(pieces, wi.seed, p.x >> 4, p.z >> 4);
-                        if (n)
-                        {
-                            vp.pieces.assign(pieces, pieces+n);
-                            vp.pieces[0].bb0.y = y; // height of end city pieces are relative to surface
-                        }
+                        SurfaceNoise sn;
+                        initSurfaceNoise(&sn, DIM_END, wi.seed);
+                        y = isViableEndCityTerrain(&g, &sn, p.x, p.z);
+                        if (!y)
+                            continue;
+                    }
+                    int n = getEndCityPieces(pieces, wi.seed, p.x >> 4, p.z >> 4);
+                    bool withship = false;
+                    for (int i = 0; i < n; i++)
+                        withship |= pieces[i].type == END_SHIP;
+                    if ((endCityVariant > 0 && !withship) ||
+                        (endCityVariant < 0 && withship))
+                    {
+                        continue;
+                    }
+                    if (out && n)
+                    {
+                        vp.pieces.assign(pieces, pieces+n);
+                        if (y)
+                            vp.pieces[0].bb0.y = y; // height is relative to the surface
                     }
                 }
-                else if (sconf.structType == Ruined_Portal || sconf.structType == Ruined_Portal_N)
+                else if (!nogen && (sconf.structType == Ruined_Portal || sconf.structType == Ruined_Portal_N))
                 {
                     if (out)
                         id = getBiomeAt(&g, 4, (p.x >> 2) + 2, 0, (p.z >> 2) + 2);
                 }
-                else if (sconf.structType == Fortress)
+                else if (!nogen && sconf.structType == Fortress)
                 {
                     if (out)
                     {
@@ -376,7 +385,7 @@ uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
                         vp.pieces.assign(pieces, pieces+n);
                     }
                 }
-                else if (g.mc >= MC_1_18)
+                else if (!nogen && g.mc >= MC_1_18)
                 {
                     if (g_extgen.estimateTerrain &&
                         !isViableStructureTerrain(sconf.structType, &g, p.x, p.z))
@@ -680,7 +689,12 @@ void Quad::run()
             std::vector<VarPos>* st = new std::vector<VarPos>();
             StructureConfig sconf;
             if (getStructureConfig_override(structureType, wi.mc, &sconf))
-                getStructs(st, sconf, wi, dim, x0, z0, x1, z1, lopt.mode == LOPT_STRUCTS);
+            {
+                const int endCityVariant = sopt == D_ENDCITYSHIP ? 1 :
+                    sopt == D_ENDCITY ? -1 : 0;
+                getStructs(st, sconf, wi, dim, x0, z0, x1, z1,
+                    lopt.mode == LOPT_STRUCTS, nullptr, endCityVariant);
+            }
             spos = st;
         }
     }

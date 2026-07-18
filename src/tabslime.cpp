@@ -1,6 +1,7 @@
 #include "tabslime.h"
 
 #include "message.h"
+#include "util.h"
 
 #include <QGridLayout>
 #include <QHeaderView>
@@ -271,11 +272,13 @@ TabSlime::TabSlime(MainWindow *parent)
     results->setHeaderLabels({tr("slime"), tr("window"), tr("chunk X1"), tr("chunk Z1"),
         tr("chunk X2"), tr("chunk Z2"), tr("block X1"), tr("block Z1"),
         tr("block X2"), tr("block Z2")});
-    results->setSortingEnabled(true);
-    results->sortByColumn(0, Qt::DescendingOrder);
+    configureResultTree(results);
+    setResultTreeSort(results, 0, Qt::DescendingOrder, false);
     results->header()->setMinimumSectionSize(24);
     results->header()->setSectionResizeMode(QHeaderView::Stretch);
     results->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    connect(results->header(), &QHeaderView::sectionClicked, this,
+        [this](int section) { cycleResultTreeSort(results, section); });
     layout->addWidget(results, 1);
 
     QHBoxLayout *actions = new QHBoxLayout;
@@ -347,7 +350,6 @@ void TabSlime::onStartClicked()
     thread.window = spinWindow->value();
     thread.minimum = std::min(spinMinimum->value(), thread.window * thread.window);
     results->clear();
-    results->setSortingEnabled(false);
     pushExport->setEnabled(false);
     pushStart->setText(tr("Stop"));
     thread.stop = false;
@@ -430,7 +432,9 @@ void TabSlime::onFromVisible()
 
 void TabSlime::onResultReady(QTreeWidgetItem *item)
 {
+    results->setUpdatesEnabled(false);
     results->addTopLevelItems(item->takeChildren());
+    results->setUpdatesEnabled(true);
     delete item;
 }
 
@@ -441,8 +445,7 @@ void TabSlime::onFailed(const QString& message)
 
 void TabSlime::onFinished()
 {
-    results->setSortingEnabled(true);
-    results->sortByColumn(0, Qt::DescendingOrder);
+    resortResultTree(results);
     pushStart->setText(tr("Analyze"));
     pushExport->setEnabled(!thread.stop && results->topLevelItemCount() > 0);
 }
