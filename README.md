@@ -33,6 +33,8 @@ Seed Atlas is licensed under the [GNU GPLv3](LICENSE). Attribution and bundled
 component licenses are documented in [LEGAL_NOTICE.md](LEGAL_NOTICE.md) and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+Seed Atlas is based on cubiomes-viewer by Cubitect. 
+
 Seed Atlas is not an official Minecraft product and is not associated with
 Mojang or Microsoft.
 
