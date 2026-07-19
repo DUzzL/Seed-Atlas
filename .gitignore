@@ -4,12 +4,23 @@ dist/
 *.o
 *.a
 
+# Generated Windows application and deployment runtime
+/seed-atlas.exe
+/*.dll
+/generic/
+/iconengines/
+/imageformats/
+/networkinformation/
+/platforms/
+/styles/
+/tls/
+
 # Qt Creator and qmake
 *.pro.user*
 .qmake.stash
-Makefile
-Makefile.Debug
-Makefile.Release
+/Makefile
+/Makefile.Debug
+/Makefile.Release
 
 # Editor and operating-system files
 .idea/

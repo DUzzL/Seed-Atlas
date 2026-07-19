@@ -14,7 +14,7 @@ command -v flatpak-builder >/dev/null || { echo "flatpak-builder is required" >&
 architecture="$(flatpak --default-arch)"
 
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install --user -y flathub org.kde.Platform//6.8 org.kde.Sdk//6.8
+flatpak install --user -y flathub org.kde.Platform//6.10 org.kde.Sdk//6.10
 mkdir -p "$dist_dir"
 flatpak-builder --user --force-clean --default-branch=stable \
   --repo="$repo_dir" "$build_dir" "$manifest"

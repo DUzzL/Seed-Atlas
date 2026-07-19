@@ -1,6 +1,7 @@
 param(
     [string]$Version = "4.2.dev0",
     [string]$QtBin = "C:\Qt\6.8.3\mingw_64\bin",
+    [string]$MingwBin = "C:\Qt\Tools\mingw1310_64\bin",
     [string]$InnoCompiler = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
 )
 
@@ -11,12 +12,32 @@ $portable = Join-Path $dist "Seed-Atlas-$Version-Windows-x64-Portable"
 $sourceArchive = Join-Path $dist "Seed-Atlas-$Version-Source.zip"
 $sourceStage = Join-Path $dist "source-stage"
 $sourceFolder = Join-Path $sourceStage "Seed-Atlas-$Version-Source"
+$build = Join-Path $projectRoot "build-windows"
 $deployTool = Join-Path $QtBin "windeployqt.exe"
-$application = Join-Path $projectRoot "seed-atlas.exe"
+$qmake = Join-Path $QtBin "qmake.exe"
+$make = Join-Path $MingwBin "mingw32-make.exe"
+$application = Join-Path $build "release\seed-atlas.exe"
 
-if (!(Test-Path -LiteralPath $application)) { throw "Missing application: $application" }
 if (!(Test-Path -LiteralPath $deployTool)) { throw "Missing windeployqt: $deployTool" }
+if (!(Test-Path -LiteralPath $qmake)) { throw "Missing qmake: $qmake" }
+if (!(Test-Path -LiteralPath $make)) { throw "Missing MinGW make: $make" }
 if (!(Test-Path -LiteralPath $InnoCompiler)) { throw "Missing Inno Setup compiler: $InnoCompiler" }
+
+New-Item -ItemType Directory -Path $build -Force | Out-Null
+$oldPath = $env:PATH
+try {
+    $env:PATH = "$MingwBin;$QtBin;$oldPath"
+    Push-Location $build
+    & $qmake -o Makefile "CONFIG+=release" (Join-Path $projectRoot "seed-atlas.pro")
+    if ($LASTEXITCODE -ne 0) { throw "qmake failed with exit code $LASTEXITCODE" }
+    & $make "-j$([Environment]::ProcessorCount)"
+    if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
+}
+finally {
+    Pop-Location
+    $env:PATH = $oldPath
+}
+if (!(Test-Path -LiteralPath $application)) { throw "Build did not create: $application" }
 
 New-Item -ItemType Directory -Path $dist -Force | Out-Null
 foreach ($target in @($portable, $sourceArchive, $sourceStage)) {
@@ -32,7 +53,7 @@ foreach ($file in @("LICENSE", "LEGAL_NOTICE.md", "THIRD_PARTY_NOTICES.md", "REA
 }
 
 New-Item -ItemType Directory -Path $sourceFolder -Force | Out-Null
-foreach ($directory in @("src", "seedatlas-engine", "lua", "rc", "etc", "installer")) {
+foreach ($directory in @(".github", "src", "seedatlas-engine", "lua", "rc", "etc", "installer")) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $directory) -Destination $sourceFolder -Recurse
 }
 foreach ($file in @("seed-atlas.pro", "buildguide.md", "README.md", "LICENSE", "LEGAL_NOTICE.md", "THIRD_PARTY_NOTICES.md", "SOURCE_CODE.md", ".gitignore")) {
