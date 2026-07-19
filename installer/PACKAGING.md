@@ -50,7 +50,7 @@ Then run from the project root:
 bash installer/flatpak/build-flatpak.sh 4.2.dev0
 ```
 
-The script installs the KDE/Qt 6.8 runtime for the current user and creates one
+The script installs the supported KDE/Qt 6.10 runtime for the current user and creates one
 of these, depending on the Linux machine's architecture:
 
 ```text

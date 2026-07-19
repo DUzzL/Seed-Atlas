@@ -173,7 +173,8 @@ void AnalysisSlime::run()
             item->setData(7, Qt::DisplayRole, bz1);
             item->setData(8, Qt::DisplayRole, bx2);
             item->setData(9, Qt::DisplayRole, bz2);
-            item->setData(0, Qt::UserRole, wi.seed);
+            item->setData(0, Qt::UserRole,
+                QVariant::fromValue<qulonglong>(static_cast<qulonglong>(wi.seed)));
             item->setData(0, Qt::UserRole+1, bx1);
             item->setData(0, Qt::UserRole+2, bz1);
             item->setData(0, Qt::UserRole+3, bx2);

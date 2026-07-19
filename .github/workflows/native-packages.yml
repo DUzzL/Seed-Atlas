@@ -34,8 +34,9 @@ jobs:
       - uses: actions/checkout@v6
       - name: Install Qt 6.8.3 universal SDK
         run: |
-          python3 -m pip install --user aqtinstall
-          python3 -m aqt install-qt mac desktop 6.8.3 clang_64 --outputdir "$HOME/Qt"
+          python3 -m venv "$RUNNER_TEMP/aqt-venv"
+          "$RUNNER_TEMP/aqt-venv/bin/python" -m pip install aqtinstall
+          "$RUNNER_TEMP/aqt-venv/bin/python" -m aqt install-qt mac desktop 6.8.3 clang_64 --outputdir "$HOME/Qt"
       - name: Build universal DMG
         env:
           SEED_ATLAS_UNIVERSAL: "1"
