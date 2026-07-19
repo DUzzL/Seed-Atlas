@@ -18,9 +18,9 @@ dist/
 # Qt Creator and qmake
 *.pro.user*
 .qmake.stash
-Makefile
-Makefile.Debug
-Makefile.Release
+/Makefile
+/Makefile.Debug
+/Makefile.Release
 
 # Editor and operating-system files
 .idea/
