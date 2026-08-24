@@ -1,6 +1,7 @@
 CC ?= gcc
 AR ?= ar
 ARFLAGS = rcs
+LDLIBS ?= -lm
 
 SOURCES := finders.c generator.c layers.c biomenoise.c biomes.c noise.c util.c quadbase.c
 OBJECTS := $(SOURCES:.c=.o)
@@ -18,7 +19,7 @@ libseedatlas-engine.a: $(OBJECTS)
 	$(CC) $(CFLAGS) -Wall -Wextra -c -o $@ $<
 
 test-versions: tests_versions.c $(OBJECTS)
-	$(CC) $(CFLAGS) -Wall -Wextra -o $@ $^
+	$(CC) $(CFLAGS) -Wall -Wextra -o $@ $^ $(LDLIBS)
 
 clean:
 	$(RM) $(OBJECTS) libseedatlas-engine.a test-versions
