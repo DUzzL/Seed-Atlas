@@ -30,19 +30,75 @@ jobs:
   dmg:
     name: macOS universal DMG
     runs-on: macos-15
+    environment: macos-release
     steps:
       - uses: actions/checkout@v6
+      - name: Require macOS distribution credentials
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          : "${MACOS_CERTIFICATE_P12:?Missing MACOS_CERTIFICATE_P12 secret}"
+          : "${MACOS_CERTIFICATE_PASSWORD:?Missing MACOS_CERTIFICATE_PASSWORD secret}"
+          : "${APPLE_ID:?Missing APPLE_ID secret}"
+          : "${APPLE_APP_SPECIFIC_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD secret}"
+          : "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID secret}"
       - name: Install Qt 6.8.3 universal SDK
         run: |
           python3 -m venv "$RUNNER_TEMP/aqt-venv"
-          "$RUNNER_TEMP/aqt-venv/bin/python" -m pip install aqtinstall
-          "$RUNNER_TEMP/aqt-venv/bin/python" -m aqt install-qt mac desktop 6.8.3 clang_64 --outputdir "$HOME/Qt"
-      - name: Build universal DMG
+          "$RUNNER_TEMP/aqt-venv/bin/python" -m pip install aqtinstall==3.3.0
+          "$RUNNER_TEMP/aqt-venv/bin/python" -m aqt install-qt mac desktop 6.8.3 clang_64 \
+            --outputdir "$HOME/Qt"
+      - name: Build unsigned universal app
         env:
           SEED_ATLAS_UNIVERSAL: "1"
+          SEED_ATLAS_BUILD_ONLY: "1"
         run: |
           export QT_PREFIX="$HOME/Qt/6.8.3/macos"
           bash installer/macos/build-dmg.sh "$SEED_ATLAS_VERSION"
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          certificate_path="$RUNNER_TEMP/developer-id.p12"
+          keychain_path="$RUNNER_TEMP/seed-atlas-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+
+          printf '%s' "$MACOS_CERTIFICATE_P12" |
+            openssl base64 -d -A -out "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+          identity="$(security find-identity -v -p codesigning "$keychain_path" |
+            sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' |
+            head -n 1)"
+          test -n "$identity"
+          echo "MACOS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+      - name: Package, sign, and notarize DMG
+        env:
+          SEED_ATLAS_PACKAGE_ONLY: "1"
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          export QT_PREFIX="$HOME/Qt/6.8.3/macos"
+          bash installer/macos/build-dmg.sh "$SEED_ATLAS_VERSION"
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          security delete-keychain \
+            "$RUNNER_TEMP/seed-atlas-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/developer-id.p12"
       - uses: actions/upload-artifact@v7
         with:
           name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-macOS-DMG

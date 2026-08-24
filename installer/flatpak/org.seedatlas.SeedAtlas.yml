@@ -20,7 +20,7 @@ modules:
       - install -Dm755 seed-atlas /app/bin/seed-atlas
       - install -Dm644 etc/org.seedatlas.SeedAtlas.desktop /app/share/applications/org.seedatlas.SeedAtlas.desktop
       - install -Dm644 etc/org.seedatlas.SeedAtlas.metainfo.xml /app/share/metainfo/org.seedatlas.SeedAtlas.metainfo.xml
-      - install -Dm644 etc/icon.svg /app/share/icons/hicolor/scalable/apps/org.seedatlas.SeedAtlas.svg
+      - install -Dm644 rc/icons/logo.png /app/share/icons/hicolor/128x128/apps/org.seedatlas.SeedAtlas.png
       - install -Dm644 LICENSE /app/share/licenses/org.seedatlas.SeedAtlas/LICENSE
       - install -Dm644 LEGAL_NOTICE.md /app/share/doc/seed-atlas/LEGAL_NOTICE.md
       - install -Dm644 THIRD_PARTY_NOTICES.md /app/share/doc/seed-atlas/THIRD_PARTY_NOTICES.md

@@ -1,0 +1,42 @@
+name: Tests
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  engine-versions:
+    name: Engine version regression tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build version tests
+        run: make -C seedatlas-engine test-versions
+      - name: Run version tests
+        run: ./seedatlas-engine/test-versions
+
+  packaging-metadata:
+    name: Packaging metadata regression tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify Flatpak Seed Atlas icon
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from struct import unpack
+
+          manifest = Path("installer/flatpak/org.seedatlas.SeedAtlas.yml").read_text()
+          expected = (
+              "install -Dm644 rc/icons/logo.png "
+              "/app/share/icons/hicolor/128x128/apps/"
+              "org.seedatlas.SeedAtlas.png"
+          )
+          assert expected in manifest
+          assert "etc/icon.svg /app/share/icons" not in manifest
+
+          png = Path("rc/icons/logo.png").read_bytes()
+          assert png[:8] == b"\x89PNG\r\n\x1a\n"
+          assert unpack(">II", png[16:24]) == (128, 128)
+          PY
