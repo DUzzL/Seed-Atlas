@@ -133,6 +133,104 @@ int main(void)
     assertStructureConfig(Bastion,        MC_26_2, 27, 4, 30084232);
     assertStructureConfig(End_City,       MC_26_2, 20, 11, 10387313);
 
+    /* End City random-spread placement has stayed at spacing 20,
+       separation 11, triangular spreading, and salt 10387313 since 1.9.
+       Exercise every supported release so a future version branch cannot
+       silently change its candidate coordinates or skip the terrain rule. */
+    for (int mc = MC_1_9; mc <= MC_NEWEST; mc++)
+    {
+        Generator end;
+        SurfaceNoise surface;
+        const uint64_t seed = UINT64_C(8371904829);
+
+        assertStructureConfig(End_City, mc, 20, 11, 10387313);
+        assertStructurePos(End_City, mc, seed, 4, -4, 1360, -1248);
+
+        setupGenerator(&end, mc, 0);
+        applySeed(&end, DIM_END, seed);
+        initSurfaceNoise(&surface, DIM_END, seed);
+
+        /* Both starts pass the End biome rule, but Vanilla's rotated 5x5
+           minimum-height check rejects the first and accepts the second. */
+        assert(isViableStructurePos(End_City, &end, 1072, 64, 0));
+        assert(isViableEndCityTerrain(&end, &surface, 1072, 64) == 0);
+        assert(isViableStructurePos(End_City, &end, -592, -896, 0));
+        assert(isViableEndCityTerrain(&end, &surface, -592, -896) >= 60);
+    }
+
+    {
+        /* This mixed seed makes the first next(31) value fall in Java's
+           nextInt(9) rejection tail. A simple `% 9` implementation instead
+           shifts all later triangular-spread draws to block (48, 64). */
+        StructureConfig config;
+        assert(getStructureConfig(End_City, MC_1_9, &config));
+        Pos chunk = getLargeStructureChunkInRegion(config,
+            UINT64_C(266262701690195), 0, 0);
+        assert(chunk.x == 5 && chunk.z == 5);
+
+        /* Preserve the same mixed RNG seed in a region outside the central
+           End exclusion radius and verify the public block-coordinate API. */
+        assertStructurePos(End_City, MC_1_9, UINT64_C(264895209175347),
+            4, 0, 1360, 80);
+        assertStructurePos(End_City, MC_NEWEST, UINT64_C(264895209175347),
+            4, 0, 1360, 80);
+
+        /* The helper is shared by every built-in triangular placement. */
+        assertStructurePos(Monument, MC_NEWEST, UINT64_C(138460028882259),
+            0, 0, 112, 304);
+        assertStructurePos(Mansion, MC_NEWEST, UINT64_C(181071668596045),
+            0, 0, 336, 576);
+    }
+
+    {
+        /* LINEAR random-spread placements use the same Java rejection rule.
+           These deliberately rare seeds put the first draw in the rejection
+           tail and exercise both Overworld and Nether public API paths. */
+        Pos pos;
+        assertStructurePos(Village, MC_NEWEST, UINT64_C(329087727717716),
+            0, 0, 384, 224);
+        assertStructurePos(Ruined_Portal, MC_NEWEST,
+            UINT64_C(186643030383247), 0, 0, 144, 208);
+
+        /* At this corrected Nether candidate the shared placement selects a
+           fortress. The old modulo shortcut instead reported a viable
+           bastion at block (0, 256). */
+        assert(!getStructurePos(Bastion, MC_NEWEST,
+            UINT64_C(21796851793980), 0, 0, &pos));
+        assert(pos.x == 256 && pos.z == 16);
+        assert(getStructurePos(Fortress, MC_NEWEST,
+            UINT64_C(21796851793980), 0, 0, &pos));
+        assert(pos.x == 256 && pos.z == 16);
+    }
+
+    {
+        /* The same candidate exercises all three Vanilla rotation sources:
+           1.9-1.10 MapGen RNG after its dummy draw, 1.11-1.18's position-only
+           seed, and 1.19+'s chunk-generation RNG without the dummy draw. */
+        static const struct { int mc, height; } cases[] = {
+            {MC_1_9,     0},
+            {MC_1_10,    0},
+            {MC_1_11,   61},
+            {MC_1_18,   61},
+            {MC_1_19_2, 60},
+            {MC_NEWEST, 60},
+        };
+        const uint64_t seed = 0;
+        SurfaceNoise surface;
+        Pos pos;
+        assert(getStructurePos(End_City, MC_1_9, seed, -35, -50, &pos));
+        assert(pos.x == -11120 && pos.z == -15904);
+        initSurfaceNoise(&surface, DIM_END, seed);
+        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+        {
+            Generator end;
+            setupGenerator(&end, cases[i].mc, 0);
+            applySeed(&end, DIM_END, seed);
+            assert(isViableEndCityTerrain(&end, &surface, pos.x, pos.z)
+                == cases[i].height);
+        }
+    }
+
     // Buried treasure and mineshafts use Mojang's legacy frequency reducers.
     // The treasure salt is supplied by legacy_type_2 rather than the JSON salt.
     assertStructureConfig(Treasure, MC_26_2, 1, 0, 10387320);

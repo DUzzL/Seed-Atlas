@@ -763,38 +763,15 @@ int getLargestRec(int match, const int *ids, int sx, int sz, Pos *p0, Pos *p1);
 static inline ATTR(const)
 Pos getFeatureChunkInRegion(StructureConfig config, uint64_t seed, int regX, int regZ)
 {
-    /*
-    // Vanilla like implementation.
-    setSeed(&seed, regX*341873128712 + regZ*132897987541 + seed + config.salt);
-
     Pos pos;
-    pos.x = nextInt(&seed, 24);
-    pos.z = nextInt(&seed, 24);
-    */
-    Pos pos;
-    const uint64_t K = 0x5deece66dULL;
-    const uint64_t M = (1ULL << 48) - 1;
-    const uint64_t b = 0xb;
-
-    // set seed
     seed = seed + regX*341873128712ULL + regZ*132897987541ULL + config.salt;
-    seed = (seed ^ K);
-    seed = (seed * K + b) & M;
+    setSeed(&seed, seed);
 
-    uint64_t r = config.chunkRange;
-    if (r & (r-1))
-    {
-        pos.x = (int)(seed >> 17) % r;
-        seed = (seed * K + b) & M;
-        pos.z = (int)(seed >> 17) % r;
-    }
-    else
-    {
-        // Java RNG treats powers of 2 as a special case.
-        pos.x = (int)((r * (seed >> 17)) >> 31);
-        seed = (seed * K + b) & M;
-        pos.z = (int)((r * (seed >> 17)) >> 31);
-    }
+    /* RandomSpreadType.LINEAR uses Java Random.nextInt() once per axis.
+     * Reducing a raw 31-bit draw modulo chunkRange misses Java's rejection
+     * step for non-power-of-two ranges and can therefore move the candidate. */
+    pos.x = nextInt(&seed, config.chunkRange);
+    pos.z = nextInt(&seed, config.chunkRange);
 
     return pos;
 }
@@ -813,25 +790,17 @@ static inline ATTR(const)
 Pos getLargeStructureChunkInRegion(StructureConfig config, uint64_t seed, int regX, int regZ)
 {
     Pos pos;
-    const uint64_t K = 0x5deece66dULL;
-    const uint64_t M = (1ULL << 48) - 1;
-    const uint64_t b = 0xb;
-
-    //TODO: power of two chunk ranges...
-
-    // set seed
     seed = seed + regX*341873128712ULL + regZ*132897987541ULL + config.salt;
-    seed = (seed ^ K);
+    setSeed(&seed, seed);
 
-    seed = (seed * K + b) & M;
-    pos.x = (int)(seed >> 17) % config.chunkRange;
-    seed = (seed * K + b) & M;
-    pos.x += (int)(seed >> 17) % config.chunkRange;
-
-    seed = (seed * K + b) & M;
-    pos.z = (int)(seed >> 17) % config.chunkRange;
-    seed = (seed * K + b) & M;
-    pos.z += (int)(seed >> 17) % config.chunkRange;
+    /* RandomSpreadType.TRIANGULAR averages two Java Random.nextInt() calls
+     * per axis. Using the raw 31-bit value modulo chunkRange is almost always
+     * equivalent, but misses Java's rejection step for non-power-of-two
+     * ranges and can therefore shift every following draw. */
+    pos.x = nextInt(&seed, config.chunkRange);
+    pos.x += nextInt(&seed, config.chunkRange);
+    pos.z = nextInt(&seed, config.chunkRange);
+    pos.z += nextInt(&seed, config.chunkRange);
 
     pos.x >>= 1;
     pos.z >>= 1;

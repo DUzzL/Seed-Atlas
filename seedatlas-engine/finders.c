@@ -1899,7 +1899,15 @@ int isViableEndCityTerrain(const Generator *g, const SurfaceNoise *sn,
             y0, y1, 4, (blockX & 7) / 8.0, (blockZ & 7) / 8.0);
 
     uint64_t cs;
-    if (en->mc <= MC_1_18)
+    if (en->mc <= MC_1_10)
+    {
+        /* In 1.9-1.10 MapGenStructure consumed one unbounded nextInt()
+         * before constructing the End City start. The start then used the
+         * same chunk-generation RNG for its terrain-probe rotation. */
+        cs = chunkGenerateRnd(g->seed, chunkX, chunkZ);
+        next(&cs, 32);
+    }
+    else if (en->mc <= MC_1_18)
         setSeed(&cs, chunkX + chunkZ * 10387313ULL);
     else
         cs = chunkGenerateRnd(g->seed, chunkX, chunkZ);
