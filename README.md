@@ -6,7 +6,7 @@ Seed Atlas is a fast map viewer and seed-finding tool for Minecraft.
 
 ## Download
 
-**[Download Seed Atlas]([https://github.com/DUzzL/Seed-Atlas/releases)**
+**[Download Seed Atlas](https://github.com/DUzzL/Seed-Atlas/releases)**
 
 Read the text there! Depending on your Operating System, you might have 
 to follow the steps described there.
