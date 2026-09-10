@@ -150,6 +150,7 @@ const QPixmap& getMapIcon(int opt, VarPos *vp)
     static QPixmap icongiant;
     static QPixmap iconbasement;
     static QPixmap iconorecopper;
+    static QPixmap iconcampspecial;
     static QMutex mutex;
 
     mutex.lock();
@@ -163,6 +164,7 @@ const QPixmap& getMapIcon(int opt, VarPos *vp)
         icongiant        = getPix("portal_giant", w);
         iconbasement     = getPix("igloo_basement", w);
         iconorecopper    = getPix("orevein_copper", w);
+        iconcampspecial  = getPix("camp_special", w);
     }
     mutex.unlock();
 
@@ -170,6 +172,8 @@ const QPixmap& getMapIcon(int opt, VarPos *vp)
         return icons[opt];
     if (opt == D_OREVEIN && vp->type == ORE_VEIN_COPPER)
         return iconorecopper;
+    if (opt == D_CAMP && vp->v.special)
+        return iconcampspecial;
     if (opt == D_VILLAGE && vp->v.abandoned)
         return iconzvil;
     if (opt == D_IGLOO && vp->v.basement)
@@ -195,6 +199,12 @@ QStringList VarPos::detail() const
         s = getStartPieceName(Village, &v);
         if (!s.isEmpty())
             sinfo.append(s);
+    }
+    else if (type == Abandoned_Camp && v.biome >= 0)
+    {
+        sinfo.append(getBiomeDisplay(MC_NEWEST, v.biome));
+        if (v.special)
+            sinfo.append("special loot");
     }
     else if (type == Bastion)
     {

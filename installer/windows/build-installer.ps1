@@ -17,6 +17,14 @@ $deployTool = Join-Path $QtBin "windeployqt.exe"
 $qmake = Join-Path $QtBin "qmake.exe"
 $make = Join-Path $MingwBin "mingw32-make.exe"
 $application = Join-Path $build "release\seed-atlas.exe"
+$buildId = $env:SEED_ATLAS_BUILD_ID
+if ([string]::IsNullOrWhiteSpace($buildId)) {
+    $buildId = (& git -C $projectRoot rev-parse --verify HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Could not determine the Git commit" }
+}
+if ($buildId -notmatch "^[0-9a-fA-F]{40}$") {
+    throw "Could not determine the Git commit used as the Seed Atlas build ID"
+}
 
 if (!(Test-Path -LiteralPath $deployTool)) { throw "Missing windeployqt: $deployTool" }
 if (!(Test-Path -LiteralPath $qmake)) { throw "Missing qmake: $qmake" }
@@ -28,7 +36,7 @@ $oldPath = $env:PATH
 try {
     $env:PATH = "$MingwBin;$QtBin;$oldPath"
     Push-Location $build
-    & $qmake -o Makefile "CONFIG+=release" (Join-Path $projectRoot "seed-atlas.pro")
+    & $qmake -o Makefile "CONFIG+=release" "SEED_ATLAS_BUILD_ID=$buildId" (Join-Path $projectRoot "seed-atlas.pro")
     if ($LASTEXITCODE -ne 0) { throw "qmake failed with exit code $LASTEXITCODE" }
     & $make "-j$([Environment]::ProcessorCount)"
     if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
@@ -68,7 +76,16 @@ Remove-Item -LiteralPath $sourceStage -Recurse -Force
 & $InnoCompiler "/DMyAppVersion=$Version" (Join-Path $PSScriptRoot "SeedAtlas.iss")
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
+$updateManifest = Join-Path $dist "update.json"
+$updateJson = "{`n  `"buildId`": `"$buildId`"`n}`n"
+[System.IO.File]::WriteAllText(
+    $updateManifest,
+    $updateJson,
+    [System.Text.UTF8Encoding]::new($false)
+)
+
 Write-Host "Created:"
 Write-Host "  $portable"
 Write-Host "  $sourceArchive"
 Write-Host "  $(Join-Path $dist "Seed-Atlas-$Version-Windows-x64-Setup.exe")"
+Write-Host "  $updateManifest"

@@ -81,6 +81,16 @@ LUAPATH = $$PWD/lua/src
 
 TARGET = seed-atlas
 
+# Public packages pass the source commit as a machine-readable build ID. Local
+# builds fall back to the current checkout, or to "development" without Git.
+isEmpty(SEED_ATLAS_BUILD_ID) {
+    SEED_ATLAS_BUILD_ID = $$system(git -C $$shell_quote($$PWD) rev-parse --verify HEAD)
+}
+isEmpty(SEED_ATLAS_BUILD_ID) {
+    SEED_ATLAS_BUILD_ID = development
+}
+DEFINES += SEED_ATLAS_BUILD_ID=\\\"$$SEED_ATLAS_BUILD_ID\\\"
+
 SOURCES += \
         $$LUAPATH/lapi.c \
         $$LUAPATH/lauxlib.c \
@@ -244,8 +254,8 @@ RESOURCES += \
         rc/qh.qrc
 
 
-# enable network features with: qmake CONFIG+=with_network
-with_network: {
+# Desktop builds check the manually maintained GitHub release for updates.
+!wasm: {
     QT += network
     DEFINES += "WITH_UPDATER=1"
     SOURCES += src/updater.cpp

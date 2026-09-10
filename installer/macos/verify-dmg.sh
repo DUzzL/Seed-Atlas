@@ -19,7 +19,14 @@ fi
 dmg_path="$(cd "$(dirname "$dmg_path")" && pwd)/$(basename "$dmg_path")"
 
 hdiutil verify "$dmg_path" >/dev/null
-codesign --verify --strict --verbose=2 "$dmg_path"
+if [[ "${SEED_ATLAS_UNSIGNED:-0}" == "1" ]]; then
+  if codesign -d "$dmg_path" >/dev/null 2>&1; then
+    echo "Expected an unsigned DMG" >&2
+    exit 1
+  fi
+else
+  codesign --verify --strict --verbose=2 "$dmg_path"
+fi
 
 device=""
 mount_path=""

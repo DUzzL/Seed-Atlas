@@ -18,7 +18,7 @@ warning when it is opened for the first time.
 - Use all available CPU threads for faster searches
 - Create advanced seed searches with combined conditions and Lua filters
 - Save and resume searches with session files
-- Supports stable Minecraft releases
+- Supports Minecraft releases through 26.3
 
 ## Usage
 

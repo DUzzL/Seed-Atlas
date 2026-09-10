@@ -4,7 +4,8 @@
 /* Minecraft versions */
 enum MCVersion
 {   // MC_1_X refers to the latest supported patch of the respective 1.X release.
-    // Stable releases from 1.21 onward are represented individually.
+    // Releases from 1.21 onward are represented individually. Pre-releases
+    // are only added when Seed Atlas explicitly supports their worldgen.
     MC_UNDEF,
     MC_B1_7,
     MC_B1_8,
@@ -46,7 +47,8 @@ enum MCVersion
     MC_26_1_1,
     MC_26_1_2,
     MC_26_2,
-    MC_NEWEST = MC_26_2,
+    MC_26_3, // 26.3
+    MC_NEWEST = MC_26_3,
 };
 
 enum Dimension
@@ -185,6 +187,8 @@ enum BiomeID
     pale_garden                     = 186,
     // 26.2 (Chaos Cubed)
     sulfur_caves                    = 187,
+    // 26.3
+    dappled_forest                  = 188,
 };
 
 

@@ -252,7 +252,7 @@
           <item row="0" column="0">
            <widget class="QCheckBox" name="checkUpdates">
             <property name="text">
-             <string>Check GitHub for updates at startup</string>
+             <string>Check for Seed Atlas updates at startup</string>
             </property>
            </widget>
           </item>

@@ -6,6 +6,7 @@
 
 #include <assert.h>
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -30,23 +31,26 @@ static void assertStructurePos(int stype, int mc, uint64_t seed,
 
 int main(void)
 {
-    static const char *stable[] = {
+    static const char *versions[] = {
         "1.21.1", "1.21.2", "1.21.3", "1.21.4", "1.21.5",
         "1.21.6", "1.21.7", "1.21.8", "1.21.9", "1.21.10",
         "1.21.11", "26.1", "26.1.1", "26.1.2", "26.2",
+        "26.3",
     };
 
     for (int mc = MC_UNDEF + 1; mc <= MC_NEWEST; mc++)
         assert(strcmp(mc2str(mc), "?") != 0);
 
-    for (size_t i = 0; i < sizeof(stable) / sizeof(stable[0]); i++)
+    for (size_t i = 0; i < sizeof(versions) / sizeof(versions[0]); i++)
     {
-        int mc = str2mc(stable[i]);
+        int mc = str2mc(versions[i]);
         assert(mc != MC_UNDEF);
-        assert(strcmp(mc2str(mc), stable[i]) == 0);
+        assert(strcmp(mc2str(mc), versions[i]) == 0);
     }
 
     assert(str2mc("1.21 WD") == MC_1_21_4);
+    assert(str2mc("26.3") == MC_26_3);
+    assert(str2mc("26.3-pre-2") == MC_26_3);
     assert(biomeExists(MC_1_21_3, pale_garden) == 0);
     assert(biomeExists(MC_1_21_4, pale_garden) == 1);
 
@@ -67,6 +71,9 @@ int main(void)
     }
     assert(biomeExists(MC_26_1_2, sulfur_caves) == 0);
     assert(biomeExists(MC_26_2, sulfur_caves) == 1);
+    assert(biomeExists(MC_26_2, dappled_forest) == 0);
+    assert(biomeExists(MC_26_3, dappled_forest) == 1);
+    assert(getCategory(MC_26_3, dappled_forest) == forest);
     assert(isViableFeatureBiome(MC_1_21_4, Mansion, pale_garden) == 0);
     assert(isViableFeatureBiome(MC_1_21_5, Mansion, pale_garden) == 1);
 
@@ -111,6 +118,126 @@ int main(void)
     assert(lim[6] == 4500 && lim[7] == INT_MAX);
     assert(lim[8] == 2000 && lim[9] == 9000);
     assert(lim[10] == -11000 && lim[11] == -8500);
+
+    // 26.3 Pre-Release 2 relabels the coldest/driest Plains points on the
+    // non-negative weirdness side as Dappled Forest. Climate noise itself is
+    // unchanged, so the same representative point is Plains in 26.2.
+    const uint64_t dappled_np[6] = {
+        (uint64_t)(int64_t)-3000, (uint64_t)(int64_t)-6750,
+        5150, (uint64_t)(int64_t)-6875, 0, 0
+    };
+    assert(climateToBiome(MC_26_2, dappled_np, NULL) == plains);
+    assert(climateToBiome(MC_26_3, dappled_np, NULL) == dappled_forest);
+
+    lim = getBiomeParaLimits(MC_26_3, dappled_forest);
+    assert(lim != NULL);
+    assert(lim[0] == -4500 && lim[1] == -1500);
+    assert(lim[2] == INT_MIN && lim[3] == -3500);
+    assert(lim[4] == -1900 && lim[5] == INT_MAX);
+    assert(lim[10] == -500 && lim[11] == INT_MAX);
+    {
+        // Coordinate returned by Vanilla's /locate biome command for this
+        // seed in 26.3 Pre-Release 2.
+        Generator dappled;
+        setupGenerator(&dappled, MC_26_3, 0);
+        applySeed(&dappled, DIM_OVERWORLD, 8371904829ULL);
+        assert(getBiomeAt(&dappled, 1, -1184, 100, 1248) == dappled_forest);
+    }
+
+    // Official 26.3 Pre-Release 2 abandoned-camp structure set and biome tags.
+    assertStructureConfig(Abandoned_Camp, MC_26_3, 37, 8, 91231127);
+    {
+        StructureConfig config;
+        assert(!getStructureConfig(Abandoned_Camp, MC_26_2, &config));
+    }
+    static const int camp_biomes[] = {
+        bamboo_jungle, birch_forest, cherry_grove, dappled_forest,
+        flower_forest, forest, meadow, old_growth_birch_forest,
+        old_growth_pine_taiga, old_growth_spruce_taiga, pale_garden,
+        savanna, snowy_taiga, sparse_jungle, swamp, taiga,
+        windswept_forest, wooded_badlands,
+    };
+    for (size_t i = 0; i < sizeof(camp_biomes) / sizeof(camp_biomes[0]); i++)
+        assert(isViableFeatureBiome(MC_26_3, Abandoned_Camp, camp_biomes[i]));
+    assert(!isViableFeatureBiome(MC_26_2, Abandoned_Camp, forest));
+    assert(!isViableFeatureBiome(MC_26_3, Abandoned_Camp, plains));
+    assertStructurePos(Abandoned_Camp, MC_26_3, 8371904829ULL,
+                       0, 0, 288, 32);
+    // Nearest camp reported by a fully generated Vanilla 26.3 Pre-Release 2
+    // server for this seed. It is the forest variant in region (-1, 0).
+    assertStructurePos(Abandoned_Camp, MC_26_3, 8371904829ULL,
+                       -1, 0, -512, 416);
+    {
+        Generator camp;
+        setupGenerator(&camp, MC_26_3, 0);
+        applySeed(&camp, DIM_OVERWORLD, 8371904829ULL);
+        assert(isViableStructurePos(Abandoned_Camp, &camp,
+                                    -512, 416, 0) == forest);
+        // The generic chunk-centre check classified this boundary candidate
+        // as Bamboo Jungle even though the camp start itself is not viable.
+        assert(isViableStructurePos(Abandoned_Camp, &camp,
+                                    10704, -23600, 0) == 0);
+    }
+    {
+        // Vanilla places this seed-14 camp in chunk (-52,-133). Its selected
+        // 8x8 start tent has centre (-828,63,-2124): Java's absolute-coordinate
+        // division rounds the negative X/Z values toward zero, and the biome
+        // must be sampled at the projected surface Y instead of Y=319.
+        assertStructurePos(Abandoned_Camp, MC_26_3, 14,
+                           -2, -4, -832, -2128);
+        Generator camp;
+        setupGenerator(&camp, MC_26_3, 0);
+        applySeed(&camp, DIM_OVERWORLD, 14);
+        float surfaceY;
+        int nptype = camp.bn.nptype;
+        camp.bn.nptype = NP_DEPTH;
+        assert(mapApproxHeight(&surfaceY, NULL, &camp, NULL,
+                               -207, -531, 1, 1) == 0);
+        camp.bn.nptype = nptype;
+        assert((int) floorf(surfaceY) + 1 == 63);
+        assert(getBiomeAt(&camp, 0, -207, 63 >> 2, -531) == snowy_taiga);
+        // Computing the centre as a relative offset first used the adjacent
+        // quart (-208, -532), which is Frozen River and rejected the camp.
+        assert(getBiomeAt(&camp, 0, -208, 63 >> 2, -532) == frozen_river);
+        assert(isViableStructurePos(Abandoned_Camp, &camp,
+                                    -832, -2128, 0) == snowy_taiga);
+
+        StructureVariant variant;
+        assert(getVariant(&variant, Abandoned_Camp, MC_26_3, 14,
+                          -832, -2128, snowy_taiga));
+        // Vanilla selects campsite_default_special_4 here.
+        assert(variant.special);
+    }
+    {
+        // This second known camp selects a regular (non-special) pool element.
+        StructureVariant variant;
+        assert(getVariant(&variant, Abandoned_Camp, MC_26_3, 8371904829ULL,
+                          -512, 416, forest));
+        assert(!variant.special);
+    }
+    {
+        StructureVariant variant;
+
+        // Template names alone do not determine the special-loot variant.
+        // special_11 has no oxidized copper chest and must remain unmarked.
+        assert(getVariant(&variant, Abandoned_Camp, MC_26_3, 14,
+                          -6416, -2688, forest));
+        assert(!variant.special);
+
+        // Conversely, barrel_12 does contain the secret oxidized copper chest.
+        assert(getVariant(&variant, Abandoned_Camp, MC_26_3, 14,
+                          -16720, 10416, snowy_taiga));
+        assert(variant.special);
+
+        // Biome-specific pool entries differ even at the same pool index:
+        // forest_3 has special loot, while snowy_taiga_3 does not.
+        assert(getVariant(&variant, Abandoned_Camp, MC_26_3, 14,
+                          -16256, -8128, forest));
+        assert(variant.special);
+        assert(getVariant(&variant, Abandoned_Camp, MC_26_3, 14,
+                          -12016, -5184, snowy_taiga));
+        assert(!variant.special);
+    }
 
     // Stable Java structure-set parameters from the official 26.2 data pack.
     // The values are semantically unchanged from 1.21.4 through 26.2.
@@ -269,6 +396,6 @@ int main(void)
     assert(oldSpawn.x == -136 && oldSpawn.z == 584);
     assert(newSpawn.x == -760 && newSpawn.z == -920);
 
-    puts("stable version, biome, and structure tests passed");
+    puts("version, biome, and structure tests passed");
     return 0;
 }

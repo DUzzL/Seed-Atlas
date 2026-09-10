@@ -6,6 +6,11 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "$script_dir/../.." && pwd)"
 build_dir="$project_root/build-macos"
 dist_dir="$project_root/dist"
+build_id="${SEED_ATLAS_BUILD_ID:-$(git -C "$project_root" rev-parse --verify HEAD)}"
+if [[ ! "$build_id" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "Could not determine the Git commit used as the Seed Atlas build ID" >&2
+  exit 2
+fi
 if [[ -n "${QT_PREFIX:-}" ]]; then
   qt_prefix="$QT_PREFIX"
 else
@@ -21,6 +26,14 @@ apple_password="${APPLE_APP_SPECIFIC_PASSWORD:-}"
 apple_team_id="${APPLE_TEAM_ID:-}"
 build_only="${SEED_ATLAS_BUILD_ONLY:-0}"
 package_only="${SEED_ATLAS_PACKAGE_ONLY:-0}"
+unsigned="${SEED_ATLAS_UNSIGNED:-0}"
+if [[ "$unsigned" == "1" ]]; then
+  sign_identity=""
+  notary_profile=""
+  apple_id=""
+  apple_password=""
+  apple_team_id=""
+fi
 
 if [[ "$build_only" == "1" && "$package_only" == "1" ]]; then
   echo "SEED_ATLAS_BUILD_ONLY and SEED_ATLAS_PACKAGE_ONLY are mutually exclusive" >&2
@@ -57,7 +70,7 @@ else
   mkdir -p "$build_dir" "$dist_dir"
   cd "$build_dir"
 
-  qmake_args=(CONFIG+=release)
+  qmake_args=(CONFIG+=release "SEED_ATLAS_BUILD_ID=$build_id")
   if [[ "${SEED_ATLAS_UNIVERSAL:-0}" == "1" ]]; then
     qmake_args+=(QMAKE_APPLE_DEVICE_ARCHS="x86_64 arm64")
   fi
@@ -149,7 +162,7 @@ if [[ "$notary_credentials" == "1" ]]; then
   xcrun stapler validate seed-atlas.dmg
   spctl --assess --type open --context context:primary-signature \
     --verbose=2 seed-atlas.dmg
-else
+elif [[ "$unsigned" != "1" ]]; then
   codesign --force --sign - seed-atlas.dmg
   codesign --verify --strict --verbose=2 seed-atlas.dmg
   echo "Created an ad-hoc-signed, non-notarized local DMG." >&2
@@ -157,13 +170,19 @@ else
 fi
 
 SEED_ATLAS_REQUIRE_UNIVERSAL="${SEED_ATLAS_UNIVERSAL:-0}" \
+  SEED_ATLAS_UNSIGNED="$unsigned" \
   bash "$script_dir/verify-dmg.sh" "$package_dir/seed-atlas.dmg"
 
 output_suffix=""
-if [[ "$notary_credentials" != "1" ]]; then
+if [[ "$unsigned" == "1" ]]; then
+  output_suffix="-UNSIGNED"
+elif [[ "$notary_credentials" != "1" ]]; then
   output_suffix="-UNNOTARIZED"
 fi
 output_path="$dist_dir/Seed-Atlas-$version-macOS$output_suffix.dmg"
 mv -f seed-atlas.dmg "$output_path"
 
+printf '{\n  "buildId": "%s"\n}\n' "$build_id" > "$dist_dir/update.json"
+
 echo "Created: $output_path"
+echo "Created: $dist_dir/update.json"

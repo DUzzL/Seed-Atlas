@@ -1468,6 +1468,22 @@ static int is_21_5_pale_garden_point(const BiomeTree *bt, int idx)
     return 0;
 }
 
+static int is_26_3_dappled_forest_point(const BiomeTree *bt, int idx)
+{
+    // 26.3 Pre-Release 2 relabels 46 existing Plains parameter points (at
+    // both depth 0 and 1) as Dappled Forest. The official generated biome
+    // parameter report shows that they are exactly this cold/dry interval on
+    // the non-negative weirdness side of the existing 1.21.4 R-tree.
+    uint64_t node = bt->nodes[idx];
+    const int32_t *range[6];
+    for (int i = 0; i < 6; i++)
+        range[i] = &bt->param[2 * ((node >> (8*i)) & 0xFF)];
+
+    return range[0][0] == -4500 && range[0][1] == -1500 &&
+           range[1][0] == -10000 && range[1][1] == -3500 &&
+           range[5][0] >= -500;
+}
+
 ATTR(hot, flatten)
 int climateToBiome(int mc, const uint64_t np[6], uint64_t *dat)
 {
@@ -1523,6 +1539,10 @@ int climateToBiome(int mc, const uint64_t np[6], uint64_t *dat)
     if (mc >= MC_1_21_5 && biome == dark_forest &&
         is_21_5_pale_garden_point(bt, idx))
         biome = pale_garden;
+
+    if (mc >= MC_26_3 && biome == plains &&
+        is_26_3_dappled_forest_point(bt, idx))
+        biome = dappled_forest;
 
     if (mc >= MC_26_2)
     {

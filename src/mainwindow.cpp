@@ -339,6 +339,7 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     addMapAction(D_ANCIENTCITY);
     addMapAction(D_TRAILRUINS);
     addMapAction(D_CHAMBERS);
+    addMapAction(D_CAMP);
     addMapAction(D_OREVEIN);
     ui->toolBar->addSeparator();
     addMapAction(D_FORTESS);
@@ -476,12 +477,14 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
 
 #if WITH_UPDATER
     QAction *updateaction = new QAction("Check for updates", this);
-    connect(updateaction, &QAction::triggered, [=]() { searchForUpdates(false); });
+    connect(updateaction, &QAction::triggered,
+        [this]() { searchForUpdates(this, &config, false); });
     ui->menuHelp->insertAction(ui->actionAbout, updateaction);
     ui->menuHelp->insertSeparator(ui->actionAbout);
 
     if (config.checkForUpdates)
-        searchForUpdates(true);
+        QTimer::singleShot(0, this,
+            [this]() { searchForUpdates(this, &config, true); });
 #endif
 }
 
@@ -630,6 +633,7 @@ QAction *MainWindow::addMapAction(int opt)
     case D_ANCIENTCITY: label = tr("Ancient City"); break;
     case D_TRAILRUINS:  label = tr("Trail Ruins"); break;
     case D_CHAMBERS:    label = tr("Chambers"); break;
+    case D_CAMP:        label = tr("Abandoned Camp"); break;
     case D_OREVEIN:     label = tr("Ore Veins"); break;
     case D_PORTAL:      label = tr("Portal"); break;
     case D_FORTESS:     label = tr("Fortress"); break;
@@ -649,7 +653,7 @@ QAction *MainWindow::addMapAction(QString rcbase, QString tip, QString toolbarLa
 {
     QPixmap active = getPix(rcbase);
     QPixmap inactive = getPix(rcbase + "_d");
-    // Ore veins have no dedicated inactive asset. Generate the same neutral
+    // Some markers have no dedicated inactive asset. Generate the same neutral
     // grayscale state that the other map-selection icons use.
     if (inactive.isNull())
     {

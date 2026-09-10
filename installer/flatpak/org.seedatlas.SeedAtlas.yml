@@ -6,16 +6,18 @@ command: seed-atlas
 
 finish-args:
   - --share=ipc
+  - --share=network
   - --socket=fallback-x11
   - --socket=wayland
   - --device=dri
   - --filesystem=home
+  - --talk-name=org.freedesktop.Flatpak
 
 modules:
   - name: seed-atlas
     buildsystem: simple
     build-commands:
-      - qmake6 CONFIG+=release PREFIX=/app seed-atlas.pro
+      - qmake6 CONFIG+=release "SEED_ATLAS_BUILD_ID=${SEED_ATLAS_BUILD_ID}" PREFIX=/app seed-atlas.pro
       - make -j${FLATPAK_BUILDER_N_JOBS}
       - install -Dm755 seed-atlas /app/bin/seed-atlas
       - install -Dm644 etc/org.seedatlas.SeedAtlas.desktop /app/share/applications/org.seedatlas.SeedAtlas.desktop

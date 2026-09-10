@@ -127,6 +127,7 @@ enum {
     D_ANCIENTCITY,
     D_TRAILRUINS,
     D_CHAMBERS,
+    D_CAMP,
     D_OREVEIN,
     D_PORTAL,
     D_PORTALN,

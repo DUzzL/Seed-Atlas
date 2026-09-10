@@ -126,9 +126,9 @@ bool WorldInfo::read(const QString& line)
 {
     QByteArray ba = line.toLocal8Bit();
     const char *p = ba.data();
-    char buf[9];
+    char buf[32];
     int tmp;
-    if (sscanf(p, "#MC:       %8[^\n]", buf) == 1)
+    if (sscanf(p, "#MC:       %31[^\n]", buf) == 1)
     {
         mc = str2mc(buf);
         if (mc == MC_UNDEF)
@@ -198,6 +198,7 @@ QString mapopt2display(int opt)
     case D_ANCIENTCITY: return QApplication::translate("Map", "Ancient City");
     case D_TRAILRUINS:  return QApplication::translate("Map", "Trail Ruins");
     case D_CHAMBERS:    return QApplication::translate("Map", "Trial Chambers");
+    case D_CAMP:        return QApplication::translate("Map", "Abandoned Camp");
     case D_OREVEIN:     return QApplication::translate("Map", "Ore Veins");
     case D_PORTAL:      return QApplication::translate("Map", "Ruined Portal");
     case D_PORTALN:     return QApplication::translate("Map", "Ruined Portal (Nether)");
@@ -235,6 +236,7 @@ const char *mapopt2str(int opt) // to resource string
     case D_ANCIENTCITY: return "ancient_city";
     case D_TRAILRUINS:  return "trails";
     case D_CHAMBERS:    return "chambers";
+    case D_CAMP:        return "camp";
     case D_OREVEIN:     return "orevein";
     case D_PORTAL:      return "portal";
     case D_PORTALN:     return "portaln";
@@ -270,6 +272,7 @@ int str2mapopt(const char *s) // from resource string
     if (!strcmp(s, "ancient_city")) return D_ANCIENTCITY;
     if (!strcmp(s, "trails"))       return D_TRAILRUINS;
     if (!strcmp(s, "chambers"))     return D_CHAMBERS;
+    if (!strcmp(s, "camp"))         return D_CAMP;
     if (!strcmp(s, "portal"))       return D_PORTAL;
     if (!strcmp(s, "portaln"))      return D_PORTALN;
     if (!strcmp(s, "spawn"))        return D_SPAWN;
@@ -304,6 +307,7 @@ int mapopt2stype(int opt)
     case D_ANCIENTCITY: return Ancient_City;
     case D_TRAILRUINS:  return Trail_Ruins;
     case D_CHAMBERS:    return Trial_Chambers;
+    case D_CAMP:        return Abandoned_Camp;
     case D_PORTAL:      return Ruined_Portal;
     case D_PORTALN:     return Ruined_Portal_N;
     case D_FORTESS:     return Fortress;
@@ -411,7 +415,7 @@ void Config::reset()
     showBBoxes = false;
     restoreSession = true;
     restoreWindow = false;
-    checkForUpdates = false;
+    checkForUpdates = true;
     enableSeedFinding = false;
     autosaveCycle = 10;
     uistyle = STYLE_SYSTEM;
@@ -442,7 +446,7 @@ void Config::load(QSettings& settings)
     showBBoxes = settings.value("config/showBBoxes", showBBoxes).toBool();
     restoreSession = settings.value("config/restoreSession", restoreSession).toBool();
     restoreWindow = settings.value("config/restoreWindow", restoreWindow).toBool();
-    checkForUpdates = settings.value("config/checkForUpdates", checkForUpdates).toBool();
+    checkForUpdates = settings.value("updater/enabled", checkForUpdates).toBool();
     enableSeedFinding = settings.value("config/enableSeedFinding", enableSeedFinding).toBool();
     autosaveCycle = qBound(0, settings.value("config/autosaveCycle", autosaveCycle).toInt(), 120);
     uistyle = qBound(int(STYLE_SYSTEM),
@@ -478,7 +482,8 @@ void Config::save(QSettings& settings)
     settings.setValue("config/showBBoxes", showBBoxes);
     settings.setValue("config/restoreSession", restoreSession);
     settings.setValue("config/restoreWindow", restoreWindow);
-    settings.setValue("config/checkForUpdates", checkForUpdates);
+    settings.setValue("updater/enabled", checkForUpdates);
+    settings.remove("config/checkForUpdates");
     settings.setValue("config/enableSeedFinding", enableSeedFinding);
     settings.setValue("config/autosaveCycle", autosaveCycle);
     settings.setValue("config/uistyle", uistyle);

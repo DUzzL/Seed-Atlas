@@ -3,6 +3,10 @@
 All commands below package the current source tree as version `4.2.dev0`.
 The generated files are written to `dist/`.
 
+For the complete unsigned three-platform build procedure and detailed manual
+`update.json` publishing, testing, and troubleshooting instructions, see the
+[build and update guide](../buildguide.md).
+
 ## macOS DMG
 
 The build script can create a universal Intel + Apple Silicon application when
@@ -30,6 +34,12 @@ Output:
 ```text
 dist/Seed-Atlas-4.2.dev0-macOS-UNNOTARIZED.dmg
 ```
+
+To explicitly build without a Developer ID certificate, notarization, or a DMG
+signature, set `SEED_ATLAS_UNSIGNED=1`. The result ends in `-UNSIGNED.dmg`.
+The application inside retains only the ad-hoc code signatures needed to run
+on Apple Silicon; these do not identify a publisher. Use the same variable when
+running `verify-dmg.sh` on that image.
 
 The image opens as a fixed, minimal Finder window with `Seed Atlas.app` on the
 left and an `Applications` link on the right. The arrow between them indicates
@@ -130,3 +140,27 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File installer/windows/build-
 
 This produces the portable directory, corresponding source archive, and Inno
 Setup installer in `dist/`.
+
+## Publishing an update manually
+
+Each packaging script embeds the current Git commit as Seed Atlas' internal
+build ID and writes the matching `dist/update.json`. Commit the release source
+before building so all three platforms receive the same build ID.
+For a source snapshot without a commit, all three scripts also accept
+`SEED_ATLAS_BUILD_ID` as a 40-character hexadecimal release identifier (not
+necessarily a content hash). Pass the exact same lowercase ID to every platform
+and use a new ID whenever the packaged application changes.
+
+Replace the three installers in the existing GitHub release as usual. Upload
+`update.json` last, after every installer is available. Installed copies then
+compare their embedded build ID with:
+
+```text
+https://github.com/DUzzL/Seed-Atlas/releases/latest/download/update.json
+```
+
+When the IDs differ, Seed Atlas offers to open the latest GitHub release page.
+Choosing **Update** opens that page, removes the installed application while
+preserving user settings, and exits. Choosing **Not now** shows the prompt again
+on the next start. **Do not ask again** disables startup checks and can be
+reversed in Seed Atlas' general settings.

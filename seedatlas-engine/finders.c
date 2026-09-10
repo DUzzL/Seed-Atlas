@@ -85,6 +85,7 @@ int getStructureConfig(int structureType, int mc, StructureConfig *sconf)
     s_ancient_city          = { 20083232, 24, 16, Ancient_City,     0,0},
     s_trail_ruins           = { 83469867, 34, 26, Trail_Ruins,      0,0},
     s_trial_chambers        = { 94251327, 34, 22, Trial_Chambers,   0,0},
+    s_abandoned_camp        = { 91231127, 37, 29, Abandoned_Camp,   0,0},
     s_treasure              = { 10387320,  1,  1, Treasure,         0,0},
     s_mineshaft             = {        0,  1,  1, Mineshaft,        0,0},
     s_desert_well_115       = {    30010,  1,  1, Desert_Well,      0, 1.f/1000},
@@ -193,6 +194,9 @@ int getStructureConfig(int structureType, int mc, StructureConfig *sconf)
     case Trial_Chambers:
         *sconf = s_trial_chambers;
         return mc >= MC_1_21_1;
+    case Abandoned_Camp:
+        *sconf = s_abandoned_camp;
+        return mc >= MC_26_3;
     default:
         memset(sconf, 0, sizeof(StructureConfig));
         return 0;
@@ -236,6 +240,7 @@ int getStructurePos(int structureType, int mc, uint64_t seed, int regX, int regZ
     case Ancient_City:
     case Trail_Ruins:
     case Trial_Chambers:
+    case Abandoned_Camp:
         *pos = getFeaturePos(sconf, seed, regX, regZ);
         return 1;
 
@@ -1233,6 +1238,32 @@ int isViableFeatureBiome(int mc, int structureType, int biomeID)
         if (mc <= MC_1_20) return 0;
         return biomeID != deep_dark && isOverworld(mc, biomeID);
 
+    case Abandoned_Camp:
+        if (mc < MC_26_3) return 0;
+        switch (biomeID) {
+        case bamboo_jungle:
+        case birch_forest:
+        case cherry_grove:
+        case dappled_forest:
+        case flower_forest:
+        case forest:
+        case meadow:
+        case old_growth_birch_forest:
+        case old_growth_pine_taiga:
+        case old_growth_spruce_taiga:
+        case pale_garden:
+        case savanna:
+        case snowy_taiga:
+        case sparse_jungle:
+        case swamp:
+        case taiga:
+        case windswept_forest:
+        case wooded_badlands:
+            return 1;
+        default:
+            return 0;
+        }
+
     case Treasure:
         if (mc <= MC_1_12) return 0;
         return biomeID == beach || biomeID == snowy_beach;
@@ -1432,6 +1463,210 @@ static const uint64_t g_monument_biomes1 =
     (1ULL << warm_ocean) |
     (1ULL << deep_warm_ocean);
 
+/* Abandoned camps use a jigsaw start pool containing ten tent templates.
+ * Vanilla chooses the rotation and template before checking the biome at the
+ * centre of the rotated start template. Most structures check near the chunk
+ * centre instead, so this offset has to be reproduced for camps in particular.
+ */
+static void getAbandonedCampBiomePos(uint64_t seed, int chunkX, int chunkZ,
+        int *blockX, int *blockZ)
+{
+    uint64_t rng = chunkGenerateRnd(seed, chunkX, chunkZ);
+    int rotation = nextInt(&rng, 4);
+    int template = nextInt(&rng, 10);
+
+    // Templates 3 and 8 are 6x8 blocks; all other start tents are 8x8.
+    int sx = (template == 2 || template == 7) ? 6 : 8;
+    int sz = 8;
+    int minX = chunkX * 16;
+    int maxX = minX;
+    int minZ = chunkZ * 16;
+    int maxZ = minZ;
+
+    switch (rotation)
+    {
+    default: // none
+        maxX += sx - 1;
+        maxZ += sz - 1;
+        break;
+    case 1: // clockwise 90 degrees
+        minX -= sz - 1;
+        maxZ += sx - 1;
+        break;
+    case 2: // clockwise 180 degrees
+        minX -= sx - 1;
+        minZ -= sz - 1;
+        break;
+    case 3: // counter-clockwise 90 degrees
+        maxX += sz - 1;
+        minZ -= sx - 1;
+        break;
+    }
+
+    // Java divides the absolute bounding-box coordinates and truncates toward
+    // zero. Calculating a relative offset first differs by one block in many
+    // negative-coordinate chunks.
+    *blockX = (minX + maxX) / 2;
+    *blockZ = (minZ + maxZ) / 2;
+}
+
+/* Returns the number of jigsaw connectors in an abandoned-camp start tent.
+ * Every template has one camp connector. Some templates also contain tree
+ * connectors, which affect the RNG state before Vanilla shuffles the camp
+ * template pool. These counts come from the 26.3 Pre-Release 2 start NBTs.
+ */
+static int getAbandonedCampJigsawCount(int biomeID, int template)
+{
+    uint16_t extra = 0;
+
+    switch (biomeID)
+    {
+    case bamboo_jungle:
+    {
+        static const uint8_t counts[10] = {1,9,1,1,6,1,1,5,1,1};
+        return counts[template];
+    }
+    case birch_forest:
+    case cherry_grove:
+    case old_growth_pine_taiga:
+    case old_growth_spruce_taiga:
+    case pale_garden:
+    case wooded_badlands:
+        extra = 1U << 0;
+        break;
+    case dappled_forest:
+        extra = (1U << 0) | (1U << 1) | (1U << 2) | (1U << 3) |
+                (1U << 5) | (1U << 6);
+        break;
+    case flower_forest:
+    case forest:
+        extra = (1U << 0) | (1U << 5);
+        break;
+    case meadow:
+        extra = (1U << 4) | (1U << 5);
+        break;
+    case old_growth_birch_forest:
+        extra = (1U << 3) | (1U << 9);
+        break;
+    case savanna:
+        extra = (1U << 0) | (1U << 4) | (1U << 9);
+        break;
+    case snowy_taiga:
+        extra = (1U << 8) | (1U << 9);
+        break;
+    case sparse_jungle:
+        extra = 1U << 1;
+        break;
+    case taiga:
+        extra = (1U << 1) | (1U << 6) | (1U << 7);
+        break;
+    case windswept_forest:
+        extra = (1U << 0) | (1U << 4) | (1U << 5) | (1U << 9);
+        break;
+    default:
+        break;
+    }
+    return 1 + ((extra >> template) & 1);
+}
+
+/* Returns whether a camp-pool element contains the oxidized copper chest with
+ * the abandoned_camp_secret_chest loot table. The names of the templates are
+ * misleading: only seven of the 15 "special" templates have the chest, while
+ * ten chest/barrel templates and several biome-specific templates do as well.
+ */
+static int abandonedCampElementHasSpecialLoot(int biomeID, int element)
+{
+    if ((element >= 5 && element <= 9) ||
+        (element >= 25 && element <= 30) ||
+        element == 33 || element == 35 ||
+        (element >= 37 && element <= 39) || element == 42)
+    {
+        return 1;
+    }
+    if (element < 45 || element > 48)
+        return 0;
+
+    uint8_t specific = 0;
+    switch (biomeID)
+    {
+    case bamboo_jungle:
+    case cherry_grove:
+    case dappled_forest:
+    case forest:
+    case meadow:
+    case windswept_forest:
+    case wooded_badlands:
+        specific = (1U << 2) | (1U << 3);
+        break;
+    case birch_forest:
+    case old_growth_spruce_taiga:
+    case taiga:
+        specific = 1U << 3;
+        break;
+    case flower_forest:
+    case old_growth_birch_forest:
+    case old_growth_pine_taiga:
+    case pale_garden:
+    case savanna:
+    case sparse_jungle:
+    case swamp:
+        specific = (1U << 1) | (1U << 3);
+        break;
+    case snowy_taiga:
+        specific = 1U << 0;
+        break;
+    default:
+        break;
+    }
+    return (specific >> (element - 45)) & 1;
+}
+
+/* Reproduces the camp-pool selection. All 49 pool weights are one in
+ * 26.3-pre2, but the RNG state also depends on the start tent's tree jigsaws.
+ */
+static int isAbandonedCampSpecial(uint64_t *rng, int biomeID)
+{
+    int i, j;
+
+    nextInt(rng, 4); // start rotation
+    int template = nextInt(rng, 10);
+
+    // The camp connector is the first connector before Util.shuffle(). Track
+    // where it lands without retaining the complete connector permutation.
+    int campSlot = 0;
+    int count = getAbandonedCampJigsawCount(biomeID, template);
+    for (i = count; i > 1; i--)
+    {
+        j = nextInt(rng, i);
+        if (campSlot == i - 1)
+            campSlot = j;
+        else if (campSlot == j)
+            campSlot = i - 1;
+    }
+
+    // Tree feature pools contain one element. Each preceding tree therefore
+    // only consumes the Fisher-Yates shuffle of the four possible rotations.
+    for (i = 0; i < campSlot; i++)
+    {
+        nextInt(rng, 4);
+        nextInt(rng, 3);
+        nextInt(rng, 2);
+    }
+
+    uint8_t pool[49];
+    for (i = 0; i < 49; i++)
+        pool[i] = (uint8_t) i;
+    for (i = 49; i > 1; i--)
+    {
+        j = nextInt(rng, i);
+        uint8_t tmp = pool[i - 1];
+        pool[i - 1] = pool[j];
+        pool[j] = tmp;
+    }
+
+    return abandonedCampElementHasSpecialLoot(biomeID, pool[0]);
+}
+
 int isViableStructurePos(int structureType, Generator *g, int x, int z, uint32_t flags)
 {
     int approx = 0; // enables approximation levels
@@ -1525,6 +1760,28 @@ int isViableStructurePos(int structureType, Generator *g, int x, int z, uint32_t
 
     switch (structureType)
     {
+    case Abandoned_Camp:
+        if (g->mc < MC_26_3) goto L_not_viable;
+        getAbandonedCampBiomePos(g->seed, (int) chunkX, (int) chunkZ,
+                &sampleX, &sampleZ);
+        sampleX = floordiv(sampleX, 4);
+        sampleZ = floordiv(sampleZ, 4);
+        {
+            // Jigsaw camps are projected to WORLD_SURFACE_WG, and Vanilla
+            // checks the biome at that projected Y coordinate. The generic
+            // surface-structure check at Y=319 can pick a different vertical
+            // biome near rivers and mountain valleys.
+            float surfaceY;
+            int nptype = g->bn.nptype;
+            g->bn.nptype = NP_DEPTH;
+            int err = mapApproxHeight(&surfaceY, NULL, g, NULL,
+                    sampleX, sampleZ, 1, 1);
+            g->bn.nptype = nptype;
+            if (err)
+                goto L_not_viable;
+            sampleY = floordiv((int) floorf(surfaceY) + 1, 4);
+        }
+        goto L_feature;
     case Trail_Ruins:
         if (g->mc <= MC_1_19) goto L_not_viable;
         goto L_feature;
@@ -1548,14 +1805,21 @@ L_feature:
         }
         else
         {
-            if (g->mc <= MC_1_17)
-                g->entry = &g->ls.layers[L_RIVER_MIX_4];
-            sampleX = chunkX * 4 + 2;
-            sampleZ = chunkZ * 4 + 2;
+            if (structureType != Abandoned_Camp)
+            {
+                if (g->mc <= MC_1_17)
+                    g->entry = &g->ls.layers[L_RIVER_MIX_4];
+                sampleX = chunkX * 4 + 2;
+                sampleZ = chunkZ * 4 + 2;
+            }
         }
-        id = getBiomeAt(g, 0, sampleX, 319>>2, sampleZ);
+        if (structureType != Abandoned_Camp)
+            sampleY = 319 >> 2;
+        id = getBiomeAt(g, 0, sampleX, sampleY, sampleZ);
         if (id < 0 || !isViableFeatureBiome(g->mc, structureType, id))
             goto L_not_viable;
+        if (structureType == Abandoned_Camp)
+            viable = id;
         goto L_viable;
 
     case Desert_Well:
@@ -2009,6 +2273,13 @@ int getVariant(StructureVariant *r, int structType, int mc, uint64_t seed,
 
     switch (structType)
     {
+    case Abandoned_Camp:
+        if (mc < MC_26_3 || !isViableFeatureBiome(mc, structType, biomeID))
+            return 0;
+        r->biome = biomeID;
+        r->special = isAbandonedCampSpecial(&rng, biomeID);
+        return 1;
+
     case Village:
         if (mc <= MC_1_9)
             return 0;
@@ -5565,6 +5836,10 @@ static const int g_biome_para_range_26_2_diff[][13] = {
 {sulfur_caves            ,  IMIN, IMAX,  IMIN, IMAX, -1900, 5500,  4500, IMAX,  2000, 9000,-11000,-8500},
 {-1,0,0,0,0,0,0,0,0,0,0,0,0}};
 
+static const int g_biome_para_range_26_3_diff[][13] = {
+{dappled_forest          , -4500,-1500,  IMIN,-3500, -1900, IMAX,  IMIN, IMAX,  IMIN, IMAX,  -500, IMAX},
+{-1,0,0,0,0,0,0,0,0,0,0,0,0}};
+
 
 /**
  * Gets the min/max parameter values within which a biome change can occur.
@@ -5603,6 +5878,14 @@ const int *getBiomeParaLimits(int mc, int id)
     if (mc <= MC_1_17)
         return NULL;
     int i;
+    if (mc >= MC_26_3)
+    {
+        for (i = 0; g_biome_para_range_26_3_diff[i][0] != -1; i++)
+        {
+            if (g_biome_para_range_26_3_diff[i][0] == id)
+                return &g_biome_para_range_26_3_diff[i][1];
+        }
+    }
     if (mc >= MC_1_21_5)
     {
         for (i = 0; g_biome_para_range_21_5_diff[i][0] != -1; i++)

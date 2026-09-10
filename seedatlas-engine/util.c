@@ -88,12 +88,16 @@ const char* mc2str(int mc)
     case MC_26_1_1: return "26.1.1"; break;
     case MC_26_1_2: return "26.1.2"; break;
     case MC_26_2:   return "26.2"; break;
+    case MC_26_3:   return "26.3"; break;
     default:        return "?";
     }
 }
 
 int str2mc(const char *s)
 {
+    if (!strcmp(s, "26.3 Pre-Release 2") ||
+        !strcmp(s, "26.3-pre-2") || !strcmp(s, "26.3"))
+        return MC_26_3;
     if (!strcmp(s, "26.2"))     return MC_26_2;
     if (!strcmp(s, "26.1.2"))   return MC_26_1_2;
     if (!strcmp(s, "26.1.1"))   return MC_26_1_1;
@@ -297,6 +301,8 @@ const char *biome2str(int mc, int id)
     case pale_garden: return "pale_garden";
     // 26.2
     case sulfur_caves: return "sulfur_caves";
+    // 26.3
+    case dappled_forest: return "dappled_forest";
     }
     return NULL;
 }
@@ -324,6 +330,7 @@ const char* struct2str(int stype)
     case Ancient_City:      return "ancient_city";
     case Trail_Ruins:       return "trail_ruins";
     case Trial_Chambers:    return "trial_chambers";
+    case Abandoned_Camp:    return "abandoned_camp";
     case Fortress:          return "fortress";
     case Bastion:           return "bastion_remnant";
     case End_City:          return "end_city";
@@ -444,6 +451,7 @@ void initBiomeColors(unsigned char colors[256][3])
     setColor(colors, cherry_grove,                     0xff91c8); // -
     setColor(colors, pale_garden,                      0x696d95); // -
     setColor(colors, sulfur_caves,                     0xd8c64b); // -
+    setColor(colors, dappled_forest,                   0xdf6827); // -
 }
 
 void initBiomeTypeColors(unsigned char colors[256][3])
