@@ -42,6 +42,28 @@ jobs:
             -QtBin "C:\Qt\6.8.3\mingw_64\bin" `
             -MingwBin "C:\Qt\Tools\mingw1310_64\bin" `
             -InnoCompiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+      - name: Smoke-test the installer
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist\*Setup.exe | Select-Object -First 1).FullName
+          if (!$setup) { throw "No setup executable was built" }
+          $target = Join-Path $env:RUNNER_TEMP "seed-atlas-install-test"
+          $install = Start-Process -FilePath $setup `
+            -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=`"$target`"" `
+            -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer exited with code $($install.ExitCode)" }
+          $exe = Join-Path $target "seed-atlas.exe"
+          if (!(Test-Path $exe)) { throw "seed-atlas.exe was not installed" }
+          $out = & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "seed-atlas.exe --version failed" }
+          if ($out -and $out -notmatch "seed-atlas") { throw "Unexpected version output: $out" }
+          Write-Host "Installed app reports: $out"
+          $uninstaller = (Get-ChildItem (Join-Path $target "unins*.exe") | Select-Object -First 1).FullName
+          if ($uninstaller) {
+            $uninstall = Start-Process -FilePath $uninstaller `
+              -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with code $($uninstall.ExitCode)" }
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-Windows
@@ -62,6 +84,10 @@ jobs:
           sudo apt-get install -y flatpak flatpak-builder
       - name: Build Flatpak bundle
         run: bash installer/flatpak/build-flatpak.sh "$SEED_ATLAS_VERSION"
+      - name: Smoke-test the Flatpak bundle
+        run: |
+          flatpak install --user -y --noninteractive ./dist/*.flatpak
+          flatpak run org.seedatlas.SeedAtlas --version
       - uses: actions/upload-artifact@v7
         with:
           name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-Linux-Flatpak
