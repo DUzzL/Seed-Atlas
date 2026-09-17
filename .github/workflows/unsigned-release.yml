@@ -54,10 +54,26 @@ jobs:
           if ($install.ExitCode -ne 0) { throw "Installer exited with code $($install.ExitCode)" }
           $exe = Join-Path $target "seed-atlas.exe"
           if (!(Test-Path $exe)) { throw "seed-atlas.exe was not installed" }
-          $out = & $exe --version
-          if ($LASTEXITCODE -ne 0) { throw "seed-atlas.exe --version failed" }
-          if ($out -and $out -notmatch "seed-atlas") { throw "Unexpected version output: $out" }
-          Write-Host "Installed app reports: $out"
+          $stdout = Join-Path $env:RUNNER_TEMP "version-out.txt"
+          $stderr = Join-Path $env:RUNNER_TEMP "version-err.txt"
+          $run = Start-Process -FilePath $exe -ArgumentList "--version" -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $out = Get-Content $stdout -Raw -ErrorAction SilentlyContinue
+          $err = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
+          Write-Host "Exit code: $($run.ExitCode)"
+          Write-Host "Stdout: [$out]"
+          Write-Host "Stderr: [$err]"
+          if ($run.ExitCode -ne 0) {
+            $portableExe = (Get-ChildItem "dist\*-Portable\seed-atlas.exe" | Select-Object -First 1).FullName
+            if ($portableExe) {
+              $prun = Start-Process -FilePath $portableExe -ArgumentList "--version" -Wait -PassThru `
+                -RedirectStandardOutput "$env:RUNNER_TEMP/portable-out.txt" -RedirectStandardError "$env:RUNNER_TEMP/portable-err.txt"
+              Write-Host "Portable exit code: $($prun.ExitCode)"
+              Write-Host "Portable stdout: [$(Get-Content "$env:RUNNER_TEMP/portable-out.txt" -Raw -ErrorAction SilentlyContinue)]"
+            }
+            throw "seed-atlas.exe --version exited with code $($run.ExitCode)"
+          }
+          if ($out -notmatch "seed-atlas") { throw "Unexpected version output: $out" }
           $uninstaller = (Get-ChildItem (Join-Path $target "unins*.exe") | Select-Object -First 1).FullName
           if ($uninstaller) {
             $uninstall = Start-Process -FilePath $uninstaller `
