@@ -215,6 +215,27 @@ bool SearchMaster::set(QWidget *widget, const Session& s)
             warn(widget, tr("Condition %1 not available for Minecraft versions above %2.").arg(cid, mcs));
             return false;
         }
+        if (c.type >= F_QH_IDEAL && c.type <= F_QM_90)
+        {   // quad conditions rely on a dependent structure check to rule out
+            // seeds where the huts/monuments do not actually generate
+            bool active = false;
+            for (const Condition& d : s.cv)
+            {
+                if (d.relative == c.save && !(d.meta & Condition::DISABLED)
+                        && (d.type == F_HUT || d.type == F_MONUMENT))
+                {
+                    active = true;
+                    break;
+                }
+            }
+            if (!active)
+            {
+                qWarning("Warning: quad condition %s has no active structure check;"
+                         " the search matches structure positions alone and may"
+                         " include seeds where the structures do not generate.",
+                         cid);
+            }
+        }
         if (c.type == F_BIOME ||
             c.type == F_BIOME_4_RIVER ||
             c.type == F_BIOME_256_OTEMP ||
@@ -340,7 +361,6 @@ static void genQHBases(int qual, uint64_t salt, std::vector<uint64_t>& list48)
     while (it.hasNext())
     {
         QString fnam = it.next();
-        printf("> %s\n", fnam.toLocal8Bit().data());
         QFile file(fnam);
         uint64_t low = it.fileInfo().baseName().toUInt(nullptr, 16);
         uint64_t mid = 0;

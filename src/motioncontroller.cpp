@@ -6,6 +6,8 @@
 #include <QEasingCurve>
 #include <QEvent>
 #include <QGraphicsOpacityEffect>
+#include <QLabel>
+#include <QLayout>
 #include <QMenu>
 #include <QParallelAnimationGroup>
 #include <QPropertyAnimation>
@@ -114,33 +116,65 @@ void MotionController::registerStack(QStackedWidget *stack)
 
 void MotionController::animatePage(QWidget *page, int direction)
 {
-    if (!page || !page->isVisible())
+    if (!page || !page->isVisible() || page->isWindow())
         return;
 
-    // A short fade is enough to make a content change legible without slowing
-    // navigation. The graphics effect is removed afterwards so map rendering
-    // and large result views do not pay a permanent off-screen-rendering cost.
-    if (QAbstractAnimation *running = page->findChild<QAbstractAnimation*>(
-            "seedAtlasPageMotion", Qt::FindDirectChildrenOnly))
-        running->stop();
-    page->setGraphicsEffect(nullptr);
+    QWidget *host = page->parentWidget();
+    if (!host)
+        return;
 
-    const QVariant savedRestPosition = page->property("seedAtlasMotionRestPosition");
-    if (savedRestPosition.isValid())
-        page->move(savedRestPosition.toPoint());
+    // Fade/slide a one-shot snapshot of the page instead of the live widget.
+    // Animating the live page with an opacity effect forces Qt to re-render
+    // the whole page (including large tables) on every animation frame, which
+    // makes the transition stutter on the heavier pages. While the snapshot
+    // is animating, the page itself is suspended, so the transition looks
+    // exactly like animating the page directly.
+    if (QLayout *layout = page->layout())
+        layout->activate();
+    const QPixmap shot = page->grab();
+    if (shot.isNull())
+        return;
 
-    const QPoint restPosition = page->pos();
-    page->setProperty("seedAtlasMotionRestPosition", restPosition);
+    // finish an interrupted previous switch: drop its overlay and put any
+    // suspended page back to the visibility its stack expects
+    if (QWidget *oldOverlay = host->findChild<QWidget*>(QStringLiteral("seedAtlasPageMotionOverlay")))
+        delete oldOverlay;
+    const QList<QWidget*> siblings =
+            host->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
+    for (QWidget *sibling : siblings)
+    {
+        if (!sibling->property("seedAtlasPageSuspended").toBool())
+            continue;
+        sibling->setProperty("seedAtlasPageSuspended", QVariant());
+        if (QStackedWidget *stack = qobject_cast<QStackedWidget*>(host))
+        {
+            if (stack->currentWidget() == sibling)
+                sibling->show();
+        }
+    }
+
+    page->setProperty("seedAtlasPageSuspended", true);
+    page->hide();
+
+    QLabel *overlay = new QLabel(host);
+    overlay->setObjectName(QStringLiteral("seedAtlasPageMotionOverlay"));
+    overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+    overlay->setPixmap(shot);
+    overlay->setGeometry(page->geometry());
+    overlay->show();
+    overlay->raise();
+
+    const QPoint restPosition = overlay->pos();
     const int distance = 28;
     const QPoint startPosition = restPosition + QPoint(direction * distance, 0);
-    page->move(startPosition);
+    overlay->move(startPosition);
 
-    QGraphicsOpacityEffect *effect = new QGraphicsOpacityEffect(page);
+    QGraphicsOpacityEffect *effect = new QGraphicsOpacityEffect(overlay);
     effect->setOpacity(0.76);
-    page->setGraphicsEffect(effect);
+    overlay->setGraphicsEffect(effect);
 
-    QParallelAnimationGroup *group = new QParallelAnimationGroup(page);
-    group->setObjectName("seedAtlasPageMotion");
+    QParallelAnimationGroup *group = new QParallelAnimationGroup(overlay);
+    group->setObjectName(QStringLiteral("seedAtlasPageMotion"));
 
     QPropertyAnimation *fade = new QPropertyAnimation(effect, "opacity", group);
     fade->setDuration(190);
@@ -149,21 +183,27 @@ void MotionController::animatePage(QWidget *page, int direction)
     fade->setEasingCurve(QEasingCurve::OutCubic);
     group->addAnimation(fade);
 
-    QPropertyAnimation *slide = new QPropertyAnimation(page, "pos", group);
+    QPropertyAnimation *slide = new QPropertyAnimation(overlay, "pos", group);
     slide->setDuration(210);
     slide->setStartValue(startPosition);
     slide->setEndValue(restPosition);
     slide->setEasingCurve(QEasingCurve::OutCubic);
     group->addAnimation(slide);
 
+    QPointer<QLabel> guardedOverlay(overlay);
     QPointer<QWidget> guardedPage(page);
-    connect(group, &QParallelAnimationGroup::finished, this, [guardedPage, restPosition]() {
+    QPointer<QWidget> guardedHost(host);
+    connect(group, &QParallelAnimationGroup::finished, this,
+            [guardedOverlay, guardedPage, guardedHost]() {
         if (guardedPage)
         {
-            guardedPage->move(restPosition);
-            guardedPage->setProperty("seedAtlasMotionRestPosition", QVariant());
-            guardedPage->setGraphicsEffect(nullptr);
+            guardedPage->setProperty("seedAtlasPageSuspended", QVariant());
+            QStackedWidget *stack = qobject_cast<QStackedWidget*>(guardedHost.data());
+            if (!stack || stack->currentWidget() == guardedPage)
+                guardedPage->show();
         }
+        if (guardedOverlay)
+            guardedOverlay->deleteLater();
     });
     group->start(QAbstractAnimation::DeleteWhenStopped);
 }

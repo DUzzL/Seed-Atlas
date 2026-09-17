@@ -24,8 +24,11 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QPushButton>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTableView>
 #include <QTabWidget>
 #include <QThread>
 #include <QThreadPool>
@@ -1197,6 +1200,13 @@ int main(int argc, char *argv[])
                 QString::fromLocal8Bit(testSettingsDir));
             QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, path);
             QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, path);
+            // The (organization, application) constructor used throughout the
+            // app always selects the native backend, and that backend cannot
+            // be redirected to a directory on every platform (macOS ignores
+            // setPath for it). Route the test instance to its own settings
+            // domain instead so the real user settings stay untouched.
+            if (qgetenv("SEED_ATLAS_TEST_SETTINGS_ID").isEmpty())
+                qputenv("SEED_ATLAS_TEST_SETTINGS_ID", "seed-atlas-uitest");
         }
 
         MainWindow mw(sessionpath, resultspath);
@@ -1234,6 +1244,20 @@ int main(int argc, char *argv[])
                         if (option != D_GRID && option != D_SPAWN && mw.saction[option])
                             interactionOk = !mw.saction[option]->isChecked();
                     }
+                    // the search tab must start clean: no conditions, no
+                    // matching seeds and no running search; the whole tab is
+                    // hidden unless seed finding was enabled in the settings
+                    QListWidget *conditions = mw.findChild<QListWidget *>("listConditions");
+                    QTableView *results = mw.findChild<QTableView *>("results");
+                    QPushButton *startButton = mw.findChild<QPushButton *>("buttonStart");
+                    QTabWidget *tabs = mw.findChild<QTabWidget *>("tabContainer");
+                    QWidget *searchTab = mw.findChild<QWidget *>("tabSearch");
+                    interactionOk = interactionOk
+                        && conditions && conditions->count() == 0
+                        && results && results->model() && results->model()->rowCount() == 0
+                        && startButton && !startButton->isChecked()
+                        && tabs && searchTab && tabs->indexOf(searchTab) >= 0
+                        && !tabs->isTabVisible(tabs->indexOf(searchTab));
                 }
                 const QByteArray testVersion = qgetenv("SEED_ATLAS_UI_VERSION");
                 if (!testVersion.isEmpty())

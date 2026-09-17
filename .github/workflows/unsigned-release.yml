@@ -1,0 +1,113 @@
+name: Unsigned release (Windows + Linux)
+
+# Builds the unsigned Windows setup and the Linux Flatpak for the current
+# release source so all packages can share one build ID. The macOS DMG is
+# built locally (see buildguide.md) and uses the same SEED_ATLAS_BUILD_ID.
+on:
+  push:
+    branches:
+      - release-4.2.dev0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SEED_ATLAS_VERSION: 4.2.dev0
+  # Must match the ID used for the macOS DMG of this release. Do not change
+  # without repackaging every platform.
+  SEED_ATLAS_BUILD_ID: 3bb0471645dd4ac7c139c1aa09649335417ed318
+
+jobs:
+  windows:
+    name: Windows Setup (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Qt 6.8.3 with MinGW 13.1
+        shell: pwsh
+        run: |
+          python -m pip install --quiet aqtinstall==3.3.0
+          python -m aqt install-qt windows desktop 6.8.3 win64_mingw --outputdir C:\Qt
+          python -m aqt install-tool windows desktop tools_mingw1310 --outputdir C:\Qt
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Build installer
+        shell: pwsh
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File installer/windows/build-installer.ps1 `
+            -Version "$env:SEED_ATLAS_VERSION" `
+            -QtBin "C:\Qt\6.8.3\mingw_64\bin" `
+            -MingwBin "C:\Qt\Tools\mingw1310_64\bin" `
+            -InnoCompiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+      - name: Smoke-test the installer
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist\*Setup.exe | Select-Object -First 1).FullName
+          if (!$setup) { throw "No setup executable was built" }
+          $target = Join-Path $env:RUNNER_TEMP "seed-atlas-install-test"
+          $install = Start-Process -FilePath $setup `
+            -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=`"$target`"" `
+            -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer exited with code $($install.ExitCode)" }
+          $exe = Join-Path $target "seed-atlas.exe"
+          if (!(Test-Path $exe)) { throw "seed-atlas.exe was not installed" }
+          $stdout = Join-Path $env:RUNNER_TEMP "version-out.txt"
+          $stderr = Join-Path $env:RUNNER_TEMP "version-err.txt"
+          $run = Start-Process -FilePath $exe -ArgumentList "--version" -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $out = Get-Content $stdout -Raw -ErrorAction SilentlyContinue
+          $err = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
+          Write-Host "Exit code: $($run.ExitCode)"
+          Write-Host "Stdout: [$out]"
+          Write-Host "Stderr: [$err]"
+          if ($run.ExitCode -ne 0) {
+            $portableExe = (Get-ChildItem "dist\*-Portable\seed-atlas.exe" | Select-Object -First 1).FullName
+            if ($portableExe) {
+              $prun = Start-Process -FilePath $portableExe -ArgumentList "--version" -Wait -PassThru `
+                -RedirectStandardOutput "$env:RUNNER_TEMP/portable-out.txt" -RedirectStandardError "$env:RUNNER_TEMP/portable-err.txt"
+              Write-Host "Portable exit code: $($prun.ExitCode)"
+              Write-Host "Portable stdout: [$(Get-Content "$env:RUNNER_TEMP/portable-out.txt" -Raw -ErrorAction SilentlyContinue)]"
+            }
+            throw "seed-atlas.exe --version exited with code $($run.ExitCode)"
+          }
+          if ($out -notmatch "seed-atlas") { throw "Unexpected version output: $out" }
+          $uninstaller = (Get-ChildItem (Join-Path $target "unins*.exe") | Select-Object -First 1).FullName
+          if ($uninstaller) {
+            $uninstall = Start-Process -FilePath $uninstaller `
+              -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with code $($uninstall.ExitCode)" }
+          }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-Windows
+          path: |
+            dist/*Setup.exe
+            dist/Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-Source.zip
+            dist/update.json
+          if-no-files-found: error
+
+  flatpak:
+    name: Linux Flatpak
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+      - name: Build Flatpak bundle
+        run: bash installer/flatpak/build-flatpak.sh "$SEED_ATLAS_VERSION"
+      - name: Smoke-test the Flatpak bundle
+        run: |
+          flatpak install --user -y --noninteractive ./dist/*.flatpak
+          flatpak run org.seedatlas.SeedAtlas --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-Linux-Flatpak
+          path: |
+            dist/*.flatpak
+            dist/update.json
+          if-no-files-found: error

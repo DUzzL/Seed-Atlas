@@ -296,9 +296,16 @@ void Collapsible::toggle(bool collapsed)
     if (!content)
         return;
 
-    int height = content->size().height();
-    if (height)
-        contentHeight = height;
+    if (collapsed)
+    {   // expanding: the content may have changed size while it was collapsed
+        contentHeight = qMax(contentHeight, content->sizeHint().height());
+    }
+    else
+    {
+        int height = content->size().height();
+        if (height)
+            contentHeight = height;
+    }
 
     if (collapsed)
     {

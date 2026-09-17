@@ -27,3 +27,6 @@ dist/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# aqt writes its log into the working directory
+/aqtinstall.log

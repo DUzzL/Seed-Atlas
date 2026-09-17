@@ -265,11 +265,16 @@ void FormGen48::updateAutoUi()
     bool isqh = cond.type >= F_QH_IDEAL && cond.type <= F_QH_BARELY;
     bool isqm = cond.type >= F_QM_95 && cond.type <= F_QM_90;
     if (isqh)
-        modestr = tr("[Quad-hut]");
+    {
+        static const char *qualname[] = { "ideal", "classic", "normal", "barely" };
+        modestr = tr("[Quad-hut (%1)]").arg(qualname[cond.type - F_QH_IDEAL]);
+    }
     else if (isqm)
-        modestr = tr("[Quad-monument]");
+        modestr = (cond.type == F_QM_95)
+            ? tr("[Quad-monument (95% area)]")
+            : tr("[Quad-monument (90% area)]");
     else
-        modestr = tr("[None]");
+        modestr = tr("[None] - no 48-bit generator");
 
     ui->labelAuto->setText(modestr);
 

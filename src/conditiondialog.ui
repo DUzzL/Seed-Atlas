@@ -82,77 +82,34 @@
     </layout>
    </item>
    <item row="1" column="0">
-    <widget class="QSplitter" name="splitter">
-     <property name="orientation">
-      <enum>Qt::Vertical</enum>
+    <widget class="QScrollArea" name="scrollMain">
+     <property name="frameShape">
+      <enum>QFrame::NoFrame</enum>
      </property>
-     <widget class="Collapsible" name="collapseDescription" native="true"/>
-     <widget class="QWidget" name="layoutWidget">
+     <property name="widgetResizable">
+      <bool>true</bool>
+     </property>
+     <widget class="QWidget" name="scrollMainContents">
+      <layout class="QGridLayout" name="gridLayoutMainScroll">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item row="0" column="0">
+        <widget class="QWidget" name="layoutWidget">
       <layout class="QGridLayout" name="gridLayout_7">
        <property name="horizontalSpacing">
         <number>0</number>
        </property>
        <item row="0" column="0" rowspan="2" colspan="2">
-        <widget class="QGroupBox" name="groupBoxGeneral">
-         <property name="title">
-          <string>General</string>
-         </property>
-         <layout class="QGridLayout" name="gridLayout_9">
-          <item row="0" column="5">
-           <widget class="QCheckBox" name="checkEnabled">
-            <property name="text">
-             <string>Condition enabled</string>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="1">
-           <widget class="QLineEdit" name="lineSummary">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="font">
-             <font>
-              <family>Courier New</family>
-             </font>
-            </property>
-            <property name="text">
-             <string/>
-            </property>
-            <property name="maxLength">
-             <number>26</number>
-            </property>
-            <property name="placeholderText">
-             <string/>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="2">
-           <spacer name="horizontalSpacer_5">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-          <item row="0" column="0">
-           <widget class="QLabel" name="label_2">
-            <property name="text">
-             <string>Label:</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item row="2" column="0" rowspan="2" colspan="2">
         <widget class="QGroupBox" name="groupBoxPosition">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -292,7 +249,7 @@
           <item row="5" column="0">
            <widget class="QRadioButton" name="radioCustom">
             <property name="text">
-             <string>Custom:</string>
+             <string>Custom rectangle:</string>
             </property>
            </widget>
           </item>
@@ -370,7 +327,7 @@ QPushButton:hover {
            </widget>
           </item>
           <item row="2" column="0" colspan="4">
-           <widget class="QCheckBox" name="checkRadius">
+           <widget class="QRadioButton" name="radioRadius">
             <property name="text">
              <string>Within radial distance:</string>
             </property>
@@ -1952,6 +1909,9 @@ QPushButton:hover {
        </item>
       </layout>
      </widget>
+       </item>
+      </layout>
+     </widget>
     </widget>
    </item>
    <item row="2" column="0">
@@ -1974,12 +1934,6 @@ QPushButton:hover {
    <header>src/widgets.h</header>
   </customwidget>
   <customwidget>
-   <class>Collapsible</class>
-   <extends>QWidget</extends>
-   <header>src/widgets.h</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
    <class>SpinInstances</class>
    <extends>QSpinBox</extends>
    <header>src/widgets.h</header>
@@ -1999,6 +1953,10 @@ QPushButton:hover {
   <tabstop>comboCat</tabstop>
   <tabstop>comboType</tabstop>
   <tabstop>spinBox</tabstop>
+  <tabstop>radioRadius</tabstop>
+  <tabstop>lineRadius</tabstop>
+  <tabstop>radioSquare</tabstop>
+  <tabstop>lineSquare</tabstop>
   <tabstop>lineEditX1</tabstop>
   <tabstop>lineEditZ1</tabstop>
   <tabstop>lineEditX2</tabstop>
