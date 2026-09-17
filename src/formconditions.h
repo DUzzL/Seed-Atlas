@@ -38,6 +38,11 @@ public:
     void updateSensitivity();
     int getIndex(int idx) const;
 
+    // make sure that every quad condition has its dependent structure check
+    // (F_HUT / F_MONUMENT). Returns the number of conditions added or, if
+    // reenable is set, also of previously disabled checks that were enabled.
+    int ensureQuadDependencies(bool reenable = false);
+
     void clearSelection();
 
     QListWidgetItem *lockItem(QListWidgetItem *item);

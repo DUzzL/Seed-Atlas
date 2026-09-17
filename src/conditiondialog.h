@@ -10,7 +10,6 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QMouseEvent>
-#include <QTextEdit>
 #include <QVBoxLayout>
 
 class MainWindow;
@@ -85,7 +84,7 @@ private slots:
     void on_buttonAreaInfo_clicked();
     void on_buttonFromVisible_clicked();
 
-    void on_checkRadius_toggled(bool checked);
+    void on_radioRadius_toggled(bool checked);
     void on_radioSquare_toggled(bool checked);
     void on_radioCustom_toggled(bool checked);
 
@@ -118,9 +117,9 @@ private slots:
 
 private:
     bool resolveLuaChanges();
+    void showTypeInfo(int filterIndex);
 
     Ui::ConditionDialog *ui;
-    QTextEdit *textDescription;
 
     QFrame *separator;
     std::map<int, QCheckBox*> biomecboxes;

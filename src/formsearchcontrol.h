@@ -130,6 +130,7 @@ public slots:
     void on_buttonClear_clicked();
     void on_buttonStart_clicked();
     void on_buttonMore_clicked();
+    void on_buttonExport_clicked();
 
     void onSort(int column, Qt::SortOrder);
     void onSeedSelectionChanged();
@@ -157,6 +158,8 @@ protected:
     void keyReleaseEvent(QKeyEvent *event) override;
 
 private:
+    void updateExportButton();
+
     MainWindow *parent;
     Ui::FormSearchControl *ui;
     SeedTableModel *model;

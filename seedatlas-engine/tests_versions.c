@@ -11,6 +11,17 @@
 #include <stdio.h>
 #include <string.h>
 
+#if STRUCT_CONFIG_OVERRIDE
+/* The application always compiles the engine with STRUCT_CONFIG_OVERRIDE=1 and
+ * provides getStructureConfig_override() itself (see src/main.cpp, where the
+ * user's salt overrides are applied). The regression tests exercise the stock
+ * configurations, so route the override back to the regular lookup. */
+int getStructureConfig_override(int stype, int mc, StructureConfig *sconf)
+{
+    return getStructureConfig(stype, mc, sconf);
+}
+#endif
+
 static void assertStructureConfig(int stype, int mc, int spacing,
                                   int separation, int salt)
 {

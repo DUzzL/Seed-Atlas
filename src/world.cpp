@@ -1459,6 +1459,19 @@ static bool draw_grid_rec(QPainter& painter, QColor col, QRect &rec, qreal pix, 
         if (textrec.width() > pix)
             return false;
     }
+
+    // cells that are partially scrolled out of the viewport would cause the
+    // label to be clipped at the edges - shift it back into the visible area
+    const QRect vp = painter.viewport();
+    if (textrec.left() < vp.left())
+        textrec.moveLeft(vp.left());
+    if (textrec.top() < vp.top())
+        textrec.moveTop(vp.top());
+    if (textrec.right() > vp.right())
+        textrec.moveRight(vp.right());
+    if (textrec.bottom() > vp.bottom())
+        textrec.moveBottom(vp.bottom());
+
     painter.fillRect(textrec, QBrush(QColor(0, 0, 0, 128), Qt::SolidPattern));
 
     painter.setPen(QColor(255, 255, 255));

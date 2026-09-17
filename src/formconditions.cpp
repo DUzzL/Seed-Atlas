@@ -414,6 +414,62 @@ void FormConditions::conditionsDelete()
     on_buttonRemove_clicked();
 }
 
+int FormConditions::ensureQuadDependencies(bool reenable)
+{
+    std::vector<Condition> conds = getConditions();
+    int changed = 0;
+
+    for (const Condition& c : conds)
+    {
+        if (c.type < F_QH_IDEAL || c.type > F_QM_90)
+            continue; // not a quad condition
+
+        bool found = false;
+        for (const Condition& d : conds)
+        {
+            if (d.relative != c.save || (d.type != F_HUT && d.type != F_MONUMENT))
+                continue;
+            found = true;
+            if (reenable && (d.meta & Condition::DISABLED))
+            {   // enable the existing check
+                for (int i = 0, ie = ui->listConditions->count(); i < ie; i++)
+                {
+                    QListWidgetItem *it = ui->listConditions->item(i);
+                    Condition cd = qvariant_cast<Condition>(it->data(Qt::UserRole));
+                    if (cd.save == d.save && (cd.meta & Condition::DISABLED))
+                    {
+                        cd.meta &= ~Condition::DISABLED;
+                        it->setText(cd.summary(true));
+                        it->setData(Qt::UserRole, QVariant::fromValue(cd));
+                        changed++;
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+        if (found)
+            continue;
+
+        // same dependency as created for a new quad condition
+        Condition cq;
+        memset(&cq, 0, sizeof(cq));
+        cq.type = (c.type <= F_QH_BARELY) ? F_HUT : F_MONUMENT;
+        // use 256 to avoid confusion when this restriction is removed
+        cq.rmax = 256;
+        cq.relative = c.save;
+        cq.save = c.save + 1;
+        cq.count = 4;
+        QListWidgetItem *item = new QListWidgetItem(ui->listConditions, QListWidgetItem::UserType);
+        setItemCondition(ui->listConditions, item, &cq);
+        changed++;
+    }
+
+    if (changed)
+        updateSensitivity();
+    return changed;
+}
+
 void FormConditions::addItemCondition(QListWidgetItem *item, Condition cond, int modified)
 {
     const FilterInfo& ft = g_filterinfo.list[cond.type];
@@ -428,7 +484,15 @@ void FormConditions::addItemCondition(QListWidgetItem *item, Condition cond, int
     }
     else if (item)
     {
+        // items opened for editing are clones that point back to the entry
+        // in the list (see lockItem()).
+        bool edited = item->data(Qt::UserRole+1).toULongLong() != 0;
         setItemCondition(ui->listConditions, item, &cond);
+        if (edited)
+        {   // an existing condition may have been changed into a quad filter,
+            // which needs the dependent structure check as well
+            ensureQuadDependencies();
+        }
     }
     else
     {

@@ -1,0 +1,71 @@
+name: Unsigned release (Windows + Linux)
+
+# Builds the unsigned Windows setup and the Linux Flatpak for the current
+# release source so all packages can share one build ID. The macOS DMG is
+# built locally (see buildguide.md) and uses the same SEED_ATLAS_BUILD_ID.
+on:
+  push:
+    branches:
+      - release-4.2.dev0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SEED_ATLAS_VERSION: 4.2.dev0
+  # Must match the ID used for the macOS DMG of this release. Do not change
+  # without repackaging every platform.
+  SEED_ATLAS_BUILD_ID: 3bb0471645dd4ac7c139c1aa09649335417ed318
+
+jobs:
+  windows:
+    name: Windows Setup (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Qt 6.8.3 with MinGW 13.1
+        shell: pwsh
+        run: |
+          python -m pip install --quiet aqtinstall==3.3.0
+          python -m aqt install-qt windows desktop 6.8.3 win64_mingw --outputdir C:\Qt
+          python -m aqt install-tool windows desktop tools_mingw1310 --outputdir C:\Qt
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Build installer
+        shell: pwsh
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File installer/windows/build-installer.ps1 `
+            -Version "$env:SEED_ATLAS_VERSION" `
+            -QtBin "C:\Qt\6.8.3\mingw_64\bin" `
+            -MingwBin "C:\Qt\Tools\mingw1310_64\bin" `
+            -InnoCompiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-Windows
+          path: |
+            dist/*Setup.exe
+            dist/Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-Source.zip
+            dist/update.json
+          if-no-files-found: error
+
+  flatpak:
+    name: Linux Flatpak
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+      - name: Build Flatpak bundle
+        run: bash installer/flatpak/build-flatpak.sh "$SEED_ATLAS_VERSION"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-Linux-Flatpak
+          path: |
+            dist/*.flatpak
+            dist/update.json
+          if-no-files-found: error

@@ -31,6 +31,10 @@ QLabel#labelMC, QLabel#labelSeed, QLabel#labelY {
     font-weight: 600;
 }
 
+QLabel#labelGen48Note {
+    color: @MUTED@;
+}
+
 QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox,
 QDateEdit, QTimeEdit, QDateTimeEdit, QComboBox, QFontComboBox {
     color: @TEXT@;
@@ -134,6 +138,28 @@ QCheckBox::indicator:checked {
 }
 
 QCheckBox::indicator:disabled {
+    background-color: @DISABLED@;
+    border-color: @DISABLED_TEXT@;
+}
+
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    background-color: @INPUT@;
+    border: 2px solid @TEXT@;
+    border-radius: 10px;
+}
+
+QRadioButton::indicator:hover {
+    border-color: @ACCENT@;
+}
+
+QRadioButton::indicator:checked {
+    background-color: @ACCENT@;
+    border-color: @ACCENT@;
+}
+
+QRadioButton::indicator:disabled {
     background-color: @DISABLED@;
     border-color: @DISABLED_TEXT@;
 }
@@ -330,6 +356,12 @@ QHeaderView::section {
     border-bottom: 1px solid @BORDER@;
     padding: 6px 8px;
     font-weight: 600;
+}
+
+/* vertical sections (row numbers) use the fixed row height from the table,
+   so the vertical padding would clip the text to a small sliver */
+QHeaderView::section:vertical {
+    padding: 0px 6px;
 }
 
 QProgressBar {

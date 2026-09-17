@@ -151,12 +151,9 @@ FormSearchControl::FormSearchControl(MainWindow *parent)
         SLOT(onSeedSelectionChanged()));
 
     searchProgressReset();
-    ui->spinThreads->setMaximum(std::max(1, QThread::idealThreadCount()));
-    ui->spinThreads->setValue(configuredThreadCount());
-    ui->spinThreads->setEnabled(false);
-    ui->spinThreads->setToolTip(tr("Controlled by the CPU usage limit in Settings > Performance."));
 
     searchLockUi(false);
+    updateExportButton();
 }
 
 FormSearchControl::~FormSearchControl()
@@ -213,7 +210,6 @@ bool FormSearchControl::setSearchConfig(SearchConfig s, bool quiet)
         ok = false;
     }
 
-    ui->spinThreads->setValue(configuredThreadCount());
     ui->checkStop->setChecked(s.stoponres);
     smin = s.smin;
     smax = s.smax;
@@ -302,7 +298,6 @@ void FormSearchControl::searchLockUi(bool lock)
     if (lock)
     {
         ui->comboSearchType->setEnabled(false);
-        ui->spinThreads->setEnabled(false);
         ui->buttonMore->setEnabled(false);
     }
     else
@@ -312,7 +307,6 @@ void FormSearchControl::searchLockUi(bool lock)
         ui->buttonStart->setChecked(false);
         ui->buttonStart->setEnabled(true);
         ui->comboSearchType->setEnabled(true);
-        ui->spinThreads->setEnabled(false);
         int type = ui->comboSearchType->currentData().toInt();
         ui->buttonMore->setEnabled(type == SEARCH_INC || type == SEARCH_LIST);
     }
@@ -356,6 +350,7 @@ void FormSearchControl::on_buttonClear_clicked()
 {
     model->reset();
     resultSeeds.clear();
+    updateExportButton();
     searchProgressReset();
     ui->lineStart->setText("0");
 }
@@ -379,6 +374,53 @@ void FormSearchControl::on_buttonStart_clicked()
         {
             warn(this, tr("No seed list file selected."));
             ok = false;
+        }
+        if (ok)
+        {   // quad conditions require their structure check, otherwise the
+            // search matches the 48-bit constellation pattern alone and returns
+            // seeds where the huts/monuments do not actually generate
+            bool missing = false;
+            for (const Condition& c : session.cv)
+            {
+                if (c.type < F_QH_IDEAL || c.type > F_QM_90)
+                    continue;
+                if (c.meta & Condition::DISABLED)
+                    continue;
+                bool active = false;
+                for (const Condition& d : session.cv)
+                {
+                    if (d.relative == c.save && !(d.meta & Condition::DISABLED)
+                            && (d.type == F_HUT || d.type == F_MONUMENT))
+                    {
+                        active = true;
+                        break;
+                    }
+                }
+                if (!active)
+                {
+                    missing = true;
+                    break;
+                }
+            }
+            if (missing)
+            {
+                int button = warn(this, tr("Quad condition without structure check"),
+                    tr("A quad condition has no active structure check. Without it, "
+                       "the search matches the constellation of structure positions "
+                       "alone and can also return seeds where the huts/monuments do "
+                       "not actually generate."),
+                    tr("Add the missing structure check for a reliable search?"),
+                    QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+                if (button == QMessageBox::Yes)
+                {
+                    parent->formCond->ensureQuadDependencies(true);
+                    session.cv = parent->formCond->getConditions();
+                }
+                else if (button != QMessageBox::No)
+                {
+                    ok = false;
+                }
+            }
         }
         if (ok)
         {
@@ -675,6 +717,7 @@ int FormSearchControl::searchResultsAdd(std::vector<uint64_t> seeds, bool counto
     }
     if (!newseeds.empty())
         model->insertSeeds(newseeds);
+    updateExportButton();
 
     int addcnt = n - nold;
     if (ui->checkStop->isChecked() && addcnt)
@@ -816,6 +859,7 @@ void FormSearchControl::removeCurrent()
     {
         resultSeeds.remove(model->seeds.at(row).seed);
         model->removeRow(row);
+        updateExportButton();
     }
 }
 
@@ -841,6 +885,46 @@ void FormSearchControl::copyResults()
     }
     QClipboard *clipboard = QGuiApplication::clipboard();
     clipboard->setText(text);
+}
+
+void FormSearchControl::updateExportButton()
+{
+    ui->buttonExport->setEnabled(ui->results->model()->rowCount() > 0);
+}
+
+void FormSearchControl::on_buttonExport_clicked()
+{
+    const std::vector<uint64_t> results = getResults();
+    if (results.empty())
+        return;
+
+#if WASM
+    QByteArray content;
+    QTextStream stream(&content);
+    for (uint64_t seed : results)
+        stream << QString::number(seed) << '\n';
+    QFileDialog::saveFileContent(content, "seeds.txt");
+#else
+    QString fnam = QFileDialog::getSaveFileName(
+        this, tr("Export matching seeds"), parent->prevdir, tr("Text files (*.txt);;Any files (*)"));
+    if (fnam.isEmpty())
+        return;
+
+    QFileInfo finfo(fnam);
+    parent->prevdir = finfo.absolutePath();
+
+    QFile file(fnam);
+    if (!file.open(QIODevice::WriteOnly))
+    {
+        warn(this, tr("Failed to open file for export:\n\"%1\"").arg(fnam));
+        return;
+    }
+
+    QTextStream stream(&file);
+    for (uint64_t seed : results)
+        stream << QString::number(seed) << '\n';
+    stream.flush();
+#endif
 }
 
 void FormSearchControl::keyReleaseEvent(QKeyEvent *event)

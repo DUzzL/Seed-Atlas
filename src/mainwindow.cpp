@@ -63,31 +63,40 @@
 
 namespace {
 
+// Procedural pixel-art gear, matching the style and 20px canvas of the
+// other toolbar icons. A second pixmap is added for high-dpi displays.
 QIcon pixelGearIcon()
 {
-    static const char *pixels[] = {
-        "0011111100",
-        "0111111110",
-        "1110010011",
-        "1100000011",
-        "1100000011",
-        "1100000011",
-        "1100000011",
-        "1110010011",
-        "0111111110",
-        "0011111100",
-    };
-    constexpr int cell = 3;
-    QPixmap pixmap(10*cell, 10*cell);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(190, 198, 210));
-    for (int y = 0; y < 10; y++)
-    for (int x = 0; x < 10; x++)
-        if (pixels[y][x] == '1')
-            painter.drawRect(x*cell, y*cell, cell, cell);
-    return QIcon(pixmap);
+    QIcon icon;
+    for (int size : {20, 40})
+    {
+        const double scale = size / 20.0;
+        const double c = (size - 1) / 2.0;
+        const double rHole = 3.0 * scale;
+        const double rRing = 6.6 * scale;
+        const double rOuter = 9.3 * scale;
+        const int teeth = 8;
+        const double step = 2.0 * M_PI / teeth;
+
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(190, 198, 210));
+        for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+        {
+            const double dx = x - c;
+            const double dy = y - c;
+            const double r = std::hypot(dx, dy);
+            const double a = std::fmod(std::atan2(dy, dx) + M_PI + step*0.5, step);
+            const bool tooth = a > step*0.28 && a < step*0.72;
+            if (r >= rHole && r <= (tooth ? rOuter : rRing))
+                painter.drawRect(x, y, 1, 1);
+        }
+        icon.addPixmap(pixmap);
+    }
+    return icon;
 }
 
 constexpr int SIDE_PANEL_MINIMUM_WIDTH = 420;
@@ -266,7 +275,7 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     for (int i = 0; i <= 9; i++)
     {
         QAction *act = new QAction(this);
-        act->setShortcut(QKeySequence(Qt::ALT+Qt::Key_0+i));
+        act->setShortcut(QKeySequence(QKeyCombination(Qt::ALT, Qt::Key(int(Qt::Key_0) + i))));
         act->setEnabled(true);
         connect(act, &QAction::triggered, [=](){
             this->onActionBiomeLayerSelect(lopt.mode, i);
@@ -1101,38 +1110,6 @@ void MainWindow::setProgressIndication(double value)
     message << QString("application://%1.desktop").arg(QGuiApplication::desktopFileName()) << properties;
     QDBusConnection::sessionBus().send(message);
 #endif
-
-#if 0
-    QPixmap pixmap(":/icons/logo.png");
-
-    if (value >= 0 && value <= 1)
-    {
-        QPainter painter(&pixmap);
-        QRect view = painter.viewport();
-
-        QString txt = QString::asprintf("%2d", progval / 100);
-        QFont f = font();
-        f.setPixelSize(48);
-
-        int pad = 2;
-        int y = view.bottom() - pad;
-        int x1 = 2;
-        int x2 = view.width() - pad;
-        painter.setPen(QPen(Qt::black, 2*pad));
-        painter.drawLine(x1, y, x2, y);
-        painter.setPen(QPen(Qt::green, 2*pad));
-        painter.drawLine(x1, y, (int)ceil((x2 - x1) * value), y);
-
-        QRect textrec = QFontMetrics(f).boundingRect(view, Qt::AlignHCenter | Qt::AlignVCenter, txt);
-        textrec.adjust(8, 0, 8, 0);
-        painter.setFont(f);
-        painter.fillRect(textrec, QBrush(QColor(0, 0, 0, 128), Qt::SolidPattern));
-        painter.setPen(QColor(255, 255, 255));
-        painter.drawText(textrec, txt);
-    }
-
-    setWindowIcon(QIcon(pixmap));
-#endif
 }
 
 void MainWindow::on_comboBoxMC_currentIndexChanged(int)
@@ -1573,7 +1550,7 @@ void MainWindow::onUpdateConfig()
         QApplication::setFont(fnorm);
 
         QWidgetList wlist = QApplication::allWidgets();
-        for (QWidget *w : qAsConst(wlist))
+        for (QWidget *w : std::as_const(wlist))
         {
             const QFont& f = w->font();
             if (f.styleHint() == QFont::Monospace || f.family() == "Monospace" ||
@@ -1586,7 +1563,7 @@ void MainWindow::onUpdateConfig()
         QSize iconsize = QSize((int)round(14 * g_fontscale), (int)round(14 * g_fontscale));
 
         // update cascade
-        for (QWidget *w : qAsConst(wlist))
+        for (QWidget *w : std::as_const(wlist))
         {
             if (QAbstractButton *b = qobject_cast<QAbstractButton*>(w))
                 b->setIconSize(iconsize);

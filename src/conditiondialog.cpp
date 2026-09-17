@@ -8,21 +8,101 @@
 #include "scripts.h"
 #include "util.h"
 
+#include <QAbstractItemView>
 #include <QCheckBox>
+#include <QCursor>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
 #include <QFontMetricsF>
+#include <QGuiApplication>
 #include <QInputDialog>
 #include <QIntValidator>
+#include <QPainter>
+#include <QScreen>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSpacerItem>
 #include <QStandardPaths>
+#include <QStyledItemDelegate>
 #include <QTextStream>
+
+#include <functional>
 
 
 #define WARNING_CHAR QChar(0x26A0)
+
+/* Draws a clickable info button ("i") into each entry of the condition type
+ * combo and handles clicks on it. The info window replaces the former
+ * description panel and shows a short explanation of the condition type,
+ * including the Minecraft versions it was made for.
+ */
+class ComboTypeInfo : public QStyledItemDelegate
+{
+public:
+    ComboTypeInfo(QComboBox *combo, QObject *parent, std::function<void(int)> infoHandler)
+        : QStyledItemDelegate(parent)
+        , combo(combo)
+        , handler(std::move(infoHandler))
+        , infoIcon(":/icons/info.png")
+    {
+    }
+
+    static int filterType(const QModelIndex &index)
+    {   // 0 = "Select type", separators carry no data at all
+        return index.data(Qt::UserRole).toInt();
+    }
+
+    static QRect infoRect(const QRect &item)
+    {
+        const int w = iconWidth;
+        return QRect(item.right() - w - 2, item.top(), w + 2, item.height());
+    }
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        QStyledItemDelegate::paint(painter, option, index);
+        if (filterType(index) > 0)
+            infoIcon.paint(painter, infoRect(option.rect), Qt::AlignCenter);
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        QSize size = QStyledItemDelegate::sizeHint(option, index);
+        if (filterType(index) > 0)
+            size.rwidth() += iconWidth + 6;
+        return size;
+    }
+
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {   // this filter runs before the combo popup's own handling, so a click
+        // on the info button does not activate (select) the entry
+        if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)
+        {
+            QAbstractItemView *view = combo ? combo->view() : nullptr;
+            if (view)
+            {
+                QMouseEvent *mouse = static_cast<QMouseEvent *>(event);
+                QModelIndex index = view->indexAt(mouse->pos());
+                int type = index.isValid() ? filterType(index) : 0;
+                if (type > 0 && infoRect(view->visualRect(index)).contains(mouse->pos()))
+                {
+                    if (event->type() == QEvent::MouseButtonRelease)
+                        handler(type);
+                    return true;
+                }
+            }
+        }
+        return QStyledItemDelegate::eventFilter(watched, event);
+    }
+
+private:
+    static const int iconWidth = 16;
+
+    QComboBox *combo;
+    std::function<void(int)> handler;
+    QIcon infoIcon;
+};
 
 ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Config *config, WorldInfo wi, QListWidgetItem *item, Condition *initcond)
     : QDialog(parent, Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint)
@@ -39,9 +119,13 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
     connect(ui->buttonBox, &QDialogButtonBox::accepted, this, &ConditionDialog::onAccept);
     connect(ui->buttonBox, &QDialogButtonBox::rejected, this, &ConditionDialog::onReject);
 
-    textDescription = new QTextEdit(this);
-    textDescription->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
-    ui->collapseDescription->init(tr("Description/Notes"), textDescription, true);
+    // Info buttons in the condition type combo replace the old description
+    // panel: clicking the "i" of an entry shows a short explanation including
+    // the Minecraft versions the condition type was made for.
+    ComboTypeInfo *typeInfo = new ComboTypeInfo(ui->comboType, this,
+            [this](int filterIndex) { showTypeInfo(filterIndex); });
+    ui->comboType->setItemDelegate(typeInfo);
+    ui->comboType->view()->viewport()->installEventFilter(typeInfo);
 
     QString mcs = tr("MC %1", "Minecraft version").arg(mc2str(wi.mc));
     ui->labelMC->setText(mcs);
@@ -50,10 +134,6 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
 #else
     ui->textEditLua->setTabStopDistance(QFontMetricsF(ui->textEditLua->font()).horizontalAdvance("    "));
 #endif
-    ui->lineSummary->setMinimumWidth(
-                ui->lineSummary->minimumSizeHint().width() +
-                txtWidth(ui->lineSummary->font()) * 26
-                );
 
     // prevent bold font of group box title getting inherited
     //QFont dfont = font();
@@ -300,11 +380,9 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
     ui->comboLua->model()->sort(0, Qt::AscendingOrder);
 
     // defaults
-    ui->checkEnabled->setChecked(true);
     ui->spinBox->setValue(1);
     ui->checkSkipRef->setChecked(false);
     ui->radioSquare->setChecked(true);
-    ui->checkRadius->setChecked(false);
     ui->lineCoverage1->setText("50");
     ui->lineCoverage2->setText("50");
     ui->lineConfidence1->setText("95");
@@ -317,10 +395,6 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
     {
         cond = *initcond;
         const FilterInfo &ft = g_filterinfo.list[cond.type];
-
-        ui->checkEnabled->setChecked(!(cond.meta & Condition::DISABLED));
-        ui->lineSummary->setText(QString::fromLocal8Bit(QByteArray(cond.text, sizeof(cond.text))));
-        ui->lineSummary->setPlaceholderText(QApplication::translate("Filter", ft.name));
 
         if (cond.hash && !scripts.contains(cond.hash))
             ui->comboLua->addItem(tr("[script not found]"), QVariant::fromValue(cond.hash));
@@ -389,7 +463,7 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
         if (cond.rmax > 0)
         {
             ui->lineRadius->setText(QString::number(cond.rmax - 1));
-            ui->checkRadius->setChecked(true);
+            ui->radioRadius->setChecked(true);
         }
 
         for (const auto& it : biomecboxes)
@@ -454,7 +528,28 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
     onClimateLimitChanged();
     updateMode();
 
-    resize(sizeHint());
+    // Cap the initial size to the available screen space. The scroll area
+    // keeps the whole content reachable when it does not fit on screen.
+    QSize target = sizeHint();
+    if (ui->scrollMainContents && ui->scrollMainContents->layout())
+    {   // a scroll area caps its own size hint - use the content width instead
+        target.setWidth(qMax(target.width(),
+                ui->scrollMainContents->layout()->sizeHint().width()));
+    }
+#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
+    QScreen *scr = QGuiApplication::screenAt(QCursor::pos());
+#else
+    QScreen *scr = QGuiApplication::primaryScreen();
+#endif
+    if (!scr)
+        scr = QGuiApplication::primaryScreen();
+    if (scr)
+    {
+        const QRect avail = scr->availableGeometry().adjusted(40, 40, -40, -40);
+        target.setWidth(qMin(target.width(), avail.width()));
+        target.setHeight(qMin(target.height(), avail.height()));
+    }
+    resize(target);
 }
 
 ConditionDialog::~ConditionDialog()
@@ -505,73 +600,57 @@ void ConditionDialog::updateMode()
     int filterindex = ui->comboType->currentData().toInt();
     const FilterInfo &ft = g_filterinfo.list[filterindex];
 
-    ui->lineSummary->setPlaceholderText(QApplication::translate("Filter", ft.name));
-
     QPalette pal;
     if (wi.mc < ft.mcmin || wi.mc > ft.mcmax)
         pal.setColor(QPalette::Normal, QPalette::Button, QColor(255,0,0,127));
     ui->comboType->setPalette(pal);
 
-    ui->groupBoxGeneral->setEnabled(filterindex != F_SELECT);
     ui->groupBoxPosition->setEnabled(filterindex != F_SELECT);
 
-    ui->checkRadius->setEnabled(ft.loc & FilterInfo::LOC_R);
+    // The three area shapes are alternatives: circle (radial distance),
+    // centred square, or custom rectangle. Make sure a shape that the current
+    // filter type supports is selected and gray out what is not in use.
+    const bool hasRadius = ft.loc & FilterInfo::LOC_R;
+    const bool hasPos = ft.loc & FilterInfo::LOC_1;
+    const bool hasRect = ft.loc & FilterInfo::LOC_2;
 
-    bool p1 = ft.loc & FilterInfo::LOC_1;
-    bool p2 = ft.loc & FilterInfo::LOC_2;
-
-    if (ui->checkRadius->isEnabled() && ui->checkRadius->isChecked())
+    if ((ui->radioRadius->isChecked() && !hasRadius)
+        || (ui->radioSquare->isChecked() && !hasRect)
+        || (ui->radioCustom->isChecked() && !hasPos))
     {
-        ui->lineRadius->setEnabled(true);
-
-        ui->radioSquare->setEnabled(false);
-        ui->radioCustom->setEnabled(false);
-
-        ui->lineSquare->setEnabled(false);
-
-        ui->labelX1->setEnabled(false);
-        ui->labelZ1->setEnabled(false);
-        ui->labelX2->setEnabled(false);
-        ui->labelZ2->setEnabled(false);
-        ui->lineEditX1->setEnabled(false);
-        ui->lineEditZ1->setEnabled(false);
-        ui->lineEditX2->setEnabled(false);
-        ui->lineEditZ2->setEnabled(false);
-    }
-    else
-    {
-        ui->lineRadius->setEnabled(false);
-
-        ui->radioSquare->setEnabled(p2);
-        ui->radioCustom->setEnabled(p2);
-
-        if (ui->radioCustom->isChecked())
-        {
-            ui->lineSquare->setEnabled(false);
-            ui->labelX1->setEnabled(p1);
-            ui->labelZ1->setEnabled(p1);
-            ui->labelX2->setEnabled(p2);
-            ui->labelZ2->setEnabled(p2);
-            ui->lineEditX1->setEnabled(p1);
-            ui->lineEditZ1->setEnabled(p1);
-            ui->lineEditX2->setEnabled(p2);
-            ui->lineEditZ2->setEnabled(p2);
-        }
-        else
-        {
-            ui->lineSquare->setEnabled(p2);
-            ui->labelX1->setEnabled(p1 && !p2);
-            ui->labelZ1->setEnabled(p1 && !p2);
-            ui->labelX2->setEnabled(false);
-            ui->labelZ2->setEnabled(false);
-            ui->lineEditX1->setEnabled(p1 && !p2);
-            ui->lineEditZ1->setEnabled(p1 && !p2);
-            ui->lineEditX2->setEnabled(false);
-            ui->lineEditZ2->setEnabled(false);
-        }
+        QSignalBlocker b1(ui->radioRadius);
+        QSignalBlocker b2(ui->radioSquare);
+        QSignalBlocker b3(ui->radioCustom);
+        if (hasRect)
+            ui->radioSquare->setChecked(true);
+        else if (hasRadius)
+            ui->radioRadius->setChecked(true);
+        else if (hasPos)
+            ui->radioCustom->setChecked(true);
+        // for types without any area support, keep the selection as a default
     }
 
-    ui->buttonFromVisible->setEnabled(mapview && p2 && ui->comboRelative->currentIndex() == 0);
+    ui->radioRadius->setEnabled(hasRadius);
+    ui->radioSquare->setEnabled(hasRect);
+    ui->radioCustom->setEnabled(hasPos);
+
+    const bool useRadius = hasRadius && ui->radioRadius->isChecked();
+    const bool useSquare = hasRect && ui->radioSquare->isChecked();
+    const bool useCustom = hasPos && ui->radioCustom->isChecked();
+
+    ui->lineRadius->setEnabled(useRadius);
+    ui->lineSquare->setEnabled(useSquare);
+
+    ui->labelX1->setEnabled(useCustom);
+    ui->lineEditX1->setEnabled(useCustom);
+    ui->labelZ1->setEnabled(useCustom);
+    ui->lineEditZ1->setEnabled(useCustom);
+    ui->labelX2->setEnabled(useCustom && hasRect);
+    ui->lineEditX2->setEnabled(useCustom && hasRect);
+    ui->labelZ2->setEnabled(useCustom && hasRect);
+    ui->lineEditZ2->setEnabled(useCustom && hasRect);
+
+    ui->buttonFromVisible->setEnabled(mapview && hasRect && ui->comboRelative->currentIndex() == 0);
 
     bool cnt = ft.branch == FilterInfo::BR_CLUST;
 
@@ -688,7 +767,45 @@ void ConditionDialog::updateMode()
     ui->lineEditX2->setToolTip(uptip);
     ui->lineEditZ2->setToolTip(uptip);
     ui->buttonBox->button(QDialogButtonBox::Ok)->setEnabled(filterindex != F_SELECT);
-    textDescription->setText(QApplication::translate("Filter", ft.description));
+}
+
+void ConditionDialog::showTypeInfo(int filterIndex)
+{
+    if (filterIndex <= 0 || filterIndex >= FILTER_MAX)
+        return;
+    const FilterInfo &ft = g_filterinfo.list[filterIndex];
+
+    QString text = QApplication::translate("Filter", ft.description);
+    if (text.isEmpty())
+        text = tr("No description available.");
+    if (!text.startsWith('<'))
+        text = "<p>" + text + "</p>";
+
+    if (ft.mcmin > MC_B1_7 || ft.mcmax < MC_NEWEST)
+    {
+        QString versions;
+        if (ft.mcmax >= MC_NEWEST)
+            versions = tr("Intended for MC %1 and later.").arg(mc2str(ft.mcmin));
+        else if (ft.mcmin <= MC_B1_7)
+            versions = tr("Intended for MC up to %1.").arg(mc2str(ft.mcmax));
+        else
+            versions = tr("Intended for MC %1 to %2.").arg(mc2str(ft.mcmin), mc2str(ft.mcmax));
+        text += "<p><b>" + versions + "</b></p>";
+    }
+
+    if (wi.mc < ft.mcmin || wi.mc > ft.mcmax)
+    {
+        text += "<p><font color=\"#e06000\"><b>" + QString(WARNING_CHAR) + " "
+                + tr("Not available in the current version (MC %1).").arg(mc2str(wi.mc))
+                + "</b></font></p>";
+    }
+
+    QMessageBox *mb = new QMessageBox(this);
+    mb->setAttribute(Qt::WA_DeleteOnClose);
+    mb->setIcon(QMessageBox::Information);
+    mb->setWindowTitle(tr("Help: %1").arg(QApplication::translate("Filter", ft.name)));
+    mb->setText(text);
+    mb->show();
 }
 
 static QString layerText(int layerId)
@@ -1027,14 +1144,7 @@ void ConditionDialog::onAccept()
 
     const FilterInfo &ft = g_filterinfo.list[c.type];
 
-    if (ui->checkEnabled->isChecked())
-        c.meta &= ~Condition::DISABLED;
-    else
-        c.meta |= Condition::DISABLED;
-
-    QByteArray text = ui->lineSummary->text().toLocal8Bit().leftJustified(sizeof(c.text), '\0');
-    memcpy(c.text, text.data(), sizeof(c.text));
-
+    // The enabled/disabled state is managed by the conditions list.
     c.hash = ui->comboLua->currentData().toULongLong();
 
     if (ui->radioSquare->isEnabled() && ui->radioSquare->isChecked())
@@ -1059,7 +1169,7 @@ void ConditionDialog::onAccept()
         if (c.z1 > c.z2) std::swap(c.z1, c.z2);
     }
 
-    if (ui->checkRadius->isEnabled() && ui->checkRadius->isChecked())
+    if (ui->radioRadius->isEnabled() && ui->radioRadius->isChecked())
         c.rmax = ui->lineRadius->text().toInt() + 1;
     else
         c.rmax = 0;
@@ -1295,12 +1405,12 @@ void ConditionDialog::on_buttonFromVisible_clicked()
     ui->lineEditZ1->setText(QString::number(z1));
     ui->lineEditX2->setText(QString::number(x2));
     ui->lineEditZ2->setText(QString::number(z2));
-    ui->checkRadius->setChecked(false);
+    ui->radioRadius->setChecked(false);
     ui->radioCustom->setChecked(true);
     updateMode();
 }
 
-void ConditionDialog::on_checkRadius_toggled(bool)
+void ConditionDialog::on_radioRadius_toggled(bool)
 {
     updateMode();
 }

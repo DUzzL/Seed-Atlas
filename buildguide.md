@@ -157,6 +157,28 @@ Versionsauswahl, Karte, Struktur-Icons, gespeicherte Sitzung und Update-Dialog
 prüfen. Ein erfolgreicher Compilerlauf oder ein Test unter Wine ersetzt keinen
 vollständigen Test auf Windows.
 
+Den leeren Erststart (kein Seed, keine Versionsauswahl, keine Bedingungen,
+ausgeblendeter Such-Tab) prüft die App auch automatisiert. Der Test läuft nur
+per Umgebungsvariablen, beendet sich selbst und liefert Exit-Code 0 nur bei
+bestandenem Check:
+
+```sh
+first_run_dir="$(mktemp -d /tmp/seed-atlas-first-run.XXXXXX)"
+mkdir -p "$first_run_dir/settings"
+SEED_ATLAS_TEST_SETTINGS_DIR="$first_run_dir/settings" \
+SEED_ATLAS_UPDATE_URL="file://$first_run_dir/missing-update.json" \
+SEED_ATLAS_UI_TEST_EMPTY_FIRST_RUN=1 \
+SEED_ATLAS_UI_SNAPSHOT="$first_run_dir/firstrun.png" \
+  "dist/seed-atlas.app/Contents/MacOS/seed-atlas" \
+  --session="$first_run_dir/session.save"
+echo "Exit-Code: $?"
+```
+
+Vorher die Testeinstellungen entfernen, damit wirklich ein Erststart simuliert
+wird (macOS: `defaults delete com.seed-atlas-uitest.seed-atlas-uitest`). Der
+gleiche Aufruf eignet sich auch auf Windows und Linux mit dem jeweils
+installierten Executable.
+
 ## 4. Windows: unsigned `.exe`
 
 Benötigt werden Windows x64, Git, Qt 6.8.3 mit MinGW 13.1 x64 einschließlich
@@ -207,6 +229,11 @@ build-tools/aqt-venv/bin/python -m pip install aqtinstall==3.3.0
 build-tools/aqt-venv/bin/python -m aqt install-qt mac desktop 6.8.3 clang_64 \
   --archives qtbase qtsvg qttools --outputdir "$PWD/build-tools/Qt"
 ```
+
+Wichtig: Der Quellordner darf keine Leerzeichen im Pfad enthalten. Das Qt-SDK
+aus `build-tools/Qt` scheitert sonst beim Linken (Makefile-Einträge mit
+gequoteten SDK-Pfaden werden nicht aufgelöst). Bei Bedarf vor dem Build eine
+Kopie unter einem Pfad ohne Leerzeichen anlegen.
 
 Falls die Command Line Tools schon installiert sind, deren Installationsschritt
 überspringen. Danach, mit der gemeinsamen Build-ID aus Abschnitt 2:
@@ -520,12 +547,15 @@ Build-Variable aus Abschnitt 2 verwechseln:
 | `SEED_ATLAS_UPDATE_URL` | Verwendet ein anderes Manifest, auch eine lokale `file://`-URL. Der Update-Button öffnet weiterhin die echte GitHub-Release-Seite. |
 | `SEED_ATLAS_UPDATE_BUILD_ID` | Überschreibt nur zum Test die lokale Vergleichs-ID. Ändert weder das Binary noch `update.json`. |
 | `SEED_ATLAS_UPDATE_DRY_RUN` | Verhindert Selbstentfernung und anschließendes Beenden durch den Updater. Der Browser wird trotzdem geöffnet. |
-| `SEED_ATLAS_TEST_SETTINGS_DIR` | Leitet QSettings in ein separates Testverzeichnis um, damit der Checkbox-Test die normalen Einstellungen nicht verändert. |
+| `SEED_ATLAS_TEST_SETTINGS_DIR` | Schaltet den Testmodus ein: Die App legt ihre Einstellungen unter der eigenen Kennung `seed-atlas-uitest` ab und lässt die normalen Einstellungen unverändert. Das Verzeichnis wird zusätzlich für das Ini-Format registriert. |
+| `SEED_ATLAS_TEST_SETTINGS_ID` | Verwendet genau diese Kennung statt `seed-atlas` bzw. statt der aus `SEED_ATLAS_TEST_SETTINGS_DIR` abgeleiteten Testkennung. Für Erststarttests vorher die Testeinstellungen entfernen, z. B. auf macOS mit `defaults delete com.seed-atlas-uitest.seed-atlas-uitest`. |
 
 Bei `SEED_ATLAS_UPDATE_DRY_RUN` zählt bereits das Vorhandensein der Variable.
 Auch der Wert `0` aktiviert diesen Schutz. Zum Abschalten die Variable vollständig
-entfernen. Die Checkbox wird im Dry Run weiterhin gespeichert, deshalb für Tests
-den separaten Einstellungsordner verwenden.
+entfernen. Die Checkbox wird im Dry Run weiterhin gespeichert.
+Wichtig: Ohne `SEED_ATLAS_TEST_SETTINGS_DIR` bzw. `SEED_ATLAS_TEST_SETTINGS_ID`
+schreibt der Test in die echten App-Einstellungen. Ein Klick auf
+`Do not ask again` würde dort den Startcheck dauerhaft abschalten.
 
 Beispiel auf macOS mit bereits installierter App und lokalem Release-Manifest:
 
