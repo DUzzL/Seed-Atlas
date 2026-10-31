@@ -3,7 +3,7 @@
  <class>RangeDialog</class>
  <widget class="QDialog" name="RangeDialog">
   <property name="windowTitle">
-   <string>Search range</string>
+   <string>Search Range</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">

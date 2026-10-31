@@ -13,6 +13,11 @@
   </description>
 
   <releases>
+    <release version="4.3.dev0" date="2026-10-31" type="development">
+      <description>
+        <p>Development build with a terrain map, an always visible Seed Finder with a simple filter list, new icons and logo, and many fixes.</p>
+      </description>
+    </release>
     <release version="4.2.dev0" date="2026-08-23" type="development">
       <description>
         <p>Development build with structure-coordinate and packaging fixes.</p>

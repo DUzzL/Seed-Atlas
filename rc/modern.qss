@@ -63,9 +63,63 @@ QSpinBox:disabled, QDoubleSpinBox:disabled {
     border-color: @BORDER@;
 }
 
+/* a plain list below the box; the overlay popup cut off short lists */
+QComboBox {
+    combobox-popup: 0;
+}
+
 QComboBox::drop-down {
     border: 0;
     width: 24px;
+}
+
+QComboBox::down-arrow {
+    image: url(:/icons/arrow_down.png);
+    width: 10px;
+    height: 6px;
+}
+
+/* room for the step buttons, also while focused */
+QSpinBox, QDoubleSpinBox {
+    padding-right: 22px;
+}
+
+QSpinBox:focus, QDoubleSpinBox:focus {
+    padding-right: 21px;
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button,
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    width: 20px;
+    border: 0;
+    background: transparent;
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-position: top right;
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-position: bottom right;
+}
+
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+    background: @BUTTON_HOVER@;
+    border-radius: 4px;
+}
+
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+    image: url(:/icons/arrow_up.png);
+    width: 10px;
+    height: 6px;
+}
+
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+    image: url(:/icons/arrow_down.png);
+    width: 10px;
+    height: 6px;
 }
 
 QComboBox QAbstractItemView {
@@ -73,7 +127,6 @@ QComboBox QAbstractItemView {
     background-color: @POPUP@;
     border: 1px solid @BORDER@;
     border-radius: 7px;
-    padding: 4px;
     outline: 0;
     selection-background-color: @ACCENT_SOFT@;
     selection-color: @TEXT@;

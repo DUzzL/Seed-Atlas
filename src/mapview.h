@@ -39,7 +39,6 @@ public:
     void getVisible(int *x0, int *z0, int *x1, int *z1);
 
     void deleteWorld();
-    void refresh();
     void setSeed(WorldInfo wi, int dim, LayerOpt lopt);
     void setView(qreal x, qreal z, qreal scale = 0);
     void animateView(qreal x, qreal z, qreal scale);

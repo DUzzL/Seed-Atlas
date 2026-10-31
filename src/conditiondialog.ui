@@ -268,18 +268,6 @@
               <verstretch>0</verstretch>
              </sizepolicy>
             </property>
-            <property name="styleSheet">
-             <string notr="true">
-QPushButton {
-	background-color: rgba(255, 255, 255, 0);
-	border: none;
-	image: url(:/icons/info.png);
-	image-position: right;
-}
-QPushButton:hover {
-	image: url(:/icons/info_h.png);
-}</string>
-            </property>
             <property name="text">
              <string/>
             </property>
@@ -311,7 +299,7 @@ QPushButton:hover {
            <widget class="StyledComboBox" name="comboRelative">
             <item>
              <property name="text">
-              <string>World origin</string>
+              <string>World origin (0, 0)</string>
              </property>
             </item>
            </widget>
@@ -319,7 +307,7 @@ QPushButton:hover {
           <item row="3" column="0" colspan="4">
            <widget class="QRadioButton" name="radioSquare">
             <property name="text">
-             <string>Within centred square of side:</string>
+             <string>Within centered square of side (blocks):</string>
             </property>
             <property name="checked">
              <bool>true</bool>
@@ -329,7 +317,7 @@ QPushButton:hover {
           <item row="2" column="0" colspan="4">
            <widget class="QRadioButton" name="radioRadius">
             <property name="text">
-             <string>Within radial distance:</string>
+             <string>Within radius (blocks):</string>
             </property>
            </widget>
           </item>
@@ -1523,18 +1511,6 @@ yield each sampled position individually</string>
            </item>
            <item row="0" column="1">
             <widget class="QPushButton" name="pushInfoLua">
-             <property name="styleSheet">
-              <string notr="true">
-QPushButton {
-	background-color: rgba(255, 255, 255, 0);
-	border: none;
-	image: url(:/icons/info.png);
-	image-position: right;
-}
-QPushButton:hover {
-	image: url(:/icons/info_h.png);
-}</string>
-             </property>
              <property name="text">
               <string/>
              </property>

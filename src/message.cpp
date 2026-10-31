@@ -1,6 +1,8 @@
 #include "message.h"
 
 #include <QApplication>
+#include <QPointer>
+#include <QStyle>
 #include <QTextStream>
 
 
@@ -60,6 +62,23 @@ int term_prompt(const QString& title, const QString& text, QMessageBox::Standard
     return opts[num-1].second;
 }
 
+// Same icon QMessageBox::setIcon() would show, without the system sound.
+static QPixmap messageIcon(QMessageBox *box, QMessageBox::Icon icon)
+{
+    QStyle::StandardPixmap sp;
+    switch (icon)
+    {
+    case QMessageBox::Information:  sp = QStyle::SP_MessageBoxInformation; break;
+    case QMessageBox::Warning:      sp = QStyle::SP_MessageBoxWarning; break;
+    case QMessageBox::Critical:     sp = QStyle::SP_MessageBoxCritical; break;
+    case QMessageBox::Question:     sp = QStyle::SP_MessageBoxQuestion; break;
+    default:                        return QPixmap();
+    }
+    QStyle *style = box->style();
+    int size = style->pixelMetric(QStyle::PM_MessageBoxIconSize, nullptr, box);
+    return style->standardIcon(sp, nullptr, box).pixmap(QSize(size, size), box->devicePixelRatio());
+}
+
 static
 int message(
     QWidget *parent, QMessageBox::Icon icon, const QString& title, const QString& text,
@@ -74,9 +93,9 @@ int message(
     // emulate the behaviour of QMessageBox::warning(...), but raise as active window
     QMessageBox *w = new QMessageBox(parent);
     w->setWindowTitle(title);
-    w->setIconPixmap(QMessageBox::standardIcon(icon)); // setIcon() plays a sound on windows
-    parent->setWindowState(Qt::WindowActive);
-    //w.setWindowState(Qt::WindowActive);
+    w->setIconPixmap(messageIcon(w, icon)); // setIcon() plays a sound on windows
+    // raise the parent, but keep it maximized or full screen
+    parent->setWindowState((parent->windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
 #if WASM
     w->setAttribute(Qt::WA_DeleteOnClose);
     w->setText(text);
@@ -88,9 +107,13 @@ int message(
     for (uint mask = QMessageBox::FirstButton; mask <= QMessageBox::LastButton; mask <<= 1)
         if (mask & buttons)
             w->addButton((QMessageBox::StandardButton)mask);
-    if (w->exec() == -1)
+    QPointer<QMessageBox> guard(w); // the parent may go away during exec()
+    const int result = w->exec();
+    if (!guard)
         return QMessageBox::Cancel;
-    return w->standardButton(w->clickedButton());
+    const int button = result == -1 ? int(QMessageBox::Cancel) : int(w->standardButton(w->clickedButton()));
+    delete w;
+    return button;
 #endif
 }
 

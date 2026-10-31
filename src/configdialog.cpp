@@ -1,7 +1,10 @@
 #include "configdialog.h"
 #include "ui_configdialog.h"
 
+#include <QCheckBox>
 #include <QComboBox>
+#include <QLineEdit>
+#include <QSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QScrollArea>
@@ -31,10 +34,6 @@ ConfigDialog::ConfigDialog(QWidget *parent, Config *config)
     ui->lineMatching->setValidator(new QIntValidator(1, 99999999, ui->lineMatching));
     ui->lineGridSpacing->setValidator(new QIntValidator(
         1, std::numeric_limits<int>::max(), ui->lineGridSpacing));
-    connect(ui->checkEnableSeedFinding, &QCheckBox::toggled, this, [this](bool enabled) {
-        ui->labelMatching->setEnabled(enabled);
-        ui->lineMatching->setEnabled(enabled);
-    });
     ui->label_9->setText(tr("CPU usage limit:"));
     ui->spinThreads->setRange(1, 100);
     ui->spinThreads->setSingleStep(5);
@@ -56,6 +55,7 @@ ConfigDialog::ConfigDialog(QWidget *parent, Config *config)
 
     setupCategories();
     initConfig(config);
+    trackChanges();
     const int parentWidth = parent ? parent->width() : 1200;
     resize(qBound(720, parentWidth - 80, 1000), height());
 }
@@ -107,7 +107,7 @@ void ConfigDialog::setupCategories()
     mapVisualsLayout->addLayout(iconLayout);
     mapVisualsLayout->addWidget(ui->checkBBoxes);
     mapVisualsLayout->addWidget(ui->checkSmooth);
-    QPushButton *editTools = new QPushButton(tr("Edit toolbar tools..."), mapVisuals);
+    QPushButton *editTools = new QPushButton(tr("Toolbar tools..."), mapVisuals);
     connect(editTools, &QPushButton::clicked, this, &ConfigDialog::openMapTools);
     mapVisualsLayout->addWidget(editTools);
 
@@ -117,7 +117,7 @@ void ConfigDialog::setupCategories()
     moveGroup(application, ui->groupBox);
     moveGroup(application, ui->groupMisc);
 
-    QVBoxLayout *finding = addCategory(tr("Seed Finding"));
+    QVBoxLayout *finding = addCategory(tr("Seed Finder"));
     moveGroup(finding, ui->groupSearch);
 
     QVBoxLayout *mapping = addCategory(tr("Seed Mapping"));
@@ -134,14 +134,41 @@ void ConfigDialog::setupCategories()
     ui->scrollArea->deleteLater();
 }
 
+// Apply is only enabled while there are changes that it would save.
+void ConfigDialog::trackChanges()
+{
+    const auto changed = [this]() { setModified(true); };
+    for (QCheckBox *w : findChildren<QCheckBox*>())
+        connect(w, &QCheckBox::toggled, this, changed);
+    for (QComboBox *w : findChildren<QComboBox*>())
+        connect(w, &QComboBox::currentIndexChanged, this, changed);
+    for (QLineEdit *w : findChildren<QLineEdit*>())
+        connect(w, &QLineEdit::textEdited, this, changed);
+    for (QAbstractSpinBox *w : findChildren<QAbstractSpinBox*>())
+    {
+        if (QSpinBox *spin = qobject_cast<QSpinBox*>(w))
+            connect(spin, &QSpinBox::valueChanged, this, changed);
+    }
+    setModified(false);
+}
+
+void ConfigDialog::setModified(bool modified)
+{
+    if (QPushButton *apply = ui->buttonBox->button(QDialogButtonBox::Apply))
+        apply->setEnabled(modified);
+}
+
 void ConfigDialog::initConfig(Config *config)
 {
+    // Keep the values that have no widget here (e.g. the biome colormap),
+    // otherwise Apply would save them as empty.
+    if (config != &conf)
+        conf = *config;
     ui->checkSmooth->setChecked(config->smoothMotion);
     ui->checkBBoxes->setChecked(config->showBBoxes);
     ui->checkRestore->setChecked(config->restoreSession);
     ui->checkWindowPos->setChecked(config->restoreWindow);
     ui->checkUpdates->setChecked(config->checkForUpdates);
-    ui->checkEnableSeedFinding->setChecked(config->enableSeedFinding);
     ui->checkAutosave->setChecked(config->autosaveCycle != 0);
     if (config->autosaveCycle)
         ui->spinAutosave->setValue(config->autosaveCycle);
@@ -163,12 +190,18 @@ void ConfigDialog::initConfig(Config *config)
 
 Config ConfigDialog::getConfig()
 {
+    // values without a widget here come from what is saved right now, so
+    // Apply does not undo a change made outside the dialog meanwhile
+    Config saved;
+    saved.load();
+    conf.biomeColorPath = saved.biomeColorPath;
+    conf.advancedSearch = saved.advancedSearch;
+
     conf.smoothMotion = ui->checkSmooth->isChecked();
     conf.showBBoxes = ui->checkBBoxes->isChecked();
     conf.restoreSession = ui->checkRestore->isChecked();
     conf.restoreWindow = ui->checkWindowPos->isChecked();
     conf.checkForUpdates = ui->checkUpdates->isChecked();
-    conf.enableSeedFinding = ui->checkEnableSeedFinding->isChecked();
     conf.autosaveCycle = ui->checkAutosave->isChecked() ? ui->spinAutosave->value() : 0;
     conf.uistyle = ui->comboStyle->currentIndex();
     conf.maxMatching = ui->lineMatching->text().toInt();
@@ -188,7 +221,10 @@ Config ConfigDialog::getConfig()
     conf.fontNorm.setStyleHint(QFont::AnyStyle);
     conf.fontMono.setStyleHint(QFont::Monospace);
 
-    conf.iconScale = ui->lineIconScale->text().toDouble();
+    bool ok = false;
+    conf.iconScale = ui->lineIconScale->text().toDouble(&ok);
+    if (!ok || conf.iconScale <= 0)
+        conf.iconScale = 1.0;
 
     if (!conf.maxMatching) conf.maxMatching = 65536;
 
@@ -205,13 +241,17 @@ void ConfigDialog::on_buttonBox_clicked(QAbstractButton *button)
     int role = ui->buttonBox->buttonRole(button);
     if (role == QDialogButtonBox::ResetRole)
     {
+        const QString biomeColorPath = conf.biomeColorPath;
         conf.reset();
+        conf.biomeColorPath = biomeColorPath; // edited in its own dialog
         initConfig(&conf);
+        setModified(true); // the defaults are not saved until applied
     }
     else if (role == QDialogButtonBox::AcceptRole || role == QDialogButtonBox::ApplyRole)
     {
         getConfig().save();
         emit updateConfig();
+        setModified(false);
     }
 }
 

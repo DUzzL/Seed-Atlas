@@ -17,6 +17,7 @@ modules:
   - name: seed-atlas
     buildsystem: simple
     build-commands:
+      - make -C seedatlas-engine clean
       - qmake6 CONFIG+=release "SEED_ATLAS_BUILD_ID=${SEED_ATLAS_BUILD_ID}" PREFIX=/app seed-atlas.pro
       - make -j${FLATPAK_BUILDER_N_JOBS}
       - install -Dm755 seed-atlas /app/bin/seed-atlas
@@ -37,6 +38,7 @@ modules:
           - "*.exe"
           - "*.o"
           - "*.a"
+          - "*.d"
           - generic
           - iconengines
           - imageformats

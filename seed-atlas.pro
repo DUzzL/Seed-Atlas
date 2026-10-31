@@ -15,15 +15,11 @@ QMAKE_CFLAGS            = $$CHARSET -fwrapv -DSTRUCT_CONFIG_OVERRIDE=1
 QMAKE_CXXFLAGS          = $$QMAKE_CFLAGS
 QMAKE_CXXFLAGS_RELEASE  *= -O3 -g3
 
-greaterThan(QT_MAJOR_VERSION, 5) {
-    QMAKE_CXXFLAGS += -std=gnu++17
-    DEFINES += QT_DISABLE_DEPRECATED_UP_TO=0x050F00
-} else {
-    QMAKE_CXXFLAGS += -std=gnu++11
-    equals(QMAKE_CXX, g++) {
-        QMAKE_CXXFLAGS += -Wno-deprecated-copy
-    }
+!versionAtLeast(QT_VERSION, 6.3.0) {
+    error("Seed Atlas requires Qt 6.3 or newer (the sources use Qt 6 and C++17 APIs).")
 }
+QMAKE_CXXFLAGS += -std=gnu++17
+DEFINES += QT_DISABLE_DEPRECATED_UP_TO=0x060000
 
 win32: {
     CONFIG += static_gnu
@@ -81,11 +77,9 @@ LUAPATH = $$PWD/lua/src
 
 TARGET = seed-atlas
 
-# Public packages pass the source commit as a machine-readable build ID. Local
-# builds fall back to the current checkout, or to "development" without Git.
-isEmpty(SEED_ATLAS_BUILD_ID) {
-    SEED_ATLAS_BUILD_ID = $$system(git -C $$shell_quote($$PWD) rev-parse --verify HEAD)
-}
+# Public packages pass the source commit as a machine-readable build ID (the
+# packaging scripts in installer/ do this). Other builds are "development"
+# builds: they never offer the update, which would remove the running copy.
 isEmpty(SEED_ATLAS_BUILD_ID) {
     SEED_ATLAS_BUILD_ID = development
 }
@@ -141,6 +135,7 @@ SOURCES += \
         src/message.cpp \
         src/motioncontroller.cpp \
         src/presetdialog.cpp \
+        src/addfilterdialog.cpp \
         src/layerdialog.cpp \
         src/mapview.cpp \
         src/rangedialog.cpp \
@@ -151,6 +146,7 @@ SOURCES += \
         src/tablocations.cpp \
         src/tabslime.cpp \
         src/tabstructures.cpp \
+        src/terrainmap.cpp \
         src/mainwindow.cpp \
         src/main.cpp \
         src/util.cpp \
@@ -209,6 +205,7 @@ HEADERS += \
         src/message.h \
         src/motioncontroller.h \
         src/presetdialog.h \
+        src/addfilterdialog.h \
         src/layerdialog.h \
         src/mapview.h \
         src/qzipwriter.h \
@@ -221,6 +218,7 @@ HEADERS += \
         src/tablocations.h \
         src/tabslime.h \
         src/tabstructures.h \
+        src/terrainmap.h \
         src/mainwindow.h \
         src/mappingworkers.h \
         src/util.h \

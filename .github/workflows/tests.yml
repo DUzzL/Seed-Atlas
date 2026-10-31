@@ -15,6 +15,13 @@ jobs:
         run: make -C seedatlas-engine test-versions
       - name: Run version tests
         run: ./seedatlas-engine/test-versions
+      # The app links an engine built with these flags, so test that one too.
+      - name: Build version tests with the app's engine flags
+        run: |
+          make -C seedatlas-engine clean
+          make -C seedatlas-engine test-versions CFLAGS="-O3 -DSTRUCT_CONFIG_OVERRIDE=1"
+      - name: Run version tests with the app's engine flags
+        run: ./seedatlas-engine/test-versions
 
   packaging-metadata:
     name: Packaging metadata regression tests

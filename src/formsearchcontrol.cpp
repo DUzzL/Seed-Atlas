@@ -1,4 +1,5 @@
 #include "formsearchcontrol.h"
+#include "widgets.h"
 #include "ui_formsearchcontrol.h"
 
 #include "mainwindow.h"
@@ -8,6 +9,7 @@
 #include "util.h"
 
 #include <QAction>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QFileDialog>
 #include <QFontMetrics>
@@ -45,7 +47,7 @@ QVariant SeedTableModel::data(const QModelIndex& index, int role) const
 QVariant SeedTableModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
     if (section < 0)
-        return QVariant::Invalid;
+        return QVariant();
     if (role == Qt::InitialSortOrderRole)
         return QVariant::fromValue(Qt::DescendingOrder);
     if (role == Qt::DisplayRole && orientation == Qt::Horizontal)
@@ -66,7 +68,7 @@ int SeedTableModel::insertSeeds(QVector<uint64_t> newseeds)
 {
     int row = seeds.size();
     beginInsertRows(QModelIndex(), row, row + newseeds.size()-1);
-    for (uint64_t seed : qAsConst(newseeds))
+    for (uint64_t seed : std::as_const(newseeds))
     {
         Seed s;
         s.seed = seed;
@@ -119,11 +121,22 @@ FormSearchControl::FormSearchControl(MainWindow *parent)
     , updt(20)
 {
     ui->setupUi(this);
+    ui->labelStatus->setWordWrap(true);
+    ui->labelStatus->setMinimumWidth(0);
+    ui->labelStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    styleInfoButton(ui->buttonSearchHelp);
 
     ui->comboSearchType->addItem(tr("incremental"), SEARCH_INC);
     ui->comboSearchType->addItem(tr("48-bit only"), SEARCH_48ONLY);
     ui->comboSearchType->addItem(tr("48-bit family blocks"), SEARCH_BLOCKS);
     ui->comboSearchType->addItem(tr("seed list from file..."), SEARCH_LIST);
+
+    checkAdvanced = new QCheckBox(tr("Advanced options"), this);
+    checkAdvanced->setToolTip(tr("Show the expert options: search type, start seed, "
+        "48-bit seed generator and result columns, the Locations sampling pattern, "
+        "and the quad-structure and algorithm helper filters"));
+    ui->gridLayout->addWidget(checkAdvanced, 5, 0, 1, 7);
+    connect(checkAdvanced, &QCheckBox::toggled, this, &FormSearchControl::advancedChanged);
 
     model = new SeedTableModel(ui->results);
     proxy = new SeedSortProxy(ui->results);
@@ -145,10 +158,8 @@ FormSearchControl::FormSearchControl(MainWindow *parent)
 
     connect(&stimer, &QTimer::timeout, this, QOverload<>::of(&FormSearchControl::progressTimeout));
 
-    connect(
-        ui->results->selectionModel(),
-        SIGNAL(selectionChanged(const QItemSelection&, const QItemSelection&)),
-        SLOT(onSeedSelectionChanged()));
+    connect(ui->results->selectionModel(), &QItemSelectionModel::selectionChanged,
+        this, &FormSearchControl::onSeedSelectionChanged);
 
     searchProgressReset();
 
@@ -295,6 +306,7 @@ void FormSearchControl::setResultsPath(QString path)
 
 void FormSearchControl::searchLockUi(bool lock)
 {
+    searchRunning = lock;
     if (lock)
     {
         ui->comboSearchType->setEnabled(false);
@@ -311,6 +323,31 @@ void FormSearchControl::searchLockUi(bool lock)
         ui->buttonMore->setEnabled(type == SEARCH_INC || type == SEARCH_LIST);
     }
     emit searchStatusChanged(lock);
+}
+
+void FormSearchControl::setAdvanced(bool advanced)
+{
+    {
+        const QSignalBlocker blocker(checkAdvanced);
+        checkAdvanced->setChecked(advanced);
+    }
+    // keep an expert choice visible while it is in effect
+    bool special = ui->comboSearchType->currentData().toInt() != SEARCH_INC;
+    for (QWidget *w : {(QWidget*)ui->label, (QWidget*)ui->buttonSearchHelp,
+            (QWidget*)ui->comboSearchType, (QWidget*)ui->buttonMore})
+        w->setVisible(advanced || special);
+    ui->label_2->setVisible(advanced);
+    ui->lineStart->setVisible(advanced);
+    ui->results->setColumnHidden(1, !advanced);
+    ui->results->setColumnHidden(2, !advanced);
+    this->advanced = advanced;
+    if (!isSearching())
+        searchProgressReset();
+}
+
+bool FormSearchControl::isSearching() const
+{
+    return ui->buttonStart->isChecked();
 }
 
 void FormSearchControl::setSearchMode(int mode)
@@ -346,13 +383,30 @@ bool FormSearchControl::getSeed(int row, uint64_t *seed)
 }
 
 
-void FormSearchControl::on_buttonClear_clicked()
+void FormSearchControl::invalidateResults()
 {
+    if (searchRunning && !discardSearch)
+    {   // the running search still uses the old filters: stop it and ignore
+        // what it reports until it has finished (see searchFinish())
+        discardSearch = true;
+        ui->buttonStart->setText(tr("Start search"));
+        ui->buttonStart->setIcon(QIcon(":/icons/search.png"));
+        ui->buttonStart->setChecked(false);
+        ui->buttonStart->setEnabled(false);
+        sthread.stopSearch();
+    }
+    // the progress belongs to the discarded results, so start over as well
     model->reset();
     resultSeeds.clear();
+    qbuf.clear();
     updateExportButton();
     searchProgressReset();
     ui->lineStart->setText("0");
+}
+
+void FormSearchControl::on_buttonClear_clicked()
+{
+    invalidateResults();
 }
 
 void FormSearchControl::on_buttonStart_clicked()
@@ -367,7 +421,7 @@ void FormSearchControl::on_buttonStart_clicked()
 
         if (session.cv.empty())
         {
-            warn(this, tr("Please define some constraints using the \"Add\" button."));
+            warn(this, tr("Add at least one filter with \"Add filter...\" first."));
             ok = false;
         }
         if (session.sc.searchtype == SEARCH_LIST && slist64.empty())
@@ -390,7 +444,7 @@ void FormSearchControl::on_buttonStart_clicked()
                 for (const Condition& d : session.cv)
                 {
                     if (d.relative == c.save && !(d.meta & Condition::DISABLED)
-                            && (d.type == F_HUT || d.type == F_MONUMENT))
+                            && d.type == quadStructureType(c.type))
                     {
                         active = true;
                         break;
@@ -433,11 +487,24 @@ void FormSearchControl::on_buttonStart_clicked()
             else
                 session.slist.clear();
 
+            // results found for another version or world type do not
+            // belong to this search, nor does the position to resume from
+            if (!model->seeds.empty() &&
+                    (session.wi.mc != resultsMc || session.wi.large != resultsLarge))
+            {
+                invalidateResults();
+                session.sc.startseed = 0;
+            }
+            resultsMc = session.wi.mc;
+            resultsLarge = session.wi.large;
+
             ok = sthread.set(parent, session);
         }
 
         if (ok)
         {
+            // keep the results: a changed filter has already discarded them,
+            // so the list only holds seeds found up to the resume position
             if (!resultfile.fileName().isEmpty())
             {
                 resultfile.close();
@@ -523,35 +590,32 @@ void FormSearchControl::on_results_customContextMenuRequested(const QPoint &pos)
     // but will not function - see keyReleaseEvent() for shortcut implementation
 
     QAction *actremove = menu->addAction(QIcon::fromTheme("list-remove"),
-        tr("Remove selected seed"), this,
-        &FormSearchControl::removeCurrent, QKeySequence::Delete);
+        tr("Remove selected seed"), QKeySequence::Delete, this,
+        &FormSearchControl::removeCurrent);
     actremove->setEnabled(ui->results->selectionModel()->hasSelection());
 
     QAction *actcopyseed = menu->addAction(QIcon::fromTheme("edit-copy"),
-        tr("Copy selected seed"), this,
-        &FormSearchControl::copySeed, QKeySequence::Copy);
+        tr("Copy selected seed"), QKeySequence::Copy, this,
+        &FormSearchControl::copySeed);
     actcopyseed->setEnabled(ui->results->selectionModel()->hasSelection());
 
     QAction *actcopylist = menu->addAction(QIcon::fromTheme("edit-copy"),
-        tr("Copy seed list"), this,
-        &FormSearchControl::copyResults, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+        tr("Copy seed list"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this,
+        &FormSearchControl::copyResults);
     actcopylist->setEnabled(ui->results->model()->rowCount() > 0);
 
     int n = pasteList(true);
     QAction *actpaste = menu->addAction(QIcon::fromTheme("edit-paste"),
-        tr("Paste %n seed(s) from clipboard", "", n), this,
-        &FormSearchControl::pasteResults, QKeySequence::Paste);
+        tr("Paste %n seed(s) from clipboard", "", n), QKeySequence::Paste, this,
+        &FormSearchControl::pasteResults);
     actpaste->setEnabled(n > 0);
     menu->popup(ui->results->mapToGlobal(pos));
 }
 
 void FormSearchControl::on_buttonSearchHelp_clicked()
 {
-    QMessageBox *mb = new QMessageBox(this);
-    mb->setAttribute(Qt::WA_DeleteOnClose);
-    mb->setIcon(QMessageBox::Information);
-    mb->setWindowTitle(tr("Help: search types"));
-    mb->setText(tr(
+    InfoPopup::toggle(ui->buttonSearchHelp, tr("Help: search types"),
+        tr(
         "<html><head/><body><p>"
         "The <b>incremental</b> search checks seeds in numerical order, "
         "except for grouping seeds into work items for parallelization. "
@@ -577,14 +641,16 @@ void FormSearchControl::on_buttonSearchHelp_clicked()
         "this option.)"
         "</p></body></html>"
         ));
-    mb->show();
 }
 
 void FormSearchControl::on_comboSearchType_currentIndexChanged(int)
 {
     int type = ui->comboSearchType->currentData().toInt();
     ui->buttonMore->setEnabled(type == SEARCH_INC || type == SEARCH_LIST);
-    searchProgressReset();
+    if (checkAdvanced)
+        setAdvanced(advanced); // shows the type while it differs from the default
+    else
+        searchProgressReset();
 }
 
 void FormSearchControl::pasteResults()
@@ -598,7 +664,7 @@ int FormSearchControl::pasteList(bool dummy)
     QStringList slist = clipboard->text().split('\n');
     std::vector<uint64_t> seeds;
 
-    for (QString s : qAsConst(slist))
+    for (QString s : std::as_const(slist))
     {
         s = s.trimmed();
         if (s.isEmpty())
@@ -641,6 +707,8 @@ void FormSearchControl::onSort(int, Qt::SortOrder)
 
 void FormSearchControl::searchResult(uint64_t seed)
 {
+    if (discardSearch)
+        return;
     if (resultfile.isOpen())
     {
         char s[32];
@@ -689,16 +757,20 @@ int FormSearchControl::searchResultsAdd(std::vector<uint64_t> seeds, bool counto
     int nold = n;
     bool discarded = false;
 
+    // a count-only query (e.g. for the context menu) must not affect the search
     if (n >= config.maxMatching)
     {
-        sthread.stopSearch();
+        if (!countonly)
+            sthread.stopSearch();
         discarded = true;
     }
     if (n + (ssize_t)seeds.size() > config.maxMatching)
     {
-        sthread.stopSearch();
+        if (!countonly)
+            sthread.stopSearch();
         discarded = true;
-        seeds.resize(config.maxMatching - n);
+        // the limit can be lowered below the current result count in the settings
+        seeds.resize(std::max(0, config.maxMatching - n));
     }
 
     resultSeeds.reserve(n + seeds.size());
@@ -720,10 +792,21 @@ int FormSearchControl::searchResultsAdd(std::vector<uint64_t> seeds, bool counto
     updateExportButton();
 
     int addcnt = n - nold;
+    if (countonly)
+        return addcnt;
+
+    if (nold == 0 && addcnt > 0 && !(searchRunning && !discardSearch))
+    {   // pasted or loaded seeds belong to the world that is shown
+        WorldInfo wi;
+        parent->getSeed(&wi, false);
+        resultsMc = wi.mc;
+        resultsLarge = wi.large;
+    }
+
     if (ui->checkStop->isChecked() && addcnt)
         sthread.stopSearch();
 
-    if (!countonly && discarded)
+    if (discarded)
     {
         // guard against recursive calls, which can occur when the
         // eventloop is continued in the warning message dialog
@@ -769,7 +852,9 @@ void FormSearchControl::searchProgressReset()
         }
     }
 
-    if (cnt)
+    if (!advanced && searchtype == SEARCH_INC && fmt.isEmpty())
+        fmt = tr("Ready", "Progressbar"); // the full 64-bit count means nothing to most users
+    else if (cnt)
         fmt += QString::asprintf("0 / %" PRIu64 " (0.00%%)", cnt);
     else
         fmt += "0 / ? (0.00%%)";
@@ -809,6 +894,10 @@ void FormSearchControl::updateSearchProgress(uint64_t prog, uint64_t end, int64_
         {
             fmt = QString::asprintf("[%" PRIu64 " - %" PRIu64 "]: ", smin, smax) + fmt;
         }
+        else if (!advanced)
+        {
+            fmt = tr("%L1 seeds checked", "Progressbar").arg(prog);
+        }
     }
     ui->progressBar->setFormat(fmt);
 
@@ -818,6 +907,17 @@ void FormSearchControl::updateSearchProgress(uint64_t prog, uint64_t end, int64_
 
 void FormSearchControl::searchFinish(bool done)
 {
+    if (discardSearch)
+    {   // stopped because the filters changed: keep the reset list and progress
+        discardSearch = false;
+        stimer.stop();
+        qbuf.clear();
+        ui->labelStatus->setText(tr("Search stopped because the filters changed."));
+        searchLockUi(false);
+        if (parent)
+            parent->setProgressIndication();
+        return;
+    }
     stimer.stop();
     onBufferTimeout();
     if (proxy->column >= 0)
@@ -829,7 +929,9 @@ void FormSearchControl::searchFinish(bool done)
         ui->progressBar->setValue(10000);
         ui->progressBar->setFormat(tr("Done", "Progressbar"));
     }
-    ui->labelStatus->setText(tr("Idle", "Progressbar"));
+    ui->labelStatus->setText(done
+        ? tr("Search complete. %1 results.").arg(model->seeds.size())
+        : tr("Search stopped. %1 results.").arg(model->seeds.size()));
     searchLockUi(false);
 
     if (parent)
@@ -841,11 +943,18 @@ void FormSearchControl::progressTimeout()
     uint64_t prog, end, seed;
     qreal min, avg, max;
     QString status = tr("Running...", "Progressbar");
+    if (discardSearch)
+        return; // the progress was reset with the results
     if (!sthread.getProgress(&status, &prog, &end, &seed, &min, &avg, &max))
         return;
 
     updateSearchProgress(prog, end, seed);
 
+    if (!advanced && isSearching())
+    {   // instead of seeds/sec, isize and an eta for the whole seed space
+        int found = ui->results->model()->rowCount();
+        status = tr("Searching... %1 found so far").arg(found);
+    }
     ui->labelStatus->setText(status);
 
     update();
@@ -902,7 +1011,8 @@ void FormSearchControl::on_buttonExport_clicked()
     QByteArray content;
     QTextStream stream(&content);
     for (uint64_t seed : results)
-        stream << QString::number(seed) << '\n';
+        stream << QString::number(qint64(seed)) << '\n';
+    stream.flush();
     QFileDialog::saveFileContent(content, "seeds.txt");
 #else
     QString fnam = QFileDialog::getSaveFileName(
@@ -922,7 +1032,7 @@ void FormSearchControl::on_buttonExport_clicked()
 
     QTextStream stream(&file);
     for (uint64_t seed : results)
-        stream << QString::number(seed) << '\n';
+        stream << QString::number(qint64(seed)) << '\n';
     stream.flush();
 #endif
 }

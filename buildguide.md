@@ -34,7 +34,7 @@ Diese drei Angaben erfüllen unterschiedliche Aufgaben:
 
 | Angabe | Beispiel | Bedeutung für den Updater |
 | --- | --- | --- |
-| Seed-Atlas-App-/Paketversion | `4.2.dev0` | Nicht für den Update-Vergleich verwendet. |
+| Seed-Atlas-App-/Paketversion | `4.3.dev0` | Nicht für den Update-Vergleich verwendet. |
 | Unterstützte Minecraft-Version | `26.3` | Auswahl für die Weltgenerierung, keine Update-Kennung. |
 | Interne Build-ID | 40 hexadezimale Zeichen | Wird in die App eingebaut und mit GitHub verglichen. |
 
@@ -114,8 +114,8 @@ Runtime-/SDK-Paar 6.10 aus dem Manifest.
 Verwende einen vollständigen Checkout oder das mitgelieferte Quellarchiv:
 
 ```sh
-unzip Seed-Atlas-4.2.dev0-Source.zip
-cd Seed-Atlas-4.2.dev0-Source
+unzip Seed-Atlas-4.3.dev0-Source.zip
+cd Seed-Atlas-4.3.dev0-Source
 ```
 
 Beim Quellarchiv fehlt die Git-Historie; daher vor dem Packaging eine explizite
@@ -140,7 +140,7 @@ macOS oder Linux ausführen:
 
 ```sh
 make -C seedatlas-engine clean
-make -C seedatlas-engine test-versions CFLAGS="-O2 -fwrapv -DSTRUCT_CONFIG_OVERRIDE=1"
+make -C seedatlas-engine test-versions CFLAGS="-O3 -DSTRUCT_CONFIG_OVERRIDE=1"
 ./seedatlas-engine/test-versions
 make -C seedatlas-engine clean
 ```
@@ -149,8 +149,9 @@ Der Build-Befehl allein führt die Tests nicht aus; dafür ist die dritte Zeile
 erforderlich. Nur bei erfolgreichem Testlauf weiterveröffentlichen. Das letzte
 `clean` entfernt erzeugte Engine-Builddateien, keine Quelldateien, damit der
 anschließende App-Build seine eigenen Compiler-/Architekturflags verwenden kann.
-Auf Windows die Tests mit dem passenden MinGW-Compiler und `mingw32-make`
-bauen und die erzeugte `test-versions.exe` ausführen.
+Die Engine-Makefile setzt `-fwrapv` selbst; die App-Builds erhalten dort immer
+`-O3`. Auf Windows die Tests mit dem passenden MinGW-Compiler und
+`mingw32-make` bauen und die erzeugte `test-versions.exe` ausführen.
 
 Zusätzlich die fertig installierte GUI auf den Zielbetriebssystemen starten:
 Versionsauswahl, Karte, Struktur-Icons, gespeicherte Sitzung und Update-Dialog
@@ -190,7 +191,7 @@ In PowerShell, nach Festlegung der Build-ID:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File installer/windows/build-installer.ps1 `
-  -Version 4.2.dev0 `
+  -Version 4.3.dev0 `
   -QtBin "C:\Qt\6.8.3\mingw_64\bin" `
   -MingwBin "C:\Qt\Tools\mingw1310_64\bin" `
   -InnoCompiler "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
@@ -203,9 +204,9 @@ Eine Authenticode-Signatur wird nicht erzeugt.
 Ergebnisse:
 
 ```text
-dist/Seed-Atlas-4.2.dev0-Windows-x64-Setup.exe
-dist/Seed-Atlas-4.2.dev0-Windows-x64-Portable/
-dist/Seed-Atlas-4.2.dev0-Source.zip
+dist/Seed-Atlas-4.3.dev0-Windows-x64-Setup.exe
+dist/Seed-Atlas-4.3.dev0-Windows-x64-Portable/
+dist/Seed-Atlas-4.3.dev0-Source.zip
 dist/update.json
 ```
 
@@ -243,17 +244,17 @@ export QT_PREFIX="$PWD/build-tools/Qt/6.8.3/macos"
 export SEED_ATLAS_UNIVERSAL=1
 export SEED_ATLAS_UNSIGNED=1
 unset SEED_ATLAS_BUILD_ONLY SEED_ATLAS_PACKAGE_ONLY
-bash installer/macos/build-dmg.sh 4.2.dev0
+bash installer/macos/build-dmg.sh 4.3.dev0
 
 SEED_ATLAS_UNSIGNED=1 SEED_ATLAS_REQUIRE_UNIVERSAL=1 \
   bash installer/macos/verify-dmg.sh \
-  dist/Seed-Atlas-4.2.dev0-macOS-UNSIGNED.dmg
+  dist/Seed-Atlas-4.3.dev0-macOS-UNSIGNED.dmg
 ```
 
 Ergebnisse:
 
 ```text
-dist/Seed-Atlas-4.2.dev0-macOS-UNSIGNED.dmg
+dist/Seed-Atlas-4.3.dev0-macOS-UNSIGNED.dmg
 dist/update.json
 ```
 
@@ -289,8 +290,8 @@ Den identischen Quellstand in ein eigenes Verzeichnis innerhalb des Linux-
 Dateisystems kopieren und dort dieselbe Build-ID setzen. Anschließend:
 
 ```sh
-bash installer/flatpak/build-flatpak.sh 4.2.dev0
-flatpak install --user ./dist/Seed-Atlas-4.2.dev0-Linux-x86_64.flatpak
+bash installer/flatpak/build-flatpak.sh 4.3.dev0
+flatpak install --user ./dist/Seed-Atlas-4.3.dev0-Linux-x86_64.flatpak
 flatpak run org.seedatlas.SeedAtlas
 ```
 
@@ -300,7 +301,7 @@ und ausreichend Platz für SDK, Runtime und Build benötigt. Es erzeugt ohne
 GPG-Signatur:
 
 ```text
-dist/Seed-Atlas-4.2.dev0-Linux-x86_64.flatpak
+dist/Seed-Atlas-4.3.dev0-Linux-x86_64.flatpak
 dist/update.json
 ```
 
@@ -531,7 +532,7 @@ und die tatsächlich installierten Pakete gegen das Manifest testen.
 Auch den passenden Quellstand archivieren. Wenn ein alter Release-Tag bestehen
 bleibt, bildet GitHubs automatisch erzeugtes „Source code“-Archiv nicht plötzlich
 den neuen lokalen Arbeitsstand ab. Das Windows-Packaging erzeugt dafür zusätzlich
-ein eigenes `Seed-Atlas-4.2.dev0-Source.zip`.
+ein eigenes `Seed-Atlas-4.3.dev0-Source.zip`.
 
 Bei einem Rollback immer Installer und ihre ursprüngliche JSON-Datei gemeinsam
 zurücksetzen. Weil nur auf Ungleichheit geprüft wird, bekommen Nutzer des
@@ -616,7 +617,7 @@ mit zuvor gesicherten Testdaten prüfen, nicht an der Arbeitsinstallation.
 | Manifest nicht erreichbar / kein Popup trotz verschiedener IDs | Öffentliche URL mit `curl` prüfen: Internetzugang, Latest-Ziel, Assetname und JSON-Format kontrollieren. Beim Start werden Netzwerk-/Manifestfehler absichtlich nicht angezeigt. |
 | Nach jedem Neuinstallieren wieder ein Update | Manifest-ID und alle drei eingebauten IDs prüfen; keine alte EXE/DMG/Flatpak oder JSON aus einem fehlgeschlagenen Build hochladen. Test-Overrides entfernen. |
 | Nur eine Plattform meldet ständig ein Update | Wahrscheinlich unterschiedliche Build-IDs oder ein vergessenes altes Plattformpaket. Alle drei Builds mit derselben ID veröffentlichen. |
-| Lokaler neuer Build meldet ein Update auf den alten Download | Erwartbar, solange GitHub eine andere ID hat. Der Updater kennt keine Reihenfolge. |
+| Lokaler neuer Build meldet ein Update auf den alten Download | Nur bei Builds mit gesetzter `SEED_ATLAS_BUILD_ID` (Packaging-Skripte) erwartbar, solange GitHub eine andere ID hat; der Updater kennt keine Reihenfolge. Ein direkter `qmake`-Build ohne ID ist ein `development`-Build und prüft nicht auf Updates. |
 | `Update` entfernt die App beim Test nicht | Dry-Run-Variable noch gesetzt, portable Windows-Kopie, schreibgeschütztes DMG oder systemweites Flatpak prüfen. |
 | Beim Umstieg auf universal/anderen Compiler Linker- oder Architekturfehler | Frische Quellkopie verwenden bzw. generierte Engine-Objekte vor dem neuen Build bereinigen. |
 

@@ -71,13 +71,49 @@ void setUpdateChecksEnabled(Config *config, bool enabled)
     settings.sync();
 }
 
+#ifdef Q_OS_WIN
+// The uninstaller that Inno Setup registered for the Seed Atlas AppId (see
+// installer/windows/SeedAtlas.iss), for per-user and for all-users installs.
+QString registeredUninstaller()
+{
+    const QString key = QStringLiteral(
+        "\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
+        "{9EA88549-5B8A-493B-AD00-AA2FB6BE7D02}_is1");
+    const struct { const char *root; QSettings::Format format; } views[] = {
+        { "HKEY_CURRENT_USER",  QSettings::NativeFormat },
+        { "HKEY_LOCAL_MACHINE", QSettings::Registry64Format },
+        { "HKEY_LOCAL_MACHINE", QSettings::Registry32Format },
+    };
+    for (const auto& view : views)
+    {
+        QSettings registry(QString::fromLatin1(view.root) + key, view.format);
+        QString command = registry.value(QStringLiteral("UninstallString")).toString().trimmed();
+        if (command.startsWith(QLatin1Char('"')))
+            command = command.mid(1, command.indexOf(QLatin1Char('"'), 1) - 1);
+        if (!command.isEmpty())
+            return QDir::cleanPath(QDir::fromNativeSeparators(command));
+    }
+    return QString();
+}
+#endif
+
 bool scheduleSelfRemoval(QString *error)
 {
 #ifdef Q_OS_WIN
+    // Only run the uninstaller registered for this installation: a portable
+    // copy can sit next to the uninstaller of an unrelated Inno Setup program.
     const QDir installDir(QCoreApplication::applicationDirPath());
+    const QString registered = registeredUninstaller();
+    QString uninstaller;
     const QStringList uninstallers = installDir.entryList(
         QStringList() << QStringLiteral("unins???.exe"), QDir::Files, QDir::Name);
-    if (uninstallers.isEmpty())
+    for (const QString& name : uninstallers)
+    {
+        const QString path = QDir::cleanPath(installDir.absoluteFilePath(name));
+        if (!registered.isEmpty() && path.compare(registered, Qt::CaseInsensitive) == 0)
+            uninstaller = path;
+    }
+    if (uninstaller.isEmpty())
     {
         *error = QApplication::translate(
             "UpdaterDialog",
@@ -85,7 +121,6 @@ bool scheduleSelfRemoval(QString *error)
         return false;
     }
 
-    const QString uninstaller = installDir.absoluteFilePath(uninstallers.first());
     const QStringList arguments = {
         QStringLiteral("/VERYSILENT"),
         QStringLiteral("/SUPPRESSMSGBOXES"),
@@ -229,11 +264,18 @@ void searchForUpdates(QWidget *parent, Config *config, bool quiet)
         return;
     }
 
+    // a repeated click while a check is pending would stack the prompts
+    static bool checking = false;
+    if (checking)
+        return;
+    checking = true;
+
     QObject *owner = parent
         ? static_cast<QObject *>(parent)
         : static_cast<QObject *>(qApp);
     QNetworkAccessManager *manager = new QNetworkAccessManager(owner);
     QNetworkRequest request(manifestUrl());
+    request.setTransferTimeout(15000); // Qt does not time out stalled transfers by default
     request.setRawHeader("Accept", "application/json");
     request.setRawHeader("Cache-Control", "no-cache");
     request.setRawHeader("User-Agent", "Seed-Atlas-Updater");
@@ -243,8 +285,9 @@ void searchForUpdates(QWidget *parent, Config *config, bool quiet)
     QNetworkReply *reply = manager->get(request);
     QObject::connect(reply, &QNetworkReply::finished, manager,
         [config, manager, parent, quiet, reply, localBuildId]() {
+        checking = false;
         const QNetworkReply::NetworkError networkError = reply->error();
-        const QByteArray response = reply->readAll();
+        const QByteArray response = reply->read(64 * 1024); // the manifest is tiny
         reply->deleteLater();
         manager->deleteLater();
 
@@ -272,7 +315,7 @@ void searchForUpdates(QWidget *parent, Config *config, bool quiet)
             return;
         }
 
-        if (remoteBuildId == localBuildId)
+        if (remoteBuildId.compare(localBuildId, Qt::CaseInsensitive) == 0)
         {
             if (!quiet)
             {

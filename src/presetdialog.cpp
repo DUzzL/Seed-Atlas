@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QInputDialog>
 #include <QListWidgetItem>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -51,7 +52,7 @@ bool saveConditions(const Preset& preset, QString rc)
 }
 
 
-PresetDialog::PresetDialog(QWidget *parent, WorldInfo wi, bool showEamples)
+PresetDialog::PresetDialog(QWidget *parent, WorldInfo wi, bool showExamples)
     : QDialog(parent)
     , ui(new Ui::PresetDialog)
 {
@@ -62,7 +63,7 @@ PresetDialog::PresetDialog(QWidget *parent, WorldInfo wi, bool showEamples)
     connect(ui->buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(ui->buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
-    if (showEamples)
+    if (showExamples)
         ui->tabWidget->setCurrentWidget(ui->tabExamples);
     else
         ui->tabWidget->setCurrentWidget(ui->tabFilters);
@@ -91,7 +92,7 @@ PresetDialog::PresetDialog(QWidget *parent, WorldInfo wi, bool showEamples)
         tr("Abandoned Villages in separate biomes (1.10+)"),
         tr("Two abandoned Villages close together, one in a Plains, the other in a Desert.\n\n"
         "Works best with the 48-bit family search."),
-        wi.mc >= MC_1_9);
+        wi.mc >= MC_1_10);
 
     addPreset(":/examples/all_fish.txt",
         tr("All the Fish (1.13+)"),
@@ -142,6 +143,19 @@ PresetDialog::PresetDialog(QWidget *parent, WorldInfo wi, bool showEamples)
         "primarily supports Old Growth Taiga variants"),
         wi.mc >= MC_1_18);
     */
+
+    // show a description right away instead of two empty panes
+    for (QListWidget *list : {ui->listExamples, ui->listFilters})
+    {
+        for (int i = 0; i < list->count(); i++)
+        {
+            if (list->item(i)->flags() & Qt::ItemIsSelectable)
+            {
+                list->setCurrentRow(i);
+                break;
+            }
+        }
+    }
 }
 
 PresetDialog::~PresetDialog()
@@ -193,7 +207,7 @@ void PresetDialog::updateSelection()
     if (!rc.isEmpty())
     {
         ui->textDesc->setText(presets[rc].desc);
-        ui->formCond->on_buttonRemoveAll_clicked();
+        ui->formCond->clearConditions();
         for (Condition& c : presets[rc].condvec)
             ui->formCond->addItemCondition(new QListWidgetItem(), c);
         ui->buttonBox->button(QDialogButtonBox::Ok)->setEnabled(true);
@@ -201,7 +215,7 @@ void PresetDialog::updateSelection()
     else
     {
         ui->textDesc->clear();
-        ui->formCond->on_buttonRemoveAll_clicked();
+        ui->formCond->clearConditions();
         ui->buttonBox->button(QDialogButtonBox::Ok)->setEnabled(false);
     }
 }
@@ -255,6 +269,12 @@ void PresetDialog::on_buttonSave_clicked()
 void PresetDialog::on_buttonDelete_clicked()
 {
     const QList<QListWidgetItem*> selected = ui->listFilters->selectedItems();
+    if (selected.isEmpty())
+        return;
+    if (QMessageBox::question(this, tr("Delete Preset"),
+            tr("Delete the selected preset file(s)? This cannot be undone."))
+            != QMessageBox::Yes)
+        return;
     for (QListWidgetItem *item : selected)
     {
         QString filerc = qvariant_cast<QString>(item->data(Qt::UserRole));

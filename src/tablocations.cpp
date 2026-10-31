@@ -126,7 +126,7 @@ void AnalysisLocations::run()
             item->setText(3, QString::number(at.z));
             item->setText(4, QString::asprintf("%.0f", dist));
             item->setData(0, Qt::UserRole+0, QVariant::fromValue(seed));
-            item->setData(0, Qt::UserRole+1, QVariant::Invalid);
+            item->setData(0, Qt::UserRole+1, QVariant());
             item->setData(0, Qt::UserRole+2, QVariant::fromValue(at));
 
             setConditionTreeItems(condtree, 0, seed, cpos, item, true);
@@ -151,6 +151,15 @@ TabLocations::TabLocations(MainWindow *parent)
     , updt(20)
 {
     ui->setupUi(this);
+    connect(parent->formCond, &FormConditions::changed, this, [this]() {
+        thread.stop = true;
+        resultsInvalidated = true;
+        ui->treeWidget->clear();
+        qDeleteAll(qbuf);
+        qbuf.clear();
+        ui->pushExport->setEnabled(false);
+        ui->labelStatus->setText(tr("Filters changed. Analyze again."));
+    });
     ui->treeWidget->header()->setMinimumSectionSize(24);
     ui->treeWidget->header()->setSectionResizeMode(QHeaderView::Stretch);
     ui->treeWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -185,6 +194,16 @@ bool TabLocations::event(QEvent *e)
     return QWidget::event(e);
 }
 
+void TabLocations::setAdvanced(bool advanced)
+{
+    // keep a changed pattern visible while it is in effect
+    bool special = ui->comboSampling->currentData().toInt() != SMODE_RADIAL_GRID
+        || ui->lineA->text() != "512";
+    for (QWidget *w : {(QWidget*)ui->label_2, (QWidget*)ui->comboSampling,
+            (QWidget*)ui->label, (QWidget*)ui->lineA})
+        w->setVisible(advanced || special);
+}
+
 void TabLocations::save(QSettings& settings)
 {
     settings.setValue("analysis/seedsrc_loc", ui->comboSeedSource->currentIndex());
@@ -216,6 +235,7 @@ void TabLocations::load(QSettings& settings)
 
 void TabLocations::onAnalysisItemDone(QTreeWidgetItem *item)
 {
+    if (resultsInvalidated) { delete item; return; }
     if (qbuf.size() + ui->treeWidget->topLevelItemCount() >= maxresults)
     {
         thread.stop = true;
@@ -237,7 +257,10 @@ void TabLocations::onAnalysisFinished()
     ui->pushExport->setEnabled(ui->treeWidget->topLevelItemCount() > 0);
     ui->pushStart->setChecked(false);
     ui->pushStart->setText(tr("Analyze"));
-    ui->labelStatus->setText(tr("Idle"));
+    ui->labelStatus->setText(resultsInvalidated
+        ? tr("Filters changed. Analyze again.") : thread.stop
+        ? tr("Analysis stopped. %1 results.").arg(ui->treeWidget->topLevelItemCount())
+        : tr("Analysis complete. %1 results.").arg(ui->treeWidget->topLevelItemCount()));
     if (parent)
         parent->setProgressIndication();
 }
@@ -309,6 +332,7 @@ void TabLocations::on_pushStart_clicked()
         return;
     }
 
+    resultsInvalidated = false;
     thread.sidx = thread.pidx = 0;
     thread.workDone = 0;
     thread.stop = false;

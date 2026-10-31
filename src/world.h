@@ -80,6 +80,9 @@ struct Quad : public Scheduled
 
     int *biomes;
     uchar *rgb;
+    std::vector<float> terrainHeight; // terrain map heights, sampled once
+    bool terrainSampled = false;
+    bool recolor = false; // colors changed while cached, update when reused
 
     // img and spos act as an atomic gate (with NULL or non-NULL indicating available results)
     QAtomicPointer<QImage> img;
@@ -202,6 +205,7 @@ public:
     int estimateSurface(Pos p);
 
     void refreshBiomeColors();
+    void recolorCachedQuads();
     void setBiomeHighlight(int biomeId);
     void setBiomeHighlights(const QVector<int>& biomeIds);
 
@@ -210,6 +214,7 @@ public:
     bool isBusy();
     void clear();
     void add(Scheduled *q);
+    void addSorted(const std::vector<Quad*>& sorted);
     Scheduled *take(Scheduled *q);
     Scheduled *requestQuad();
     void cacheQuad(std::vector<Quad*>& cache, Quad *quad);

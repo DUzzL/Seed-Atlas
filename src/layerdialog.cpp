@@ -115,6 +115,7 @@ LayerDialog::LayerDialog(QWidget *parent, WorldInfo wi)
     radio[LOPT_BETA_T_1] = ui->radioBetaT;
     radio[LOPT_BETA_H_1] = ui->radioBetaH;
     radio[LOPT_HEIGHT] = ui->radioHeight;
+    radio[LOPT_TERRAIN] = ui->radioTerrain;
     radio[LOPT_STRUCTS] = ui->radioStruct;
 
     combo[LOPT_BIOMES] = ui->comboBiomes;
@@ -159,6 +160,10 @@ LayerDialog::LayerDialog(QWidget *parent, WorldInfo wi)
             radio[i]->setEnabled(wi.mc > MC_1_17);
             if (combo[i])
                 combo[i]->setEnabled(wi.mc > MC_1_17);
+        }
+        if (i == LOPT_TERRAIN)
+        {   // the terrain map shades the 1.18+ surface height
+            radio[i]->setEnabled(wi.mc > MC_1_17);
         }
         if (i == LOPT_RIVER_4 || i == LOPT_OCEAN_256)
         {

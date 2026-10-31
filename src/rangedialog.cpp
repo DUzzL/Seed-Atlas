@@ -28,7 +28,7 @@ void RangeDialog::on_buttonBox_clicked(QAbstractButton *button)
         if (ui->checkHex->isChecked())
             fmt = "%" PRIx64;
 
-        ui->lineMin->setText(QString::asprintf(fmt, 0));
+        ui->lineMin->setText(QString::asprintf(fmt, (uint64_t)0));
         ui->lineMax->setText(QString::asprintf(fmt, ~(uint64_t)0));
     }
     if (b == QDialogButtonBox::Ok)

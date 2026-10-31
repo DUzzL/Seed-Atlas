@@ -98,6 +98,7 @@ class FormSearchControl : public QWidget
     Q_OBJECT
 
 public:
+    void invalidateResults();
     explicit FormSearchControl(MainWindow *parent);
     ~FormSearchControl();
 
@@ -116,6 +117,9 @@ public:
     void searchLockUi(bool lock);
 
     void setSearchMode(int mode);
+    bool isSearching() const;
+    // simple mode hides the search type, start seed and the 48-bit columns
+    void setAdvanced(bool advanced);
 
     bool getSeed(int row, uint64_t *seed);
 
@@ -123,6 +127,7 @@ signals:
     void selectedSeedChanged(uint64_t seed);
     void searchStatusChanged(bool running);
     void resultsAdded(int cnt);
+    void advancedChanged(bool advanced);
 
 public slots:
     void setSearchRange(uint64_t smin, uint64_t smax);
@@ -162,6 +167,8 @@ private:
 
     MainWindow *parent;
     Ui::FormSearchControl *ui;
+    class QCheckBox *checkAdvanced = nullptr;
+    bool advanced = true; // shows the raw 64-bit progress
     SeedTableModel *model;
     SeedSortProxy *proxy;
     SearchMaster sthread;
@@ -180,6 +187,13 @@ private:
     // found seeds that are waiting to be added to results
     std::vector<uint64_t> qbuf;
     QSet<uint64_t> resultSeeds;
+    // version and world type the listed results were found for
+    int resultsMc = MC_UNDEF;
+    bool resultsLarge = false;
+    bool searchRunning = false; // from start until searchFinish()
+    // set when the filters change during a search: the search is stopped and
+    // whatever it still reports belongs to the old filters
+    bool discardSearch = false;
     quint64 nextupdate;
     quint64 updt;
 };

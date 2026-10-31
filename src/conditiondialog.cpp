@@ -40,7 +40,8 @@
 class ComboTypeInfo : public QStyledItemDelegate
 {
 public:
-    ComboTypeInfo(QComboBox *combo, QObject *parent, std::function<void(int)> infoHandler)
+    ComboTypeInfo(QComboBox *combo, QObject *parent,
+            std::function<void(int, QWidget*, const QRect&)> infoHandler)
         : QStyledItemDelegate(parent)
         , combo(combo)
         , handler(std::move(infoHandler))
@@ -88,7 +89,7 @@ public:
                 if (type > 0 && infoRect(view->visualRect(index)).contains(mouse->pos()))
                 {
                     if (event->type() == QEvent::MouseButtonRelease)
-                        handler(type);
+                        handler(type, view->viewport(), view->visualRect(index));
                     return true;
                 }
             }
@@ -100,7 +101,7 @@ private:
     static const int iconWidth = 16;
 
     QComboBox *combo;
-    std::function<void(int)> handler;
+    std::function<void(int, QWidget*, const QRect&)> handler;
     QIcon infoIcon;
 };
 
@@ -115,6 +116,8 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
 {
     memset(&cond, 0, sizeof(cond));
     ui->setupUi(this);
+    styleInfoButton(ui->buttonAreaInfo);
+    styleInfoButton(ui->pushInfoLua);
 
     connect(ui->buttonBox, &QDialogButtonBox::accepted, this, &ConditionDialog::onAccept);
     connect(ui->buttonBox, &QDialogButtonBox::rejected, this, &ConditionDialog::onReject);
@@ -123,17 +126,15 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
     // panel: clicking the "i" of an entry shows a short explanation including
     // the Minecraft versions the condition type was made for.
     ComboTypeInfo *typeInfo = new ComboTypeInfo(ui->comboType, this,
-            [this](int filterIndex) { showTypeInfo(filterIndex); });
+            [this](int filterIndex, QWidget *anchor, const QRect& area) {
+                showTypeInfo(filterIndex, anchor, area);
+            });
     ui->comboType->setItemDelegate(typeInfo);
     ui->comboType->view()->viewport()->installEventFilter(typeInfo);
 
     QString mcs = tr("MC %1", "Minecraft version").arg(mc2str(wi.mc));
     ui->labelMC->setText(mcs);
-#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
-    ui->textEditLua->setTabStopWidth(txtWidth(ui->textEditLua->font(), "    "));
-#else
     ui->textEditLua->setTabStopDistance(QFontMetricsF(ui->textEditLua->font()).horizontalAdvance("    "));
-#endif
 
     // prevent bold font of group box title getting inherited
     //QFont dfont = font();
@@ -206,8 +207,14 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
     ui->comboCat->insertSeparator(1);
     ui->comboCat->addItem(getPix("overworld"), tr("Biomes"), CAT_BIOMES);
     ui->comboCat->addItem(getPix("stronghold"), tr("Structures"), CAT_STRUCT);
-    ui->comboCat->addItem(getPix("quad"), tr("Quad-structure"), CAT_QUAD);
-    ui->comboCat->addItem(getPix("helper"), tr("Algorithm helpers"), CAT_HELPER);
+    // expert categories are hidden in the simple mode, unless the edited
+    // condition belongs to one
+    const int initcat = initcond ? g_filterinfo.list[initcond->type].cat : CAT_NONE;
+    const bool advanced = !config || config->advancedSearch;
+    if (advanced || initcat == CAT_QUAD)
+        ui->comboCat->addItem(getPix("quad"), tr("Quad-structure"), CAT_QUAD);
+    if (advanced || initcat == CAT_HELPER)
+        ui->comboCat->addItem(getPix("helper"), tr("Algorithm helpers"), CAT_HELPER);
     ui->comboCat->addItem(getPix("slime"), tr("Other"), CAT_OTHER);
     int fmh = ui->comboCat->fontMetrics().height() + 8;
     ui->comboCat->setIconSize(QSize(fmh, fmh));
@@ -307,8 +314,8 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
         ok->setLimitText(tr("-Inf"), tr("+Inf"));
         ex->setLimitText(tr("-Inf"), tr("+Inf"));
         ex->setHighlight(QColor::Invalid, QColor(Qt::red));
-        connect(ok, SIGNAL(onRangeChange()), this, SLOT(onClimateLimitChanged()));
-        connect(ex, SIGNAL(onRangeChange()), this, SLOT(onClimateLimitChanged()));
+        connect(ok, &LabeledRange::onRangeChange, this, &ConditionDialog::onClimateLimitChanged);
+        connect(ex, &LabeledRange::onRangeChange, this, &ConditionDialog::onClimateLimitChanged);
         climaterange[0][i] = ok;
         climaterange[1][i] = ex;
 
@@ -382,7 +389,11 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
     // defaults
     ui->spinBox->setValue(1);
     ui->checkSkipRef->setChecked(false);
-    ui->radioSquare->setChecked(true);
+    // a usable area instead of a single block; types without a radius
+    // fall back to the square (see updateMode)
+    ui->radioRadius->setChecked(true);
+    ui->lineRadius->setText("500");
+    ui->lineSquare->setText("1000");
     ui->lineCoverage1->setText("50");
     ui->lineCoverage2->setText("50");
     ui->lineConfidence1->setText("95");
@@ -502,7 +513,7 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
         ui->checkAbandoned->setCheckState(totristate(cond.varflags, Condition::VAR_ABANODONED));
         ui->checkEndShip->setCheckState(totristate(cond.varflags, Condition::VAR_ENDSHIP));
         ui->checkBasement->setCheckState(totristate(cond.varflags, Condition::VAR_BASEMENT));
-        for (VariantCheckBox *cb : qAsConst(variantboxes))
+        for (VariantCheckBox *cb : std::as_const(variantboxes))
         {
             int idx = cb->sp - g_start_pieces;
             cb->setChecked(cond.varstart & (1ULL << idx));
@@ -534,13 +545,10 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
     if (ui->scrollMainContents && ui->scrollMainContents->layout())
     {   // a scroll area caps its own size hint - use the content width instead
         target.setWidth(qMax(target.width(),
-                ui->scrollMainContents->layout()->sizeHint().width()));
+                ui->scrollMainContents->layout()->minimumSize().width() + 64));
+        target.setWidth(qMax(target.width(), 900));
     }
-#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
     QScreen *scr = QGuiApplication::screenAt(QCursor::pos());
-#else
-    QScreen *scr = QGuiApplication::primaryScreen();
-#endif
     if (!scr)
         scr = QGuiApplication::primaryScreen();
     if (scr)
@@ -769,14 +777,17 @@ void ConditionDialog::updateMode()
     ui->buttonBox->button(QDialogButtonBox::Ok)->setEnabled(filterindex != F_SELECT);
 }
 
-void ConditionDialog::showTypeInfo(int filterIndex)
+void ConditionDialog::showTypeInfo(int filterIndex, QWidget *anchor, const QRect& area)
 {
     if (filterIndex <= 0 || filterIndex >= FILTER_MAX)
         return;
     const FilterInfo &ft = g_filterinfo.list[filterIndex];
 
     QString text = QApplication::translate("Filter", ft.description);
-    if (text.isEmpty())
+    if (text.isEmpty() && ft.cat == CAT_STRUCT)
+        text = tr("Passes when at least the given number of these structures generate "
+                  "inside the area. With 0 instances, it excludes them instead.");
+    else if (text.isEmpty())
         text = tr("No description available.");
     if (!text.startsWith('<'))
         text = "<p>" + text + "</p>";
@@ -800,12 +811,8 @@ void ConditionDialog::showTypeInfo(int filterIndex)
                 + "</b></font></p>";
     }
 
-    QMessageBox *mb = new QMessageBox(this);
-    mb->setAttribute(Qt::WA_DeleteOnClose);
-    mb->setIcon(QMessageBox::Information);
-    mb->setWindowTitle(tr("Help: %1").arg(QApplication::translate("Filter", ft.name)));
-    mb->setText(text);
-    mb->show();
+    InfoPopup::toggle(anchor, tr("Help: %1").arg(QApplication::translate("Filter", ft.name)),
+        text, area);
 }
 
 static QString layerText(int layerId)
@@ -841,7 +848,7 @@ void ConditionDialog::updateBiomeSelection()
     for (int i = 0, n = ui->comboScale->count(); i < n; i++)
     {
         ui->comboScale->setItemText(i, QString::asprintf("1:%d", 1 << (i*2)));
-        ui->comboScale->setItemData(i, QVariant::Invalid, Qt::UserRole-1);
+        ui->comboScale->setItemData(i, QVariant(), Qt::UserRole-1);
     }
     // ui->comboScale->setItemData(0, false, Qt::UserRole-1); // disable voronoi
 
@@ -875,10 +882,10 @@ void ConditionDialog::updateBiomeSelection()
         {
             ui->labelBiomeScale->setText(tr("Generation layer:"));
             ui->comboScale->setEnabled(true);
+            Generator tmp;
+            setupGenerator(&tmp, wi.mc, 0);
             for (int i = 0, n = ui->comboScale->count(); i < n; i++)
             {
-                Generator tmp;
-                setupGenerator(&tmp, wi.mc, 0);
                 int s = 1 << 2*i;
                 if (const Layer *l = getLayerForScale(&tmp, s))
                 {
@@ -1013,6 +1020,18 @@ void ConditionDialog::updateBiomeSelection()
 bool ConditionDialog::warnIfBad(Condition cond)
 {
     const FilterInfo &ft = g_filterinfo.list[cond.type];
+    // bounds are inclusive; a single point is a deliberate sample, not an area
+    const bool point = cond.x1 == cond.x2 && cond.z1 == cond.z2;
+    if ((ft.loc & FilterInfo::LOC_2) && cond.rmax <= 0 && !point &&
+        ((int64_t)cond.x2 - cond.x1 + 1 < 16 || (int64_t)cond.z2 - cond.z1 + 1 < 16))
+    {
+        int button = warn(this, tr("Very Small Area"),
+            tr("The area is less than 16 blocks wide, so this condition will "
+               "almost never be met."),
+            tr("Continue anyway?"), QMessageBox::Ok | QMessageBox::Cancel);
+        if (button == QMessageBox::Cancel)
+            return false;
+    }
     if ((cond.varflags & Condition::VAR_WITH_START) && (cond.varstart == 0))
     {
         if (ui->checkStartPieces->isEnabled())
@@ -1270,7 +1289,7 @@ void ConditionDialog::onAccept()
     c.varflags |= tristateFlags(ui->checkEndShip, Condition::VAR_ENDSHIP);
     c.varflags |= tristateFlags(ui->checkBasement, Condition::VAR_BASEMENT);
 
-    for (VariantCheckBox *cb : qAsConst(variantboxes))
+    for (VariantCheckBox *cb : std::as_const(variantboxes))
     {
         if (!cb->isChecked())
             continue;
@@ -1278,6 +1297,11 @@ void ConditionDialog::onAccept()
     }
 
     getClimateLimits(c.limok, c.limex);
+
+    // a label from the quick "Add filter" list names the original choice
+    if (c.type != cond.type || c.biomeToFind != cond.biomeToFind ||
+            c.biomeToFindM != cond.biomeToFindM)
+        memset(c.text, 0, sizeof(c.text));
 
     if (!warnIfBad(c))
         return;
@@ -1370,11 +1394,8 @@ void ConditionDialog::on_buttonExclude_clicked()
 
 void ConditionDialog::on_buttonAreaInfo_clicked()
 {
-    QMessageBox *mb = new QMessageBox(this);
-    mb->setAttribute(Qt::WA_DeleteOnClose);
-    mb->setIcon(QMessageBox::Information);
-    mb->setWindowTitle(tr("Help: area entry"));
-    mb->setText(tr(
+    InfoPopup::toggle(ui->buttonAreaInfo, tr("Help: area entry"),
+        tr(
         "<html><head/><body><p>"
         "The area can be entered via <b>custom</b> rectangle, that is defined "
         "by its two opposing corners, relative to a center point. These bounds "
@@ -1392,7 +1413,6 @@ void ConditionDialog::on_buttonAreaInfo_clicked()
         "-32 to 31, and get sampled at -32, -16, 0 and 16."
         "</p></body></html>"
         ));
-    mb->show();
 }
 
 void ConditionDialog::on_buttonFromVisible_clicked()
@@ -1410,25 +1430,30 @@ void ConditionDialog::on_buttonFromVisible_clicked()
     updateMode();
 }
 
-void ConditionDialog::on_radioRadius_toggled(bool)
+// The radio buttons are exclusive, so each switch toggles two of them: only
+// the one that becomes checked updates the (expensive) dialog layout.
+void ConditionDialog::on_radioRadius_toggled(bool checked)
 {
-    updateMode();
+    if (checked)
+        updateMode();
 }
 
-void ConditionDialog::on_radioSquare_toggled(bool)
+void ConditionDialog::on_radioSquare_toggled(bool checked)
 {
-    updateMode();
+    if (checked)
+        updateMode();
 }
 
-void ConditionDialog::on_radioCustom_toggled(bool)
+void ConditionDialog::on_radioCustom_toggled(bool checked)
 {
-    updateMode();
+    if (checked)
+        updateMode();
 }
 
 void ConditionDialog::on_lineSquare_editingFinished()
 {
-    int v = ui->lineSquare->text().toInt();
-    int area = (v+1) * (v+1);
+    int64_t v = ui->lineSquare->text().toInt();
+    int area = (int) std::min<int64_t>((v+1) * (v+1), INT_MAX);
     for (int i = 0; i < 9; i++)
     {
         if (tempsboxes[i])
@@ -1731,7 +1756,7 @@ void ConditionDialog::on_pushLuaExample_clicked()
 
     QInputDialog *dialog = new QInputDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setWindowTitle(tr("Lua examples"));
+    dialog->setWindowTitle(tr("Lua Examples"));
     dialog->setLabelText(tr("Replace editor content with example:"));
     dialog->setComboBoxItems(examples);
     dialog->setTextValue(examples.first());
@@ -1756,11 +1781,8 @@ void ConditionDialog::on_comboHeightRange_currentIndexChanged(int index)
 
 void ConditionDialog::on_pushInfoLua_clicked()
 {
-    QMessageBox *mb = new QMessageBox(this);
-    mb->setAttribute(Qt::WA_DeleteOnClose);
-    mb->setIcon(QMessageBox::Information);
-    mb->setWindowTitle(tr("Help: Lua script"));
-    mb->setText( tr(
+    InfoPopup::toggle(ui->pushInfoLua, tr("Help: Lua script"),
+        tr(
         "<html><head/><body><p>"
         "Lua scripts allow the user to write custom filters. "
         "A valid Lua filtering script has to define a"
@@ -1798,7 +1820,6 @@ void ConditionDialog::on_pushInfoLua_clicked()
         "positions <b>x1, z1</b> to <b>x2, z2</b>, or <b>nil</b> upon failure"
         "</p></body></html>"
         ));
-    mb->show();
 }
 
 void ConditionDialog::on_comboClimatePara_currentIndexChanged(int)

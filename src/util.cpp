@@ -175,11 +175,7 @@ QString getBiomeDisplay(int mc, int id)
 
 int txtWidth(const QFontMetrics& fm, const QString& s)
 {
-#if QT_VERSION < QT_VERSION_CHECK(5, 11, 0)
-    return fm.width(s);
-#else
     return fm.horizontalAdvance(s);
-#endif
 }
 int txtWidth(const QFontMetrics& fm) { return txtWidth(fm, "#"); }
 int txtWidth(const QFont& f, const QString& s) { return txtWidth(QFontMetrics(f), s); }
@@ -481,22 +477,21 @@ QPixmap getPix(QString rc, int width)
     QPixmap pix(":/icons/" + rc + ".png");
     if (pix.isNull())
         return pix;
-    int w = pix.width();
-    if (width != w)
+    if (width > 0)
     {
-        pix = pix.scaledToWidth(w * 8);
-        if (width)
-            pix = pix.scaledToWidth(width, Qt::SmoothTransformation);
+        pix = pix.scaled(width, width, Qt::KeepAspectRatio, Qt::FastTransformation);
+        QPixmap canvas(width, width);
+        canvas.fill(Qt::transparent);
+        QPainter painter(&canvas);
+        painter.drawPixmap((width - pix.width()) / 2, (width - pix.height()) / 2, pix);
+        pix = canvas;
     }
-    w = pix.width();
-    if (w > pix.height())
-    {
-        QPixmap p(w, w);
-        p.fill(Qt::transparent);
-        QPainter painter(&p);
-        painter.drawPixmap(0, (w - pix.height()) / 2, pix);
-        pix = p;
+    else
+    {   // without a target size, QIcon scales the pixmap to the toolbar and
+        // menu sizes; a large nearest-neighbour copy keeps the pixel art crisp
+        pix = pix.scaled(pix.size() * 8, Qt::KeepAspectRatio, Qt::FastTransformation);
     }
+
     return pix;
 }
 

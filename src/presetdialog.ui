@@ -30,7 +30,7 @@
          </property>
          <widget class="QWidget" name="tabFilters">
           <attribute name="title">
-           <string>Saved Filters</string>
+           <string>Saved filters</string>
           </attribute>
           <layout class="QGridLayout" name="gridLayout">
            <item row="1" column="0">
@@ -49,11 +49,6 @@
            </item>
            <item row="0" column="0" colspan="2">
             <widget class="QListWidget" name="listFilters">
-             <property name="font">
-              <font>
-               <family>Courier New</family>
-              </font>
-             </property>
              <property name="alternatingRowColors">
               <bool>true</bool>
              </property>
@@ -66,16 +61,11 @@
          </widget>
          <widget class="QWidget" name="tabExamples">
           <attribute name="title">
-           <string>Examples Filters</string>
+           <string>Example filters</string>
           </attribute>
           <layout class="QGridLayout" name="gridLayout_2">
            <item row="0" column="0">
             <widget class="QListWidget" name="listExamples">
-             <property name="font">
-              <font>
-               <family>Courier New</family>
-              </font>
-             </property>
              <property name="alternatingRowColors">
               <bool>true</bool>
              </property>

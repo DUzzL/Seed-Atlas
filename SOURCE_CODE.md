@@ -1,7 +1,7 @@
 # Corresponding source code
 
 The complete corresponding source code for this exact Seed Atlas build is
-provided as `Seed-Atlas-4.2.dev0-Source.zip`.
+provided as `Seed-Atlas-4.3.dev0-Source.zip`.
 
 The archive is included in the installed program under `Source` and is also
 distributed alongside the Windows installer. It contains the application

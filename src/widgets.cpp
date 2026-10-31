@@ -11,7 +11,6 @@
 #include <QLineEdit>
 #include <QListWidgetItem>
 #include <QListView>
-#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QParallelAnimationGroup>
@@ -20,6 +19,8 @@
 #include <QEasingCurve>
 #include <QResizeEvent>
 #include <QScrollArea>
+#include <QScrollBar>
+#include <QScreen>
 #include <QSpinBox>
 #include <QStyle>
 #include <QStyleOptionSlider>
@@ -374,24 +375,182 @@ void Collapsible::setCollapsed(bool collapsed)
     animgroup->stop();
 }
 
-void Collapsible::setInfo(const QString& title, const QString& text)
+void styleInfoButton(QAbstractButton *button)
 {
-    QPushButton *button = new QPushButton("", this);
+    button->setText("");
+    button->setIcon(QIcon());
     button->setStyleSheet(
-      "QPushButton {"
-      "    background-color: rgba(255, 255, 255, 0);"
+      "QAbstractButton {"
+      "    background-color: transparent;"
       "    border: none;"
+      "    padding: 0;"
       "    image: url(:/icons/info.png);"
-      "    image-position: right;"
       "}"
-      "QPushButton:hover {"
+      "QAbstractButton:hover, QAbstractButton[infoOpen=\"true\"] {"
       "    image: url(:/icons/info_h.png);"
       "}");
-    int fmh = fontMetrics().height();
-    button->setIconSize(QSize(fmh, fmh));
-    button->setToolTip(tr("Show help"));
+    const int size = button->fontMetrics().height() + 4;
+    button->setFixedSize(size, size);
+    button->setCursor(Qt::PointingHandCursor);
+    button->setToolTip(QApplication::translate("Info", "Show help"));
+}
 
-    connect(button, SIGNAL(clicked()), this, SLOT(showInfo()));
+QPushButton *createInfoButton(QWidget *parent, const QString& title, const QString& text)
+{
+    QPushButton *button = new QPushButton(parent);
+    styleInfoButton(button);
+    QObject::connect(button, &QPushButton::clicked, button,
+        [button, title, text]() { InfoPopup::toggle(button, title, text); });
+    return button;
+}
+
+QPointer<InfoPopup> InfoPopup::current;
+
+void InfoPopup::toggle(QWidget *anchor, const QString& title, const QString& text, const QRect& area)
+{
+    if (current)
+    {
+        const bool same = current->anchor == anchor && current->area == area;
+        current->close();
+        if (same)
+            return;
+    }
+    current = new InfoPopup(anchor, area, title, text);
+    current->place();
+    current->show();
+}
+
+static void setInfoOpen(QWidget *anchor, bool open)
+{
+    if (!qobject_cast<QAbstractButton*>(anchor))
+        return;
+    anchor->setProperty("infoOpen", open);
+    anchor->style()->unpolish(anchor);
+    anchor->style()->polish(anchor);
+    anchor->update();
+}
+
+InfoPopup::InfoPopup(QWidget *anchor, const QRect& area, const QString& title, const QString& text)
+    // a tool window stays above its own window only and never takes the focus
+    : QFrame(anchor->window(), Qt::Tool | Qt::FramelessWindowHint)
+    , anchor(anchor)
+    , area(area)
+{
+    setAttribute(Qt::WA_DeleteOnClose);
+    setAttribute(Qt::WA_ShowWithoutActivating);
+    setObjectName("infoPopup");
+    setStyleSheet(
+        "#infoPopup { background-color: palette(tool-tip-base); border: 1px solid palette(mid); }"
+        "#infoPopup QLabel { color: palette(tool-tip-text); background: transparent; }"
+        "#infoPopup QScrollArea, #infoPopup QScrollArea > QWidget > QWidget {"
+        " background: transparent; border: 0; }");
+
+    const int width = qBound(260, fontMetrics().averageCharWidth() * 60, 520);
+    const int inner = width - 24;
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(12, 10, 12, 12);
+    layout->setSpacing(6);
+
+    // the bubble belongs to its i button, so a "Help: " prefix says nothing
+    QString caption = title;
+    if (caption.startsWith(QStringLiteral("Help: ")))
+        caption = caption.mid(6);
+    if (!caption.isEmpty())
+        caption[0] = caption[0].toUpper();
+    QLabel *heading = new QLabel(caption, this);
+    QFont font = heading->font();
+    font.setBold(true);
+    heading->setFont(font);
+    heading->setWordWrap(true);
+    heading->setFixedWidth(inner);
+    layout->addWidget(heading);
+
+    QLabel *body = new QLabel(text);
+    body->setWordWrap(true);
+    body->setOpenExternalLinks(true);
+    body->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    body->setFixedWidth(inner);
+    const int needed = body->heightForWidth(inner);
+
+    // long help texts scroll instead of growing past the screen
+    QScrollArea *scroll = new QScrollArea(this);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    const QScreen *screen = anchor->screen();
+    const int maxHeight = screen ? screen->availableGeometry().height() * 55 / 100 : 600;
+    if (needed > maxHeight)
+    {
+        const int bar = scroll->verticalScrollBar()->sizeHint().width();
+        body->setFixedWidth(inner - bar);
+        body->setFixedHeight(body->heightForWidth(inner - bar));
+        scroll->setFixedSize(inner, maxHeight);
+    }
+    else
+    {
+        body->setFixedHeight(needed);
+        scroll->setFixedSize(inner, needed);
+    }
+    scroll->setWidget(body);
+    layout->addWidget(scroll);
+    setFixedWidth(width);
+    adjustSize();
+
+    anchor->installEventFilter(this);
+    anchor->window()->installEventFilter(this);
+    setInfoOpen(anchor, true);
+}
+
+InfoPopup::~InfoPopup()
+{
+    setInfoOpen(anchor, false);
+}
+
+void InfoPopup::place()
+{
+    if (!anchor)
+        return;
+    const QRect target = area.isNull() ? anchor->rect() : area;
+    QPoint pos;
+    if (area.isNull())
+    {   // below the button, right-aligned to it
+        pos = anchor->mapToGlobal(QPoint(target.right() - width() + 1, target.bottom() + 4));
+    }
+    else
+    {   // next to an entry of a list, which would otherwise cover it
+        pos = anchor->mapToGlobal(QPoint(anchor->width() + 4, target.top()));
+    }
+    if (const QScreen *screen = anchor->screen())
+    {
+        const QRect avail = screen->availableGeometry();
+        if (pos.y() + height() > avail.bottom())
+        {   // no room below: open above the anchor instead
+            pos.setY(anchor->mapToGlobal(target.topLeft()).y() - height() - 4);
+        }
+        if (pos.x() + width() > avail.right())
+            pos.setX(anchor->mapToGlobal(QPoint(0, 0)).x() - width() - 4);
+        pos.setX(qBound(avail.left(), pos.x(), avail.right() - width()));
+        pos.setY(qBound(avail.top(), pos.y(), avail.bottom() - height()));
+    }
+    move(pos);
+}
+
+bool InfoPopup::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == anchor && event->type() == QEvent::Hide)
+        close();
+    else if (anchor && watched == anchor->window()
+             && (event->type() == QEvent::Move || event->type() == QEvent::Resize))
+        place();
+    return QFrame::eventFilter(watched, event);
+}
+
+void Collapsible::setInfo(const QString& title, const QString& text)
+{
+    QPushButton *button = new QPushButton(this);
+    styleInfoButton(button);
+    infoButton = button;
+
+    connect(button, &QPushButton::clicked, this, &Collapsible::showInfo);
 
     layoutBar->addWidget(button, Qt::AlignLeft);
     infotitle = title;
@@ -400,13 +559,7 @@ void Collapsible::setInfo(const QString& title, const QString& text)
 
 void Collapsible::showInfo()
 {
-    // windows plays an annoying sound when you use QMessageBox::information()
-    QMessageBox *mb = new QMessageBox(this);
-    mb->setAttribute(Qt::WA_DeleteOnClose);
-    mb->setIcon(QMessageBox::Information);
-    mb->setWindowTitle(infotitle);
-    mb->setText(infomsg);
-    mb->show();
+    InfoPopup::toggle(infoButton, infotitle, infomsg);
 }
 
 RangeSlider::RangeSlider(QWidget *parent, int vmin, int vmax)
@@ -529,12 +682,7 @@ void RangeSlider::wheelEvent(QWheelEvent *e)
     QRect groove = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, this);
 
     int delta = e->angleDelta().y() / 8 / 15;
-    int x;
-#if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
-    x = e->x() - groove.x();
-#else
-    x = (int)e->position().x() - groove.x();
-#endif
+    int x = (int)e->position().x() - groove.x();
     x = style()->sliderValueFromPosition(vmin, vmax, x, groove.width());
 
     int h = 0;
@@ -580,7 +728,7 @@ void RangeSlider::mouseMoveEvent(QMouseEvent *e)
 
     QRect groove = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, this);
 
-    int x = e->x() - groove.x();
+    int x = e->position().toPoint().x() - groove.x();
     x = style()->sliderValueFromPosition(vmin, vmax, x, groove.width());
 
     if (holding < 0)
@@ -612,7 +760,7 @@ LabeledRange::LabeledRange(QWidget *parent, int vmin, int vmax)
     l->setContentsMargins(0, 0, 0, 0);
     setLayout(l);
 
-    connect(slider, SIGNAL(valueChanged(int)), this, SLOT(rangeChanged(void)));
+    connect(slider, &QSlider::valueChanged, this, &LabeledRange::rangeChanged);
     rangeChanged();
 }
 
@@ -668,7 +816,7 @@ SpinExclude::SpinExclude(QWidget *parent)
     : QSpinBox(parent)
 {
     setMinimum(-1);
-    QObject::connect(this, SIGNAL(valueChanged(int)), this, SLOT(change(int)), Qt::QueuedConnection);
+    QObject::connect(this, &QSpinBox::valueChanged, this, &SpinExclude::change, Qt::QueuedConnection);
 }
 
 SpinExclude::~SpinExclude()

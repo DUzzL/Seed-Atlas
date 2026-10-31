@@ -117,7 +117,7 @@ private slots:
 
 private:
     bool resolveLuaChanges();
-    void showTypeInfo(int filterIndex);
+    void showTypeInfo(int filterIndex, QWidget *anchor, const QRect& area);
 
     Ui::ConditionDialog *ui;
 

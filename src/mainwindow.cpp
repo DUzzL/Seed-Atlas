@@ -54,6 +54,7 @@
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
 #include <QStyleHints>
 #endif
+#include <QPointer>
 #include <QTreeWidget>
 
 #if WITH_DBUS
@@ -61,11 +62,13 @@
 #include <QDBusConnection>
 #endif
 
+int getStructureConfig_override(int stype, int mc, StructureConfig *sconf);
+
 namespace {
 
 // Procedural pixel-art gear, matching the style and 20px canvas of the
 // other toolbar icons. A second pixmap is added for high-dpi displays.
-QIcon pixelGearIcon()
+QIcon pixelGearIcon(QColor color)
 {
     QIcon icon;
     for (int size : {20, 40})
@@ -82,7 +85,7 @@ QIcon pixelGearIcon()
         pixmap.fill(Qt::transparent);
         QPainter painter(&pixmap);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(190, 198, 210));
+        painter.setBrush(color);
         for (int y = 0; y < size; y++)
         for (int x = 0; x < size; x++)
         {
@@ -94,6 +97,25 @@ QIcon pixelGearIcon()
             if (r >= rHole && r <= (tooth ? rOuter : rRing))
                 painter.drawRect(x, y, 1, 1);
         }
+        icon.addPixmap(pixmap);
+    }
+    return icon;
+}
+
+// Three bars on the same 20px canvas as the gear.
+QIcon menuIcon(QColor color)
+{
+    QIcon icon;
+    for (int size : {20, 40})
+    {
+        const int s = size / 20;
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(color);
+        for (int y : {4, 9, 14})
+            painter.drawRect(3*s, y*s, 14*s, 2*s);
         icon.addPixmap(pixmap);
     }
     return icon;
@@ -147,9 +169,29 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     // It opens the full Settings dialog instead of a drop-down menu.
     ui->menuBar->clear();
     ui->menuBar->hide();
-    QAction *settingsAction = new QAction(pixelGearIcon(), tr("Settings"), this);
+    // the procedural icons get their color in onStyleChanged()
+    settingsAction = new QAction(tr("Settings"), this);
     settingsAction->setProperty("toolbarLabel", tr("Settings"));
     connect(settingsAction, &QAction::triggered, ui->actionPreferences, &QAction::trigger);
+
+    // The former menus (sessions, presets, examples, layers, export, about)
+    // stay reachable through one Menu button. Their actions are also added
+    // to the window, as shortcuts of actions in a hidden menu do not fire.
+    QMenu *mainMenu = new QMenu(this);
+    for (QMenu *menu : {ui->menuFile, ui->menuEdit, ui->menuMap, ui->menuLayer, ui->menuHelp})
+    {
+        mainMenu->addMenu(menu);
+        for (QAction *action : menu->actions())
+        {
+            if (!action->menu() && !action->isSeparator())
+                addAction(action);
+        }
+    }
+    menuAction = new QAction(tr("Menu"), this);
+    menuAction->setProperty("toolbarLabel", tr("Menu"));
+    connect(menuAction, &QAction::triggered, this, [mainMenu]() {
+        mainMenu->popup(QCursor::pos());
+    });
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged, this,
@@ -240,10 +282,11 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
 
     ui->menuHistory->clear();
 
-    ui->tabContainerSearch->addTab(new TabLocations(this), tr("Locations"));
+    tabLocations = new TabLocations(this);
+    ui->tabContainerSearch->addTab(tabLocations, tr("Locations"));
     ui->tabContainer->addTab(new TabBiomes(this), tr("Biomes"));
     ui->tabContainer->addTab(new TabStructures(this), tr("Structures"));
-    ui->tabContainer->addTab(new TabSlime(this), tr("Slime chunks"));
+    ui->tabContainer->addTab(new TabSlime(this), tr("Slime Chunks"));
 
     laction.resize(LOPT_MAX);
     laction[LOPT_BIOMES] = ui->actionBiomes;
@@ -259,6 +302,7 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     laction[LOPT_BETA_T_1] = ui->actionBetaTemperature;
     laction[LOPT_BETA_H_1] = ui->actionBetaHumidity;
     laction[LOPT_HEIGHT] = ui->actionHeight;
+    laction[LOPT_TERRAIN] = ui->actionTerrain;
     laction[LOPT_STRUCTS] = ui->actionStructures;
 
     QActionGroup *grp = new QActionGroup(this);
@@ -266,8 +310,10 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     {
         QAction *act = laction[i];
         if (!act) continue;
-        connect(act, &QAction::toggled, [=](bool) {
-            this->onActionBiomeLayerSelect(i);
+        connect(act, &QAction::toggled, [=](bool checked) {
+            // an exclusive group also emits toggled(false) for the old layer
+            if (checked && !layerSync)
+                this->onActionBiomeLayerSelect(i);
         });
         act->setActionGroup(grp);
     }
@@ -294,10 +340,26 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     connect(actzoom[1], &QAction::triggered, [=](){ this->mapZoom(pow(2.0, -0.5)); });
 
     ui->toolBar->addAction(settingsAction);
+    ui->toolBar->addAction(menuAction);
     ui->toolBar->addSeparator();
     ui->toolBar->addAction(acthome);
     ui->toolBar->addAction(actzoom[0]);
     ui->toolBar->addAction(actzoom[1]);
+    ui->toolBar->addSeparator();
+
+    // map layers of their own, apart from the dimensions and structures
+    saction.resize(D_STRUCT_NUM);
+    addMapAction(D_GRID);
+    // The layer menu is hidden, so the terrain map has its own toggle.
+    terrainAction = addMapAction("map",
+        tr("Terrain map: Minecraft-like surface colors with hill shading (1.18 and newer)"),
+        tr("Terrain"));
+    terrainAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_G));
+    addAction(terrainAction); // the toolbar alone does not deliver the shortcut
+    connect(terrainAction, &QAction::toggled, this, [this](bool checked) {
+        if (!layerSync)
+            onActionBiomeLayerSelect(checked ? LOPT_TERRAIN : LOPT_BIOMES);
+    });
     ui->toolBar->addSeparator();
 
     dimactions[0] = addMapAction("overworld", tr("Overworld"));
@@ -323,10 +385,10 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
         });
     }
     dimactions[0]->setChecked(true);
-
-    saction.resize(D_STRUCT_NUM);
-    addMapAction(D_GRID);
     ui->toolBar->addSeparator();
+
+    // Only the structures of the shown dimension and version are listed (see
+    // updateStructureActions), so they need no separators between groups.
     addMapAction(D_SLIME);
     addMapAction(D_SPAWN);
     addMapAction(D_STRONGHOLD);
@@ -350,10 +412,8 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     addMapAction(D_CHAMBERS);
     addMapAction(D_CAMP);
     addMapAction(D_OREVEIN);
-    ui->toolBar->addSeparator();
     addMapAction(D_FORTESS);
     addMapAction(D_BASTION);
-    ui->toolBar->addSeparator();
     addMapAction(D_ENDCITY);
     addMapAction(D_ENDCITYSHIP);
     addMapAction(D_GATEWAY);
@@ -406,6 +466,7 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     ui->collapseConstraints->init(tr("Conditions"), formCond, false);
     connect(formCond, &FormConditions::changed, this, &MainWindow::onConditionsChanged);
     connect(formCond, &FormConditions::selectionUpdate, this, &MainWindow::onConditionsSelect);
+    connect(formCond, &FormConditions::examplesRequested, this, &MainWindow::on_actionExamples_triggered);
     ui->collapseConstraints->setInfo(
         tr("Help: Conditions"),
         tr(
@@ -419,13 +480,13 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
         "that other conditions can reference. An exception to this are structure "
         "conditions with exactly one required instance. In this case, each found "
         "structure occurrence is examined separately instead. On the other hand, "
-        "a condition that checks for a structure cluster, will average the "
+        "a condition that checks for a structure cluster will average the "
         "position of all occurrences and yield a single position."
         "</p><p>"
         "Standard biome conditions yield the center of the testing area "
         "as they evaluate the area as a whole. To locate the position of a "
         "given biome you can use the designated <b>locate</b> filters, or use a "
-        "spiral iterator to scan an area with a localized condition."
+        "spiral iterator (advanced options) to scan an area with a localized condition."
         "</p></body></html>"
     ));
 
@@ -475,7 +536,17 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
         "</p></body></html>"
     ));
 
-    onConditionsChanged();
+    connect(formControl, &FormSearchControl::advancedChanged, this, [this](bool on) {
+        config.advancedSearch = on;
+        QSettings settings(appSettingsId(), appSettingsId());
+        settings.setValue("config/advancedSearch", on);
+        applySearchMode();
+    });
+    applySearchMode();
+
+    // only sync the generator here: onConditionsChanged() would also discard
+    // the matching seeds that loadSettings() just restored from the session
+    formGen48->updateAutoConditions(formCond->getConditions());
     update();
 
 #if WASM
@@ -485,7 +556,7 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
 #endif
 
 #if WITH_UPDATER
-    QAction *updateaction = new QAction("Check for updates", this);
+    QAction *updateaction = new QAction(tr("Check for updates"), this);
     connect(updateaction, &QAction::triggered,
         [this]() { searchForUpdates(this, &config, false); });
     ui->menuHelp->insertAction(ui->actionAbout, updateaction);
@@ -499,6 +570,18 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
 
 MainWindow::~MainWindow()
 {
+    // The analysis tabs stop and wait for their threads when destroyed, which
+    // processes queued events that can call back into this window. Destroy
+    // them while the window is still intact instead of with the children.
+    // Only the analysis tabs: the Seed Finder page also holds the search forms
+    // and the container of the Locations tab.
+    tabLocations = nullptr;
+    QList<QWidget*> analysisTabs;
+    for (QTabWidget *tabs : {ui->tabContainerSearch, ui->tabContainer})
+        for (int i = 0; i < tabs->count(); i++)
+            if (dynamic_cast<ISaveTab*>(tabs->widget(i)))
+                analysisTabs.append(tabs->widget(i));
+    qDeleteAll(analysisTabs);
     delete ui;
 }
 
@@ -777,6 +860,7 @@ bool MainWindow::setSeed(WorldInfo wi, int dim)
 
     ui->comboBoxMC->setCurrentText(mc2str(wi.mc));
     ui->seedEdit->setText(QString::asprintf("%" PRId64, (int64_t)wi.seed));
+    updateTerrainAvailability(wi.mc);
     getMapView()->setSeed(wi, dim, lopt);
 
     ui->comboBoxMC->setEnabled(true);
@@ -788,7 +872,60 @@ bool MainWindow::setSeed(WorldInfo wi, int dim)
         tab->refresh();
     if (ISaveTab *tab = dynamic_cast<ISaveTab*>(ui->tabContainerSearch->currentWidget()))
         tab->refresh();
+    updateStructureActions();
     return true;
+}
+
+// Whether a map option has anything to show in this dimension and version.
+static bool mapOptionExists(int opt, int dim, int mc)
+{
+    switch (opt)
+    {
+    case D_GRID:
+        return true;
+    case D_FORTESS:
+    case D_BASTION:
+        if (dim != DIM_NETHER)
+            return false;
+        break;
+    case D_ENDCITY:
+    case D_ENDCITYSHIP:
+    case D_GATEWAY:
+        if (dim != DIM_END)
+            return false;
+        break;
+    case D_PORTAL: // also controls the ruined portals of the Nether
+        if (dim == DIM_END)
+            return false;
+        if (dim == DIM_NETHER)
+            opt = D_PORTALN;
+        break;
+    default:
+        if (dim != DIM_OVERWORLD)
+            return false;
+        break;
+    }
+    if (opt == D_OREVEIN)
+        return mc >= MC_1_18;
+    int stype = mapopt2stype(opt);
+    if (stype < 0)
+        return true; // slime chunks, spawn and strongholds
+    StructureConfig sconf;
+    return getStructureConfig_override(stype, mc, &sconf);
+}
+
+void MainWindow::updateStructureActions()
+{
+    WorldInfo wi;
+    getSeed(&wi, false);
+    if (wi.mc <= MC_UNDEF)
+        wi.mc = MC_NEWEST; // no version picked yet (first start)
+    const int dim = getDim();
+    for (int opt = 0; opt < (int) saction.size(); opt++)
+    {
+        if (QAction *act = saction[opt])
+            act->setVisible(mconfig.enabled(opt) && mapOptionExists(opt, dim, wi.mc));
+    }
 }
 
 int MainWindow::getDim()
@@ -828,6 +965,7 @@ void MainWindow::saveSettings()
     if (ui->seedEdit->text().isEmpty())
         settings.remove("map/seed");
     settings.setValue("map/dim", getDim());
+    settings.setValue("map/terrain", lopt.mode == LOPT_TERRAIN);
     settings.setValue("map/x", getMapView()->getX());
     settings.setValue("map/z", getMapView()->getZ());
     settings.setValue("map/scale", getMapView()->getScale());
@@ -897,6 +1035,11 @@ void MainWindow::loadSettings()
     getSeed(&wi, false);
     wi.load(settings);
     int dim = settings.value("map/dim", getDim()).toInt();
+    if (settings.value("map/terrain", false).toBool())
+    {
+        lopt.mode = LOPT_TERRAIN;
+        syncLayerActions();
+    }
 
     onUpdateMapConfig();
     setSeed(wi, dim);
@@ -965,13 +1108,16 @@ bool MainWindow::loadSession(QTextStream& stream, bool keepresults, bool quiet)
     getSeed(&session.wi);
     session.sc = formControl->getSearchConfig();
     session.gen48 = formGen48->getConfig(false);
+    // ...except the progress, which belongs to the filters being replaced:
+    // a filter template without "#Progress" starts from the beginning
+    session.sc.startseed = 0;
 
     if (!session.load(this, stream, quiet))
         return false;
 
     setSeed(session.wi);
 
-    formCond->on_buttonRemoveAll_clicked();
+    formCond->clearConditions();
     for (Condition &c : session.cv)
     {
         QListWidgetItem *item = new QListWidgetItem();
@@ -1017,6 +1163,7 @@ void MainWindow::updateMapSeed()
     ui->actionParaErosion->setEnabled(state);
     ui->actionParaDepth->setEnabled(state);
     ui->actionParaWeirdness->setEnabled(state);
+    updateTerrainAvailability(wi.mc);
 
     ui->actionAddShadow->setEnabled(wi.mc <= MC_1_17);
     ui->actionOpenShadow->setEnabled(wi.mc <= MC_1_17);
@@ -1181,10 +1328,19 @@ void MainWindow::on_actionQuit_triggered()
 
 void MainWindow::on_actionPreferences_triggered()
 {
+    // one instance only: an older copy would save stale values on Apply
+    static QPointer<ConfigDialog> open;
+    if (open)
+    {
+        open->raise();
+        open->activateWindow();
+        return;
+    }
     ConfigDialog *dialog = new ConfigDialog(this, &config);
+    open = dialog;
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dialog, SIGNAL(updateConfig()), this, SLOT(onUpdateConfig()));
-    connect(dialog, SIGNAL(updateMapConfig()), this, SLOT(onUpdateMapConfig()));
+    connect(dialog, &ConfigDialog::updateConfig, this, &MainWindow::onUpdateConfig);
+    connect(dialog, &ConfigDialog::updateMapConfig, this, &MainWindow::onUpdateMapConfig);
     connect(dialog, &ConfigDialog::openMapTools, this, &MainWindow::on_actionToolbarConfig_triggered);
     dialog->show();
 }
@@ -1215,12 +1371,14 @@ void MainWindow::on_actionRedistribute_triggered()
         for (int i = 0, n = conds.size(); i < n; i++)
             if (conds[i].relative && !ids.contains(conds[i].relative))
                 ids.insert(conds[i].relative, ids.size()+1);
-        formCond->on_buttonRemoveAll_clicked();
+        formCond->clearConditions();
         for (Condition& c : conds)
         {
             c.save = ids[c.save];
             c.relative = ids[c.relative];
-            formCond->addItemCondition(NULL, c, 1);
+            // a fresh item re-adds the condition as is; a null item would
+            // create another structure check for each quad condition
+            formCond->addItemCondition(new QListWidgetItem(), c, 1);
         }
     }
 }
@@ -1229,7 +1387,7 @@ void MainWindow::on_actionToolbarConfig_triggered()
 {
     MapToolsDialog *dialog = new MapToolsDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dialog, SIGNAL(updateMapConfig()), this, SLOT(onUpdateMapConfig()));
+    connect(dialog, &MapToolsDialog::updateMapConfig, this, &MainWindow::onUpdateMapConfig);
     dialog->show();
 }
 
@@ -1239,7 +1397,7 @@ void MainWindow::on_actionBiomeColors_triggered()
     getSeed(&wi);
     BiomeColorDialog *dialog = new BiomeColorDialog(this, config.biomeColorPath, wi.mc, getDim());
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dialog, SIGNAL(yieldBiomeColorRc(QString)), this, SLOT(setBiomeColorRc(QString)));
+    connect(dialog, &BiomeColorDialog::yieldBiomeColorRc, this, &MainWindow::setBiomeColorRc);
     dialog->show();
 }
 
@@ -1263,6 +1421,17 @@ void MainWindow::on_actionExamples_triggered()
     dialog->setActiveFilter(formCond->getConditions());
     connect(dialog, &QDialog::accepted, [=] { loadSession(dialog->rc, true); });
     dialog->show();
+}
+
+void MainWindow::applySearchMode()
+{
+    const bool advanced = config.advancedSearch;
+    formControl->setAdvanced(advanced);
+    if (tabLocations)
+        tabLocations->setAdvanced(advanced);
+    // the 48-bit generator stays visible while it does more than "Auto"
+    const bool gen48 = formGen48->getConfig(false).mode != GEN48_AUTO;
+    ui->collapseGen48->setVisible(advanced || gen48);
 }
 
 void MainWindow::on_actionAbout_triggered()
@@ -1296,6 +1465,9 @@ void MainWindow::on_actionExtGen_triggered()
 {
     ExtGenDialog *dialog = new ExtGenDialog(this, &g_extgen);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
+    // the search reads these settings without a snapshot: keep a search from
+    // starting while the dialog is open (the action is disabled during one)
+    dialog->setWindowModality(Qt::WindowModal);
     connect(dialog, &QDialog::accepted, [=] {
         g_extgen = dialog->getSettings();
         // invalidate the map world, forcing an update
@@ -1359,7 +1531,7 @@ void MainWindow::on_actionLayerDisplay_triggered()
     dialog->setLayerOptions(lopt);
     connect(dialog, &LayerDialog::apply, [=](){
         lopt = dialog->getLayerOptions();
-        laction[lopt.mode]->setChecked(true);
+        syncLayerActions();
         updateMapSeed();
     });
     dialog->show();
@@ -1419,24 +1591,55 @@ void MainWindow::onActionMapToggled(int sopt, bool show)
     getMapView()->setShow(sopt, show);
 }
 
+void MainWindow::syncLayerActions()
+{
+    // Signals stay connected so that the toolbar button follows the state.
+    layerSync = true;
+    if (lopt.mode >= 0 && lopt.mode < laction.size() && laction[lopt.mode])
+        laction[lopt.mode]->setChecked(true);
+    if (terrainAction)
+        terrainAction->setChecked(lopt.mode == LOPT_TERRAIN);
+    layerSync = false;
+}
+
+void MainWindow::updateTerrainAvailability(int mc)
+{
+    // The terrain map shades the surface height of the 1.18+ generator. For
+    // older versions it is unavailable and falls back to the biome map.
+    const bool available = mc > MC_1_17;
+    if (!available && lopt.mode == LOPT_TERRAIN)
+    {
+        lopt.mode = LOPT_BIOMES;
+        syncLayerActions();
+    }
+    ui->actionTerrain->setEnabled(available);
+    if (terrainAction)
+        terrainAction->setEnabled(available);
+}
+
 void MainWindow::onActionBiomeLayerSelect(int mode, int disp)
 {
     WorldInfo wi;
-    getSeed(&wi, false);
+    const bool hasSeed = getSeed(&wi, false);
     lopt.mode = mode;
+    syncLayerActions();
     if (disp >= 0)
     {
         if (!getLayerOptionInfo(nullptr, mode, disp, wi))
             return; // unsupported display mode
         lopt.disp[mode] = disp;
     }
-    setSeed(wi, DIM_UNDEF);
+    // without a seed only remember the layer; setSeed() would fill in seed 0
+    if (hasSeed)
+        setSeed(wi, DIM_UNDEF);
 }
 
 void MainWindow::onConditionsChanged()
 {
     std::vector<Condition> conds = formCond->getConditions();
     formGen48->updateAutoConditions(conds);
+    if (formControl)
+        formControl->invalidateResults();
 }
 
 void MainWindow::onConditionsSelect(const std::vector<Condition>& selection)
@@ -1474,6 +1677,7 @@ void MainWindow::onGen48Changed()
 {
     formGen48->updateCount();
     formControl->searchProgressReset();
+    applySearchMode();
 }
 
 void MainWindow::onSelectedSeedChanged(uint64_t seed)
@@ -1486,7 +1690,11 @@ void MainWindow::onSelectedSeedChanged(uint64_t seed)
 
 void MainWindow::onSearchStatusChanged(bool running)
 {
+    // the running search uses a snapshot of the filters; editing them would
+    // discard the results while the search keeps adding seeds for the old ones
     formGen48->setEnabled(!running);
+    formCond->setEnabled(!running);
+    ui->actionExtGen->setEnabled(!running);
 }
 
 void MainWindow::onUpdateConfig()
@@ -1495,9 +1703,8 @@ void MainWindow::onUpdateConfig()
     config.load();
     QThreadPool::globalInstance()->setMaxThreadCount(config.mapThreads);
 
-    int searchTab = ui->tabContainer->indexOf(ui->tabSearch);
-    if (searchTab >= 0)
-        ui->tabContainer->setTabVisible(searchTab, config.enableSeedFinding);
+    if (formControl && formGen48)
+        applySearchMode();
 
     QFont fnorm_old = ui->labelMC->font();
     QFont fmono_old = ui->labelMono->font();
@@ -1589,11 +1796,7 @@ void MainWindow::onUpdateMapConfig()
 
     if (!old.sameMapOpts(mconfig))
     {
-        for (int opt = 0; opt < D_STRUCT_NUM; opt++)
-        {
-            if (QAction *act = saction[opt])
-                act->setVisible(mconfig.enabled(opt));
-        }
+        updateStructureActions();
         if (getMapView()->world)
         {
             getMapView()->deleteWorld();
@@ -1692,6 +1895,12 @@ void MainWindow::onStyleChanged(int style)
     if (QStyle *fusion = QStyleFactory::create("Fusion"))
         qApp->setStyle(fusion);
     qApp->setPalette(palette);
+    // follow the text color, so the icons stay visible in the light theme
+    QColor iconColor(colors.muted);
+    if (settingsAction)
+        settingsAction->setIcon(pixelGearIcon(iconColor));
+    if (menuAction)
+        menuAction->setIcon(menuIcon(iconColor));
 
     QFile file(":/modern.qss");
     if (!file.open(QFile::ReadOnly))

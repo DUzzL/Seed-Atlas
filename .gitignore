@@ -3,6 +3,9 @@ build-*/
 dist/
 *.o
 *.a
+*.d
+/seedatlas-engine/test-versions
+/seedatlas-engine/test-versions.exe
 
 # Generated Windows application and deployment runtime
 /seed-atlas.exe

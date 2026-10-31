@@ -491,7 +491,7 @@ void LuaHighlighter::highlightBlock(const QString& text)
     else
         setCurrentBlockState(-1);
 
-    for (const Rule &rule : qAsConst(rules))
+    for (const Rule &rule : std::as_const(rules))
     {
         const QString *l = rule.overlay ? &text : &line;
         QRegularExpressionMatch m = rule.pattern.match(*l);

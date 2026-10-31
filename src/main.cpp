@@ -33,6 +33,8 @@
 #include <QThread>
 #include <QThreadPool>
 #include <QTimer>
+#include <QSpinBox>
+#include <QHeaderView>
 #include <QTextStream>
 #include <QTreeWidgetItem>
 #include <QTreeWidget>
@@ -1172,8 +1174,8 @@ int main(int argc, char *argv[])
         QThreadPool::globalInstance()->setMaxThreadCount(configuredThreadCount());
         Headless headless(sessionpath, resultspath, clear, &app);
 
-        QObject::connect(&headless, SIGNAL(finished()), &app, SLOT(quit()));
-        QTimer::singleShot(0, &headless, SLOT(run()));
+        QObject::connect(&headless, &Headless::finished, &app, &QCoreApplication::quit);
+        QTimer::singleShot(0, &headless, &Headless::run);
 
         return app.exec();
     }
@@ -1244,9 +1246,8 @@ int main(int argc, char *argv[])
                         if (option != D_GRID && option != D_SPAWN && mw.saction[option])
                             interactionOk = !mw.saction[option]->isChecked();
                     }
-                    // the search tab must start clean: no conditions, no
-                    // matching seeds and no running search; the whole tab is
-                    // hidden unless seed finding was enabled in the settings
+                    // the Seed Finder tab must start clean: no conditions, no
+                    // matching seeds and no running search; it is always shown
                     QListWidget *conditions = mw.findChild<QListWidget *>("listConditions");
                     QTableView *results = mw.findChild<QTableView *>("results");
                     QPushButton *startButton = mw.findChild<QPushButton *>("buttonStart");
@@ -1257,7 +1258,7 @@ int main(int argc, char *argv[])
                         && results && results->model() && results->model()->rowCount() == 0
                         && startButton && !startButton->isChecked()
                         && tabs && searchTab && tabs->indexOf(searchTab) >= 0
-                        && !tabs->isTabVisible(tabs->indexOf(searchTab));
+                        && tabs->isTabVisible(tabs->indexOf(searchTab));
                 }
                 const QByteArray testVersion = qgetenv("SEED_ATLAS_UI_VERSION");
                 if (!testVersion.isEmpty())
@@ -1383,6 +1384,66 @@ int main(int argc, char *argv[])
                             map->world->cachedBiomeIndex) &&
                         validIndex(map->world->cachedstruct,
                             map->world->cachedStructIndex);
+                }
+                if (qEnvironmentVariableIsSet("SEED_ATLAS_UI_TEST_AUDIT"))
+                {
+                    // Regression: changing filters must invalidate matching seeds and export.
+                    mw.formControl->searchResultsAdd({1234567}, false);
+                    interactionOk &= !mw.formControl->getResults().empty();
+                    QMetaObject::invokeMethod(mw.formCond, "changed", Qt::DirectConnection);
+                    interactionOk &= mw.formControl->getResults().empty();
+                    auto exportButton = mw.formControl->findChild<QPushButton *>("buttonExport");
+                    interactionOk &= exportButton && !exportButton->isEnabled();
+                    // Regression: short statistics headers and reachable full structure names.
+                    auto biomes = mw.findChild<TabBiomes *>();
+                    auto table = biomes->findChild<QTableView *>("table");
+                    interactionOk &= table && table->horizontalHeader()->sizeHint().height() < 80;
+                    auto structures = mw.findChild<TabStructures *>();
+                    auto tree = structures->findChild<QTreeWidget *>("treeStructs");
+                    interactionOk &= tree && tree->horizontalScrollBarPolicy() == Qt::ScrollBarAsNeeded;
+                    // Regression: minimum cannot exceed the square's total chunk count.
+                    auto slime = mw.findChild<TabSlime *>();
+                    auto spins = slime->findChildren<QSpinBox *>();
+                    interactionOk &= spins.size() == 2;
+                    if (spins.size() == 2) {
+                        spins[0]->setValue(3);
+                        interactionOk &= spins[1]->maximum() == 9;
+                        spins[1]->setValue(101);
+                        interactionOk &= spins[1]->value() == 9;
+                    }
+                    WorldInfo auditWorld;
+                    mw.getSeed(&auditWorld, false);
+                    auditWorld.mc = MC_NEWEST;
+                    auditWorld.seed = 1234567;
+                    mw.setSeed(auditWorld, DIM_OVERWORLD);
+                    QTabWidget *auditTabs = mw.findChild<QTabWidget *>("tabContainer");
+                    auditTabs->setCurrentWidget(slime);
+                    QList<QLineEdit *> coordinates;
+                    for (auto line : slime->findChildren<QLineEdit *>())
+                        if (!line->parentWidget()->inherits("QAbstractSpinBox"))
+                            coordinates.append(line);
+                    if (coordinates.size() == 4 && spins.size() == 2) {
+                        for (int i=0; i<4; ++i) coordinates[i]->setText(i<2 ? "-10" : "10");
+                        spins[1]->setValue(1);
+                        QMetaObject::invokeMethod(slime, "onStartClicked", Qt::DirectConnection);
+                        QElapsedTimer timeout; timeout.start();
+                        auto analysis = slime->findChild<AnalysisSlime *>();
+                        while (analysis && analysis->isRunning() && timeout.elapsed() < 5000)
+                            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+                        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+                        auto rows = slime->findChild<QTreeWidget *>();
+                        interactionOk &= rows && rows->topLevelItemCount() > 0;
+                        auditWorld.seed = 42;
+                        mw.setSeed(auditWorld, DIM_OVERWORLD);
+                        interactionOk &= rows && rows->topLevelItemCount() == 0;
+                    } else interactionOk = false;
+                    for (const char *name : {"village", "ancient_city", "treasure", "spawn"}) {
+                        auto icon = getPix(name, 20);
+                        interactionOk &= !icon.isNull() && icon.size() == QSize(20,20);
+                    }
+                    QTabWidget *tabs = mw.findChild<QTabWidget *>("tabContainer");
+                    for (int i=0; i<tabs->count(); ++i) tabs->setCurrentIndex(i);
+                    interactionOk &= mw.findChildren<QWidget *>("seedAtlasPageMotionOverlay").isEmpty();
                 }
                 bool saved = mw.grab().save(QString::fromLocal8Bit(snapshotPath));
                 app.exit(saved && interactionOk ? 0 : 2);

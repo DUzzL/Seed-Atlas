@@ -1,9 +1,11 @@
 #include "world.h"
 
+#include "terrainmap.h"
 #include "util.h"
 
 #include <QPainterPath>
 #include <QSettings>
+#include <QSet>
 #include <QThreadPool>
 
 #include <algorithm>
@@ -416,95 +418,14 @@ uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
     return count;
 }
 
-static QMutex g_mutex;
-
-static float cubic_hermite(float p[4], float u)
-{
-    float a = p[1];
-    float b = 0.5 * (-p[0] + p[2]);
-    float c = p[0] - 2.5*p[1] + 2*p[2] - 0.5*p[3];
-    float d = 0.5 * (-p[0] + 3*p[1] - 3*p[2] + p[3]);
-    return a + b*u + c*u*u + d*u*u*u;
-}
-
 void applyHeightShading(unsigned char *rgb, Range r,
         const Generator *g, const SurfaceNoise *sn, int stepbits, int mode,
         bool bicubic, const std::atomic_bool *abort)
 {
-    int bd = bicubic ? 1 : 0; // sampling border
-    int ps = stepbits; // bits in step size
-    int st = (1 << ps) - 1; // step mask
-    // the sampling spans [x-1, x+w+1), reduced to the stepped grid
-    int x = r.x, z = r.z, w = r.sx, h = r.sz;
-    int px = ((x-1) >> ps);
-    int pz = ((z-1) >> ps);
-    int pw = ((x+w+2+st) >> ps) - px + 1;
-    int ph = ((z+h+2+st) >> ps) - pz + 1;
-    if (bd)
-    {   // add border for cubic sampling
-        px -= bd; pz -= bd;
-        pw += 2*bd; ph += 2*bd;
-    }
-    std::vector<float> buf(pw * ph);
-    if (ps == 0 && r.scale <= 8 && g->dim == DIM_END)
-    {
-        mapEndSurfaceHeight(&buf[0], &g->en, sn, px, pz, pw, ph, r.scale, 0);
-        mapEndIslandHeight(&buf[0], &g->en, g->seed, px, pz, pw, ph, r.scale);
-    }
-    else if (ps == 0 && r.scale == 4)
-    {
-        mapApproxHeight(&buf[0], 0, g, sn, px, pz, pw, ph);
-    }
-    else
-    {
-        for (int j = 0; j < ph; j++)
-        {
-            for (int i = 0; i < pw; i++)
-            {
-                if (abort && *abort) return;
-                int samplex = (((px + i) << ps)) * r.scale / 4;
-                int samplez = (((pz + j) << ps)) * r.scale / 4;
-                float y = 0;
-                mapApproxHeight(&y, 0, g, sn, samplex, samplez, 1, 1);
-                buf[j*pw+i] = y;
-            }
-        }
-    }
-
-    // interpolate height
-    std::vector<float> height((w+2) * (h+2));
-    for (int j = 0; j < h+2; j++)
-    {
-        for (int i = 0; i < w+2; i++)
-        {
-            if (abort && *abort) return;
-            int pi = ((x + i - 1) >> ps) - px - bd;
-            int pj = ((z + j - 1) >> ps) - pz - bd;
-            float di = ((x + i - 1) & st) / (float)(st + 1);
-            float dj = ((z + j - 1) & st) / (float)(st + 1);
-            float v = 0;
-            if (bicubic)
-            {
-                float p[] = {
-                    cubic_hermite(&buf.at((pj+0)*pw + pi), di),
-                    cubic_hermite(&buf.at((pj+1)*pw + pi), di),
-                    cubic_hermite(&buf.at((pj+2)*pw + pi), di),
-                    cubic_hermite(&buf.at((pj+3)*pw + pi), di),
-                };
-                v = cubic_hermite(p, dj);
-            }
-            else // bilinear
-            {
-                float v00 = buf.at((pj+0)*pw + pi+0);
-                float v01 = buf.at((pj+0)*pw + pi+1);
-                float v10 = buf.at((pj+1)*pw + pi+0);
-                float v11 = buf.at((pj+1)*pw + pi+1);
-                v = lerp2(di, dj, v00, v01, v10, v11);
-            }
-            height[j*(w+2)+i] = v;
-        }
-    }
-    if (abort && *abort) return;
+    int w = r.sx, h = r.sz;
+    std::vector<float> height;
+    if (!sampleHeightGrid(height, r, g, sn, stepbits, bicubic, abort))
+        return;
     // apply shading based on height changes
     float mul = 0.25 / r.scale;
     float lout = 0.65;
@@ -581,6 +502,20 @@ void Quad::updateBiomeColor()
     {
         biomesToImage(rgb, g_biomeColors, biomes, r.sx, r.sz, 1, 1);
 
+        if (lopt.mode == LOPT_TERRAIN)
+        {
+            if (!terrainSampled && (dim == DIM_OVERWORLD || (dim == DIM_END && r.scale <= 8)))
+            {
+                // At 1:1 the heights come from the 1:4 grid, interpolated smoothly.
+                bool fine = dim == DIM_OVERWORLD && r.scale == 1;
+                int stepbits = fine ? 2 : scale >= 16 ? 1 : 0;
+                if (!sampleHeightGrid(terrainHeight, r, g, sn, stepbits, fine, isdel))
+                    return;
+            }
+            terrainSampled = true;
+            applyTerrainStyle(rgb, biomes, r, g->mc, dim, g->seed, terrainHeight);
+        }
+
         if (biomeHighlights.any())
         {
             for (int i = 0; i < r.sx * r.sz; i++)
@@ -607,7 +542,7 @@ void Quad::updateBiomeColor()
         // End biomes describe large regions and do not distinguish terrain
         // from the void. At the detailed map levels, use the actual End
         // surface to reveal the main island and the shapes of outer islands.
-        if (dim == DIM_END && r.scale <= 8)
+        if (dim == DIM_END && r.scale <= 8 && lopt.mode != LOPT_TERRAIN)
         {
             std::vector<float> height(r.sx * r.sz);
             if (mapEndSurfaceHeight(height.data(), &g->en, sn,
@@ -679,6 +614,14 @@ void Quad::run()
 
         rgb = new uchar[w*h * 3]();
         updateBiomeColor();
+        if (*isdel)
+        {   // interrupted: drop the half-colored tile so that it is redone
+            delete [] rgb;
+            rgb = nullptr;
+            free(biomes);
+            biomes = nullptr;
+            return;
+        }
         img = new QImage(rgb, w, h, 3*w, QImage::Format_RGB888);
     }
     else if (pixs < 0)
@@ -703,7 +646,13 @@ void Quad::run()
                 const int endCityVariant = sopt == D_ENDCITYSHIP ? 1 :
                     sopt == D_ENDCITY ? -1 : 0;
                 getStructs(st, sconf, wi, dim, x0, z0, x1, z1,
-                    lopt.mode == LOPT_STRUCTS, nullptr, endCityVariant);
+                    lopt.mode == LOPT_STRUCTS, isdel, endCityVariant);
+            }
+            if (*isdel)
+            {   // interrupted by QWorld::clear(), which then marks the quad as
+                // stopped so it gets generated again
+                delete st;
+                return;
             }
             spos = st;
         }
@@ -852,6 +801,7 @@ void Level::resizeLevel(std::vector<Quad*>& cache, int64_t x, int64_t z, int64_t
     // or to the cached queue if they are not inside the new grid
     std::vector<Quad*> grid(w*h);
     std::vector<Quad*> togen;
+    std::vector<Quad*> recolor;
 
     for (Quad *q : cells)
     {
@@ -872,6 +822,15 @@ void Level::resizeLevel(std::vector<Quad*>& cache, int64_t x, int64_t z, int64_t
             if (g == NULL)
             {
                 g = world->takeCachedQuad(cache, blocks, sopt, dim, x+i, z+j);
+                if (g)
+                {   // the levels are rebuilt on a dimension change, which
+                    // leaves the generator pointers of cached quads dangling
+                    g->g = &this->g;
+                    g->sn = &this->sn;
+                    if (g->recolor && g->done)
+                        recolor.push_back(g);
+                    g->recolor = false;
+                }
             }
             if (g == NULL)
             {
@@ -879,7 +838,7 @@ void Level::resizeLevel(std::vector<Quad*>& cache, int64_t x, int64_t z, int64_t
                 g->prio = sqdist(i-w/2, j-h/2);
                 togen.push_back(g);
             }
-            else if ((g->stopped || world->take(g)) && !g->done)
+            else if (!g->done && (g->stopped || world->take(g)))
             {
                 g->stopped = false;
                 g->prio = sqdist(i-w/2, j-h/2);
@@ -894,8 +853,7 @@ void Level::resizeLevel(std::vector<Quad*>& cache, int64_t x, int64_t z, int64_t
     {   // start the quad processing
         std::sort(togen.begin(), togen.end(),
                   [](Quad* a, Quad* b) { return a->prio < b->prio; });
-        for (Quad *q : togen)
-            world->add(q);
+        world->addSorted(togen);
         world->startWorkers();
     }
 
@@ -906,6 +864,11 @@ void Level::resizeLevel(std::vector<Quad*>& cache, int64_t x, int64_t z, int64_t
     th = h;
 
     world->mutex.unlock();
+
+    // finished quads are not touched by the workers, so the (possibly slow)
+    // recoloring does not need to hold up the queue
+    for (Quad *q : recolor)
+        q->updateBiomeColor();
 }
 
 void Level::update(std::vector<Quad*>& cache, qreal bx0, qreal bz0, qreal bx1, qreal bz1,
@@ -942,10 +905,12 @@ void MapWorker::run()
 {
     while (Scheduled *q = world->requestQuad())
     {
+        // Once run() has finished a quad, the GUI thread may delete it at any
+        // time (see QWorld::cleancache), so do not touch it afterwards.
+        const bool autoDelete = q->autoDelete();
         q->run();
-        if (q->done)
-            emit quadDone();
-        if (q->autoDelete())
+        emit quadDone();
+        if (autoDelete)
             delete q; // manual call to run() so delete manually as well
     }
 }
@@ -1046,6 +1011,12 @@ void QWorld::setDim(int dim, LayerOpt lopt)
         lcnt = 6;
         qual = 2.0;
     }
+    else if (lopt.mode == LOPT_TERRAIN)
+    {   // smaller tiles, as each pixel samples its own height
+        pixs = 128;
+        lcnt = 5;
+        qual = 2.0;
+    }
     else
     {
         pixs = 512;
@@ -1085,7 +1056,7 @@ int QWorld::getBiome(Pos p)
         p.x = floorDiv(p.x, scale);
         p.z = floorDiv(p.z, scale);
         if (scale != 1)
-            y /= 4;
+            y >>= 2; // floor like the tiles (wi.y >> 2), not towards zero
     }
 
     int id = getBiomeAt(g, scale, p.x, y, p.z);
@@ -1121,7 +1092,7 @@ QString QWorld::getBiomeName(Pos p)
         return c + "=" + QString::number(id);
     }
     QString ret = getBiomeDisplay(wi.mc, id);
-    if (lopt.mode == LOPT_HEIGHT)
+    if (lopt.mode == LOPT_HEIGHT || lopt.mode == LOPT_TERRAIN)
     {
         int y = estimateSurface(p);
         if (y > 0)
@@ -1145,16 +1116,26 @@ int QWorld::estimateSurface(Pos p)
     return (int) floor(y);
 }
 
+void QWorld::recolorCachedQuads()
+{
+    // Stop the workers first, so no tile is colored on two threads at once.
+    // This moves all tiles into the cache; interrupted ones are generated
+    // again with the new colors. Finished tiles are only marked here and get
+    // recolored when they are shown again (and with the generator of their
+    // own dimension, see Level::resizeLevel()).
+    clear();
+    for (Quad *q : cachedbiomes)
+    {
+        if (!q) continue;
+        q->biomeHighlights = biomeHighlights;
+        if (q->done)
+            q->recolor = true;
+    }
+}
+
 void QWorld::refreshBiomeColors()
 {
-    QMutexLocker locker(&g_mutex);
-    for (Level& l : lvb)
-    {
-        for (Quad *q : l.cells)
-            q->updateBiomeColor();
-    }
-    for (Quad *q : cachedbiomes)
-        if (q) q->updateBiomeColor();
+    recolorCachedQuads();
 }
 
 void QWorld::setBiomeHighlight(int biomeId)
@@ -1176,33 +1157,33 @@ void QWorld::setBiomeHighlights(const QVector<int>& biomeIds)
     if (biomeHighlights == highlights)
         return;
 
-    waitForIdle();
-    QMutexLocker locker(&g_mutex);
     biomeHighlights = highlights;
-    for (Level& l : lvb)
-    {
-        for (Quad *q : l.cells)
-        {
-            q->biomeHighlights = highlights;
-            q->updateBiomeColor();
-        }
-    }
-    for (Quad *q : cachedbiomes)
-    {
-        if (!q) continue;
-        q->biomeHighlights = highlights;
-        q->updateBiomeColor();
-    }
+    recolorCachedQuads();
 }
 
 void QWorld::clear()
 {
     mutex.lock();
+    Scheduled *dropped = queue;
     queue = nullptr;
     isdel = true;
     mutex.unlock();
     waitForIdle();
     isdel = false;
+
+    // Self-owned tasks are deleted by the worker after they run; free the
+    // ones that never started.
+    while (dropped)
+    {
+        Scheduled *next = dropped->next;
+        if (dropped->autoDelete())
+            delete dropped;
+        dropped = next;
+    }
+    // A spawn/stronghold task that never ran or was interrupted has to be
+    // scheduled again, otherwise these markers stay missing for this world.
+    if (spawn == (Pos*)-1)
+        spawn = nullptr;
 
     for (Level& l : lvb)
         l.setInactive(cachedbiomes);
@@ -1243,6 +1224,21 @@ bool QWorld::isBusy()
         if (w.isRunning())
             return true;
     return false;
+}
+
+void QWorld::addSorted(const std::vector<Quad*>& sorted)
+{
+    // merge the quads, sorted by priority, into the queue in a single pass
+    // (inserting them one at a time is quadratic for large views)
+    Scheduled **link = &queue;
+    for (Quad *q : sorted)
+    {
+        while (*link && (*link)->prio < q->prio)
+            link = &(*link)->next;
+        q->next = *link;
+        *link = q;
+        link = &q->next;
+    }
 }
 
 void QWorld::add(Scheduled *q)
@@ -1413,7 +1409,8 @@ struct SpawnStronghold : public Scheduled
         Pos *p = new Pos;
         *p = getSpawn(&g);
         world->spawn = p;
-        if (world->isdel) return;
+        if (world->isdel)
+            return abort();
 
         StrongholdIter sh;
         initFirstStronghold(&sh, wi.mc, wi.seed);
@@ -1424,7 +1421,7 @@ struct SpawnStronghold : public Scheduled
         while (nextStronghold(&sh, &g) > 0)
         {
             if (world->isdel)
-                return;
+                return abort();
             PosElement *shp;
             (*shpp) = shp = new PosElement(sh.pos);
             shpp = &shp->next;
@@ -1436,8 +1433,23 @@ struct SpawnStronghold : public Scheduled
             findQuadStructs(Swamp_Hut, &g, qsinfo);
         if (!world->isdel)
             findQuadStructs(Monument, &g, qsinfo);
+        if (world->isdel)
+        {
+            delete qsinfo;
+            return abort();
+        }
 
         world->qsinfo = qsinfo;
+    }
+
+    void abort()
+    {   // Interrupted by QWorld::clear(), which waits for the workers on the
+        // GUI thread, so nothing paints with the partial results right now.
+        // Free them and let the next update start over.
+        Pos *p = world->spawn.fetchAndStoreOrdered(nullptr);
+        if (p && p != (Pos*)-1)
+            delete p;
+        delete world->strongholds.fetchAndStoreOrdered(nullptr);
     }
 };
 
@@ -1451,12 +1463,13 @@ static bool draw_grid_rec(QPainter& painter, QColor col, QRect &rec, qreal pix, 
     QString s = QString::asprintf("%" PRId64 ",%" PRId64, x, z);
     QRect textrec = painter.fontMetrics()
             .boundingRect(rec, Qt::AlignLeft | Qt::AlignTop, s);
-    if (textrec.width() > pix)
+    const int gap = 8; // keeps labels of neighbouring cells apart
+    if (textrec.width() + gap > pix)
     {
         s.replace(",", "\n");
         textrec = painter.fontMetrics()
                 .boundingRect(rec, Qt::AlignLeft | Qt::AlignTop, s);
-        if (textrec.width() > pix)
+        if (textrec.width() + gap > pix)
             return false;
     }
 
@@ -1471,6 +1484,12 @@ static bool draw_grid_rec(QPainter& painter, QColor col, QRect &rec, qreal pix, 
         textrec.moveRight(vp.right());
     if (textrec.bottom() > vp.bottom())
         textrec.moveBottom(vp.bottom());
+    // a label pushed out of the visible part of its cell would run into the
+    // neighbour's label
+    const QRect visible = rec.intersected(vp);
+    if (textrec.top() < vp.top() + 32 ||
+        !visible.contains(textrec) || textrec.width() + gap > visible.width())
+        return false;
 
     painter.fillRect(textrec, QBrush(QColor(0, 0, 0, 128), Qt::SolidPattern));
 
@@ -1570,12 +1589,15 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
         long x = floor(bx0 / 16), w = floor(bx1 / 16) - x + 1;
         long z = floor(bz0 / 16), h = floor(bz1 / 16) - z + 1;
 
-        // conditions when the slime overlay should be updated
+        int pad = (int)(20 / blocks2pix); // 20*16 pixels movement before recalc
+
+        // update the slime overlay when the view leaves it, or when it has
+        // become much larger than needed after zooming in (comparing against
+        // the view size alone rebuilt it on every frame for larger windows)
         if (x < slimex || z < slimez ||
             x+w >= slimex+slimeimg.width() || z+h >= slimez+slimeimg.height() ||
-            w*h*4 >= slimeimg.width()*slimeimg.height())
+            (int64_t)slimeimg.width() * slimeimg.height() > 16 * (int64_t)(w+2*pad) * (h+2*pad))
         {
-            int pad = (int)(20 / blocks2pix); // 20*16 pixels movement before recalc
             x -= pad;
             z -= pad;
             w += 2*pad;
@@ -1588,11 +1610,9 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
 
             for (int j = 0; j < h; j++)
             {
+                uchar *line = slimeimg.scanLine(j);
                 for (int i = 0; i < w; i++)
-                {
-                    int isslime = isSlimeChunk(wi.seed, i+x, j+z);
-                    slimeimg.setPixel(i, j, isslime);
-                }
+                    line[i] = isSlimeChunk(wi.seed, i+x, j+z);
             }
         }
 
@@ -1609,7 +1629,7 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
 
     if (showBB && blocks2pix >= 1.0 && qsinfo && dim == 0)
     {
-        for (QuadInfo qi : qAsConst(*qsinfo))
+        for (QuadInfo qi : std::as_const(*qsinfo))
         {
             if (qi.typ == Swamp_Hut && !sshow[D_HUT])
                 continue;
@@ -1704,8 +1724,8 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
         }
 
         std::map<const QPixmap*, std::vector<QPainter::PixmapFragment>> frags;
-        bool imgbuf_used = false;
-        imgbuf.fill(0);
+        QSet<quint64> oreCells;
+        bool imgbuf_used = false; // cleared on first use, only geodes draw into it
 
         for (Quad *q : l.cells)
         {
@@ -1724,6 +1744,16 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
                     y < -rec.height() || y >= vh+rec.width())
                 {
                     continue;
+                }
+
+                if (sopt == D_OREVEIN)
+                {
+                    const int spacing = qMax(24, icon.width() + 6);
+                    const quint64 cell = (quint64(quint32(int(x) / spacing)) << 32)
+                        | quint32(int(y) / spacing);
+                    if (oreCells.contains(cell))
+                        continue;
+                    oreCells.insert(cell);
                 }
 
                 if (showBB && blocks2pix > 0.5)
@@ -1800,8 +1830,12 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
                             int z = floor(d.y() + j);
                             if (imgbuf.rect().contains(x, z))
                             {
+                                if (!imgbuf_used)
+                                {
+                                    imgbuf.fill(0);
+                                    imgbuf_used = true;
+                                }
                                 imgbuf.setPixel(x, z, q >= 2 ? 1 : 2);
-                                imgbuf_used = true;
                             }
                         }
                     }
@@ -1970,7 +2004,9 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
     if (activelv >= (int)lvb.size()-1)
         activelv = lvb.size() - 1;
     int pixs = lvb[activelv].pixs;
-    unsigned int cachesize = memlimit / pixs / pixs / (3+4); // sizeof(RGB) + sizeof(biome_id)
+    // sizeof(RGB) + sizeof(biome_id), plus up to one float height per pixel for terrain tiles
+    unsigned int pixbytes = lopt.mode == LOPT_TERRAIN ? 3+4+4 : 3+4;
+    unsigned int cachesize = memlimit / pixs / pixs / pixbytes;
 
     cleancache(cachedbiomes, cachesize);
     cleancache(cachedstruct, cachesize);

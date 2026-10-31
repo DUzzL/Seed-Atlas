@@ -5,6 +5,7 @@
 #include "mainwindow.h"
 #include "message.h"
 #include "util.h"
+#include "widgets.h"
 
 #include <QBuffer>
 #include <QByteArray>
@@ -34,6 +35,12 @@ BiomeColorDialog::BiomeColorDialog(MainWindow *parent, QString initrc, int mc, i
     connect(ui->buttonSaveAs, &QPushButton::clicked, this, &BiomeColorDialog::onSaveAs);
     connect(ui->buttonExport, &QPushButton::clicked, this, &BiomeColorDialog::onExport);
     connect(ui->buttonBox, &QDialogButtonBox::accepted, this, &BiomeColorDialog::onAccept);
+    connect(ui->buttonBox, &QDialogButtonBox::rejected, this, &BiomeColorDialog::reject);
+
+    helpButton = new QPushButton(this);
+    styleInfoButton(helpButton);
+    connect(helpButton, &QPushButton::clicked, this, &BiomeColorDialog::onColorHelp);
+    ui->gridLayout_2->addWidget(helpButton, 0, 3);
 
     memcpy(colors, g_biomeColors, sizeof(colors));
     memset(buttons, 0, sizeof(buttons));
@@ -286,9 +293,30 @@ void BiomeColorDialog::editBiomeColor(int id)
     dialog->show();
 }
 
+// The "[default]" entry has no data, so findData() cannot find an empty path.
+int BiomeColorDialog::colormapIndex(const QString& rc) const
+{
+    return rc.isEmpty() ? 0 : ui->comboColormaps->findData(rc);
+}
+
 void BiomeColorDialog::on_comboColormaps_currentIndexChanged(int index)
 {
     const QString requested = qvariant_cast<QString>(ui->comboColormaps->itemData(index));
+    if (modified)
+    {   // never write or drop the edited colors without asking
+        int button = QMessageBox::question(this, tr("Biome Colors"),
+            tr("The current biome colors were changed. Save them before switching?"),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        if (button == QMessageBox::Cancel)
+        {
+            QSignalBlocker blocker(ui->comboColormaps);
+            ui->comboColormaps->setCurrentIndex(
+                colormapIndex(activerc));
+            return;
+        }
+        if (button == QMessageBox::Discard)
+            modified = false;
+    }
     if (modified)
     {
         if (activerc.isEmpty())
@@ -296,7 +324,7 @@ void BiomeColorDialog::on_comboColormaps_currentIndexChanged(int index)
             {
                 QSignalBlocker blocker(ui->comboColormaps);
                 ui->comboColormaps->setCurrentIndex(
-                    ui->comboColormaps->findData(activerc));
+                    colormapIndex(activerc));
             }
             if (!saveAsColormap(false))
                 return;
@@ -306,7 +334,7 @@ void BiomeColorDialog::on_comboColormaps_currentIndexChanged(int index)
             warn(this, tr("Failed to save biome colors."));
             QSignalBlocker blocker(ui->comboColormaps);
             ui->comboColormaps->setCurrentIndex(
-                ui->comboColormaps->findData(activerc));
+                colormapIndex(activerc));
             return;
         }
     }
@@ -314,7 +342,7 @@ void BiomeColorDialog::on_comboColormaps_currentIndexChanged(int index)
     {
         QSignalBlocker blocker(ui->comboColormaps);
         ui->comboColormaps->setCurrentIndex(
-            ui->comboColormaps->findData(requested));
+            colormapIndex(requested));
     }
     ui->buttonRemove->setEnabled(!requested.isEmpty());
     activerc = requested;
@@ -418,10 +446,18 @@ void BiomeColorDialog::onRemove()
     QString rc = qvariant_cast<QString>(ui->comboColormaps->currentData());
     if (!rc.isEmpty())
     {
+        if (QMessageBox::question(this, tr("Remove Biome Colors"),
+                tr("Delete the color map \"%1\"? This cannot be undone.")
+                    .arg(ui->comboColormaps->currentText())) != QMessageBox::Yes)
+            return;
         modified = false; // discard changes
         ui->comboColormaps->removeItem(ui->comboColormaps->currentIndex());
         QFile file(rc);
         file.remove();
+        // the map must not keep pointing at the deleted file; fall back to
+        // the default colors rather than the entry the combo box moved on to
+        if (mainwindow->config.biomeColorPath == rc)
+            emit yieldBiomeColorRc(QString());
     }
 }
 
@@ -442,6 +478,14 @@ void BiomeColorDialog::onAccept()
     }
     emit yieldBiomeColorRc(activerc);
     accept();
+}
+
+void BiomeColorDialog::reject()
+{   // Cancel, Escape and the window's close button
+    if (modified && QMessageBox::question(this, tr("Biome Colors"),
+            tr("Discard the changed biome colors?")) != QMessageBox::Yes)
+        return;
+    QDialog::reject();
 }
 
 void BiomeColorDialog::onImport()
@@ -470,11 +514,8 @@ void BiomeColorDialog::onImport()
 
 void BiomeColorDialog::onColorHelp()
 {
-    QMessageBox *mb = new QMessageBox(this);
-    mb->setAttribute(Qt::WA_DeleteOnClose);
-    mb->setIcon(QMessageBox::Information);
-    mb->setWindowTitle(tr("Help: custom biome colors"));
-    mb->setText(tr(
+    InfoPopup::toggle(helpButton, tr("Help: custom biome colors"),
+        tr(
         "<html><head/><body><p>"
         "<b>Custom biome colors</b> should be defined in an ASCII text file, "
         "with one biome-color mapping per line. Each mapping should consist "
@@ -489,7 +530,6 @@ void BiomeColorDialog::onColorHelp()
         "128&nbsp;[255&nbsp;255&nbsp;0]"
         "</p></body></html>"
         ));
-    mb->show();
 }
 
 void BiomeColorDialog::onAllToDefault()

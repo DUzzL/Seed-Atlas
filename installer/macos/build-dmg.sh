@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:-4.2.dev0}"
+version="${1:-4.3.dev0}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "$script_dir/../.." && pwd)"
 build_dir="$project_root/build-macos"
@@ -74,6 +74,9 @@ else
   if [[ "${SEED_ATLAS_UNIVERSAL:-0}" == "1" ]]; then
     qmake_args+=(QMAKE_APPLE_DEVICE_ARCHS="x86_64 arm64")
   fi
+  # Engine objects live in the source tree; drop any left over from other
+  # builds so the release links objects built for the requested architectures.
+  make -C "$project_root/seedatlas-engine" clean
   "$qt_prefix/bin/qmake" "${qmake_args[@]}" "$project_root/seed-atlas.pro"
   make -j"$(sysctl -n hw.logicalcpu)"
 

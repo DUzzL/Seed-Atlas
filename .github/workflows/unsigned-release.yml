@@ -6,14 +6,14 @@ name: Unsigned release (Windows + Linux)
 on:
   push:
     branches:
-      - release-4.2.dev0
+      - release-4.3.dev0
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  SEED_ATLAS_VERSION: 4.2.dev0
+  SEED_ATLAS_VERSION: 4.3.dev0
   # Must match the ID used for the macOS DMG of this release. Do not change
   # without repackaging every platform.
   SEED_ATLAS_BUILD_ID: 3bb0471645dd4ac7c139c1aa09649335417ed318

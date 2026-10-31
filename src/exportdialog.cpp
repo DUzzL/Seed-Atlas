@@ -148,15 +148,15 @@ ExportDialog::ExportDialog(MainWindow *parent)
     ui->lineEditX2->setValidator(intval);
     ui->lineEditZ2->setValidator(intval);
 
-    connect(mainwindow, SIGNAL(mapUpdated()), this, SLOT(update()));
-    connect(ui->lineEditX1, SIGNAL(editingFinished()), this, SLOT(update()));
-    connect(ui->lineEditZ1, SIGNAL(editingFinished()), this, SLOT(update()));
-    connect(ui->lineEditX2, SIGNAL(editingFinished()), this, SLOT(update()));
-    connect(ui->lineEditZ2, SIGNAL(editingFinished()), this, SLOT(update()));
-    connect(ui->comboSeed, SIGNAL(activated(int)), this, SLOT(update()));
-    connect(ui->comboScale, SIGNAL(activated(int)), this, SLOT(update()));
-    connect(ui->comboTileSize, SIGNAL(activated(int)), this, SLOT(update()));
-    connect(ui->groupTiled, SIGNAL(toggled(bool)), this, SLOT(update()));
+    connect(mainwindow, &MainWindow::mapUpdated, this, &ExportDialog::update);
+    connect(ui->lineEditX1, &QLineEdit::editingFinished, this, &ExportDialog::update);
+    connect(ui->lineEditZ1, &QLineEdit::editingFinished, this, &ExportDialog::update);
+    connect(ui->lineEditX2, &QLineEdit::editingFinished, this, &ExportDialog::update);
+    connect(ui->lineEditZ2, &QLineEdit::editingFinished, this, &ExportDialog::update);
+    connect(ui->comboSeed, &QComboBox::activated, this, &ExportDialog::update);
+    connect(ui->comboScale, &QComboBox::activated, this, &ExportDialog::update);
+    connect(ui->comboTileSize, &QComboBox::activated, this, &ExportDialog::update);
+    connect(ui->groupTiled, &QGroupBox::toggled, this, &ExportDialog::update);
 
     QSettings settings(appSettingsId(), appSettingsId());
 
@@ -187,7 +187,7 @@ ExportDialog::ExportDialog(MainWindow *parent)
 ExportDialog::~ExportDialog()
 {
     cancel();
-    for (ExportWorker *worker : qAsConst(workers))
+    for (ExportWorker *worker : std::as_const(workers))
     {
         worker->wait();
         delete worker;
@@ -250,7 +250,7 @@ void ExportDialog::onWorkerFinished()
     QZipWriter zipwriter(&buffer);
     zipwriter.setCompressionPolicy(QZipWriter::AutoCompress);
 
-    for (const QString& fnam : qAsConst(paths))
+    for (const QString& fnam : std::as_const(paths))
     {
         QFile file(fnam);
         if (file.open(QFile::ReadOnly))
@@ -366,7 +366,7 @@ void ExportDialog::on_buttonBox_clicked(QAbstractButton *button)
 
     if (b == QDialogButtonBox::Ok)
     {
-        for (ExportWorker *worker : qAsConst(workers))
+        for (ExportWorker *worker : std::as_const(workers))
             if (worker->isRunning())
                 return;
 
@@ -538,5 +538,13 @@ void ExportDialog::on_buttonBox_clicked(QAbstractButton *button)
 
         progress->show();
         startWorkers();
+
+        // OK is not wired to accept(): since Qt 6.3 that deletes a dialog with
+        // WA_DeleteOnClose, and the destructor would cancel the export. Keep
+        // the dialog hidden until the workers are done instead.
+        setResult(QDialog::Accepted);
+        hide();
+        connect(this, &ExportDialog::exportFinished, this, &QObject::deleteLater,
+            Qt::UniqueConnection);
     }
 }

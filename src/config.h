@@ -86,6 +86,7 @@ enum {
     LOPT_BETA_T_1,
     LOPT_BETA_H_1,
     LOPT_HEIGHT,
+    LOPT_TERRAIN,
     LOPT_STRUCTS,
     LOPT_MAX,
 };
@@ -186,7 +187,7 @@ struct Config
     bool restoreSession;
     bool restoreWindow;
     bool checkForUpdates;
-    bool enableSeedFinding;
+    bool advancedSearch; // show the expert seed finding options
     int autosaveCycle;
     int uistyle;
     int maxMatching;

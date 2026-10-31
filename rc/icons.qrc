@@ -41,6 +41,10 @@
         <file>icons/slime_d.png</file>
         <file>icons/slime.png</file>
         <file>icons/search.png</file>
+        <file>icons/arrow_down.png</file>
+        <file>icons/arrow_down@2x.png</file>
+        <file>icons/arrow_up.png</file>
+        <file>icons/arrow_up@2x.png</file>
         <file>icons/cancel.png</file>
         <file>icons/clear.png</file>
         <file>icons/info.png</file>

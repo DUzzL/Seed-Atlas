@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "4.2.dev0",
+    [string]$Version = "4.3.dev0",
     [string]$QtBin = "C:\Qt\6.8.3\mingw_64\bin",
     [string]$MingwBin = "C:\Qt\Tools\mingw1310_64\bin",
     [string]$InnoCompiler = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
@@ -36,6 +36,11 @@ $oldPath = $env:PATH
 try {
     $env:PATH = "$MingwBin;$QtBin;$oldPath"
     Push-Location $build
+    # Engine objects live in the source tree; drop any left over from
+    # development builds so the release links freshly built ones.
+    Get-ChildItem -LiteralPath (Join-Path $projectRoot "seedatlas-engine") -File |
+        Where-Object { $_.Extension -in @(".o", ".a", ".d") } |
+        Remove-Item -Force
     & $qmake -o Makefile "CONFIG+=release" "SEED_ATLAS_BUILD_ID=$buildId" (Join-Path $projectRoot "seed-atlas.pro")
     if ($LASTEXITCODE -ne 0) { throw "qmake failed with exit code $LASTEXITCODE" }
     & $make "-j$([Environment]::ProcessorCount)"
@@ -68,7 +73,7 @@ foreach ($file in @("seed-atlas.pro", "buildguide.md", "README.md", "LICENSE", "
     Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination $sourceFolder
 }
 Get-ChildItem -LiteralPath (Join-Path $sourceFolder "seedatlas-engine") -File |
-    Where-Object { $_.Extension -in @(".o", ".a", ".exe") } |
+    Where-Object { $_.Extension -in @(".o", ".a", ".d", ".exe") } |
     Remove-Item -Force
 Compress-Archive -Path $sourceFolder -DestinationPath $sourceArchive -CompressionLevel Optimal
 Remove-Item -LiteralPath $sourceStage -Recurse -Force

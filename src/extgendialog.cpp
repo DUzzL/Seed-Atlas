@@ -42,16 +42,24 @@ ExtGenDialog::ExtGenDialog(QWidget *parent, ExtGenConfig *extgen)
     for (size_t i = 0; i < sizeof(stv)/sizeof(stv[0]); i++)
     {
         int st = stv[i];
-        grid->addWidget((checkSalts[st] = new QCheckBox(struct2str(st))), i, 0);
-        grid->addWidget((lineSalts[st] = new QLineEdit()), i, 1);
+        // "jungle_pyramid" -> "Jungle pyramid"
+        QString name = QString(struct2str(st)).replace('_', ' ');
+        if (!name.isEmpty())
+            name[0] = name[0].toUpper();
+        // two columns keep the dialog within the screen height
+        int row = i / 2, col = (i % 2) * 2;
+        grid->addWidget((checkSalts[st] = new QCheckBox(name)), row, col + 0);
+        grid->addWidget((lineSalts[st] = new QLineEdit()), row, col + 1);
         connect(checkSalts[st], &QCheckBox::toggled, this, &ExtGenDialog::updateToggles);
     }
 
     Pos dummy;
     if (!getStructurePos(Feature, INT_MAX, 0, 0, 0, &dummy))
     {
-        // the generation engine was not built with salt override support
-        ui->groupSalts->setEnabled(false);
+        // the generation engine was not built with salt override support,
+        // so the whole list would only be dead controls
+        ui->groupSalts->setVisible(false);
+        adjustSize();
     }
 
     initSettings(extgen);
@@ -107,7 +115,7 @@ ExtGenConfig ExtGenDialog::getSettings()
         uint64_t salt;
         salt = lineSalts[i]->text().toULongLong(&ok);
 
-        if (checkSalts[i]->isChecked())
+        if (checkSalts[i]->isChecked() && ok)
             extgen.salts[i] = salt;
         else if (ok)
             extgen.salts[i] = salt | (1ULL << 63);

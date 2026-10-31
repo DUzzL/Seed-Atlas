@@ -31,6 +31,7 @@ private:
     void registerStack(QStackedWidget *stack);
     void animatePage(QWidget *page, int direction = 0);
     void animatePopup(QWidget *popup);
+    void forgetPopup(QObject *popup);
     bool shouldAnimatePopup(const QWidget *widget) const;
 
     bool enabled;

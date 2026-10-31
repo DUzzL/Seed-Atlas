@@ -64,6 +64,9 @@ private:
     QSpinBox *spinWindow, *spinMinimum;
     QTreeWidget *results;
     QPushButton *pushStart, *pushExport;
+    class QLabel *labelStatus;
+    class QLabel *labelDimension; // shown outside the Overworld
+    QWidget *body;
 };
 
 #endif // TABSLIME_H

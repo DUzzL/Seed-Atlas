@@ -44,3 +44,10 @@ complete Seed Atlas source and build instructions.
 
 `D3Dcompiler_47.dll` is a Microsoft redistributable component and remains
 subject to Microsoft's applicable redistribution terms.
+
+## Minecraft structure icons
+
+Structure marker textures include Minecraft Java 26.3 block, item and entity
+textures owned by Mojang/Microsoft, composed using the mappings in
+https://github.com/DUzzL/seed-atlas-xaero . See rc/icons/ICON_SOURCES.md.
+These game assets are not covered by the application code license.

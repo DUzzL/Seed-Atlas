@@ -416,7 +416,7 @@ void Config::reset()
     restoreSession = true;
     restoreWindow = false;
     checkForUpdates = true;
-    enableSeedFinding = false;
+    advancedSearch = false;
     autosaveCycle = 10;
     uistyle = STYLE_SYSTEM;
     maxMatching = 65536;
@@ -447,7 +447,7 @@ void Config::load(QSettings& settings)
     restoreSession = settings.value("config/restoreSession", restoreSession).toBool();
     restoreWindow = settings.value("config/restoreWindow", restoreWindow).toBool();
     checkForUpdates = settings.value("updater/enabled", checkForUpdates).toBool();
-    enableSeedFinding = settings.value("config/enableSeedFinding", enableSeedFinding).toBool();
+    advancedSearch = settings.value("config/advancedSearch", advancedSearch).toBool();
     autosaveCycle = qBound(0, settings.value("config/autosaveCycle", autosaveCycle).toInt(), 120);
     uistyle = qBound(int(STYLE_SYSTEM),
         settings.value("config/uistyle", uistyle).toInt(), int(STYLE_LIGHT));
@@ -484,7 +484,8 @@ void Config::save(QSettings& settings)
     settings.setValue("config/restoreWindow", restoreWindow);
     settings.setValue("updater/enabled", checkForUpdates);
     settings.remove("config/checkForUpdates");
-    settings.setValue("config/enableSeedFinding", enableSeedFinding);
+    settings.remove("config/enableSeedFinding"); // the Seed Finder is always shown
+    settings.setValue("config/advancedSearch", advancedSearch);
     settings.setValue("config/autosaveCycle", autosaveCycle);
     settings.setValue("config/uistyle", uistyle);
     settings.setValue("config/maxMatching", maxMatching);

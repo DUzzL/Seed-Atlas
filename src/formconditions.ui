@@ -84,13 +84,6 @@
        </property>
       </widget>
      </item>
-     <item>
-      <widget class="QPushButton" name="buttonAddFilter">
-       <property name="text">
-        <string>Add</string>
-       </property>
-      </widget>
-     </item>
     </layout>
    </item>
   </layout>

@@ -45,7 +45,7 @@ QString Condition::summary(bool aligntab) const
     {
         QByteArray txta = QByteArray(text, sizeof(text));
         txta.resize(qstrlen(txta));
-        txts = QString::fromLocal8Bit(txta);
+        txts = QString::fromUtf8(txta); // written as UTF-8 by AddFilterDialog
     }
     else
     {
@@ -221,6 +221,14 @@ bool Condition::readHex(const QString& hex)
             type >= 0 && type < FILTER_MAX;
     if (ok)
         ok = versionUpgrade();
+    // Session, preset and clipboard data are not limited by the condition
+    // editor. The instance count bounds the writes into the fixed position
+    // buffers (except for temperatures, where it is a sum of categories) and
+    // the biome id indexes the 256-entry biome tables.
+    if (ok && (count < 0 || (type != F_TEMPS && count >= MAX_INSTANCES)))
+        ok = false;
+    if (ok && (biomeId < 0 || biomeId > 255))
+        ok = false;
     return ok;
 }
 
@@ -323,6 +331,10 @@ QString SearchThreadEnv::init(int mc, bool large, const ConditionTree& condtree)
 
 void SearchThreadEnv::setSeed(uint64_t seed)
 {
+    // checkForBiomes() reseeds the generator without init4Dim(), so the
+    // surface noise cannot rely on the generator state to notice a new seed
+    if (seed != this->seed)
+        this->surfdim = DIM_UNDEF;
     this->seed = seed;
     this->octaves = 0;
 }
@@ -397,7 +409,8 @@ int _testTreeAt(
         st = COND_FAILED;
         {   // run a spiral iterator over the rectangle
             int step = c.step ? c.step : 512;
-            int rmax, x1, z1, x2, z2;
+            int x1, z1, x2, z2;
+            int64_t rmax; // squared radius, exceeds the int range beyond 46340
             if (c.rmax > 0)
             {
                 rmax = c.rmax - 1;
@@ -706,13 +719,11 @@ int testTreeAt(
 }
 
 
-static const QuadInfo *getQHInfo(uint64_t cst)
+// The quad tables are built once on first use; a function-local static is
+// initialized thread-safely, so the lookups in the search hot path need no lock.
+static std::map<uint64_t, QuadInfo> buildQHInfo()
 {
-    static std::map<uint64_t, QuadInfo> qh_info;
-    static QMutex mutex;
-
-    mutex.lock();
-    if (qh_info.size() == 0)
+    std::map<uint64_t, QuadInfo> qh_info;
     {
         StructureConfig sc;
         getStructureConfig(Swamp_Hut, MC_NEWEST, &sc);
@@ -751,8 +762,12 @@ static const QuadInfo *getQHInfo(uint64_t cst)
             }
         }
     }
-    mutex.unlock();
+    return qh_info;
+}
 
+static const QuadInfo *getQHInfo(uint64_t cst)
+{
+    static const std::map<uint64_t, QuadInfo> qh_info = buildQHInfo();
     auto it = qh_info.find(cst);
     if (it == qh_info.end())
         return nullptr;
@@ -760,13 +775,9 @@ static const QuadInfo *getQHInfo(uint64_t cst)
         return &it->second;
 }
 
-static const QuadInfo *getQMInfo(uint64_t s48)
+static std::map<uint64_t, QuadInfo> buildQMInfo()
 {
-    static std::map<uint64_t, QuadInfo> qm_info;
-    static QMutex mutex;
-
-    mutex.lock();
-    if (qm_info.size() == 0)
+    std::map<uint64_t, QuadInfo> qm_info;
     {
         StructureConfig sc;
         getStructureConfig(Monument, MC_NEWEST, &sc);
@@ -787,8 +798,12 @@ static const QuadInfo *getQMInfo(uint64_t s48)
             qi->typ = Monument;
         }
     }
-    mutex.unlock();
+    return qm_info;
+}
 
+static const QuadInfo *getQMInfo(uint64_t s48)
+{
+    static const std::map<uint64_t, QuadInfo> qm_info = buildQMInfo();
     auto it = qm_info.find(s48);
     if (it == qm_info.end())
         return nullptr;
@@ -995,7 +1010,7 @@ struct sample_boime_t
 {
     const Condition *cond;
     Pos at;
-    int rmaxsq;
+    int64_t rmaxsq; // the squared radius can exceed the int range
     int n;
     int64_t xsum;
     int64_t zsum;
@@ -1247,7 +1262,10 @@ L_qm_any:
             s = moveStructure(env->seed, -rx, -rz);
             if (qmonumentQual(s + sconf.salt) < qual)
                 continue;
-            const QuadInfo *qi = getQMInfo(s + sconf.salt);
+            // a large custom salt can carry the sum past 48 bits
+            const QuadInfo *qi = getQMInfo((s + sconf.salt) & MASK48);
+            if (!qi)
+                continue;
             pc.x = (rx << 9) + qi->afk.x;
             pc.z = (rz << 9) + qi->afk.z;
 
@@ -1465,41 +1483,35 @@ L_qm_any:
         rx2 = x2 >> 4;
         rz2 = z2 >> 4;
 
+        // getMineshafts() returns the total count, but stores at most nout
+        icnt = getMineshafts(env->mc, env->seed, rx1, rz1, rx2, rz2, &p[0], MAX_INSTANCES);
+        if (icnt > MAX_INSTANCES)
+            icnt = MAX_INSTANCES;
+
         if (imax && cond->count > 0)
         {   // just check there are at least *inst (== cond->count) instances
-            *imax = icnt =
-                getMineshafts(env->mc, env->seed, rx1, rz1, rx2, rz2, cent, *imax);
-            if (rmax)
-            {   // filter out the instances that are outside the radius
-                int j = 0;
-                for (int i = 0; i < icnt; i++)
+            // within the radius, ignoring the origin instance if requested
+            int j = 0;
+            for (int i = 0; i < icnt && j < *imax; i++)
+            {
+                if (rmax)
                 {
                     int dx = p[i].x - at.x;
                     int dz = p[i].z - at.z;
                     int64_t rsq = dx*(int64_t)dx + dz*(int64_t)dz;
-                    if (rsq < rmax)
-                        cent[j++] = cent[i];
+                    if (rsq >= rmax)
+                        continue;
                 }
-                *imax = icnt = j;
+                if (cond->skipref && p[i].x == at.x && p[i].z == at.z)
+                    continue;
+                cent[j++] = p[i];
             }
-            if (cond->skipref && icnt > 0)
-            {   // remove origin instance
-                for (int i = 0; i < icnt; i++)
-                {
-                    if (cent[i].x == at.x && cent[i].z == at.z)
-                    {
-                        cent[i] = cent[icnt-1];
-                        *imax = --icnt;
-                        break;
-                    }
-                }
-            }
+            *imax = icnt = j;
             if (icnt >= cond->count)
                 return COND_OK;
         }
         else
         {   // we need the average position of all instances
-            icnt = getMineshafts(env->mc, env->seed, rx1, rz1, rx2, rz2, &p[0], MAX_INSTANCES);
             if (icnt < cond->count)
                 return COND_FAILED;
             xt = zt = 0;
@@ -1508,8 +1520,8 @@ L_qm_any:
             {
                 if (rmax)
                 {   // skip instances outside the radius
-                    int dx = cent[i].x - at.x;
-                    int dz = cent[i].z - at.z;
+                    int dx = p[i].x - at.x;
+                    int dz = p[i].z - at.z;
                     int64_t rsq = dx*(int64_t)dx + dz*(int64_t)dz;
                     if (rsq >= rmax)
                         continue;
@@ -1579,7 +1591,7 @@ L_qm_any:
             int dx = pc.x - at.x;
             int dz = pc.z - at.z;
             int64_t rsq = dx*(int64_t)dx + dz*(int64_t)dz;
-            if (rsq > rmax)
+            if (rsq >= rmax) // rmax holds r*r+1, like for the other conditions
                 return COND_FAILED;
         }
         else
@@ -1673,7 +1685,7 @@ L_qm_any:
         else
         {
             if (cond->rmax > 0)
-                rmax = (cond->rmax-1) * (cond->rmax-1) + 1;
+                rmax = (cond->rmax-1) * (int64_t)(cond->rmax-1) + 1;
             else
                 rmax = 0;
 
@@ -1812,7 +1824,7 @@ L_qm_any:
             return COND_FAILED;
         if (cond->converage <= 0 || cond->converage > 1)
             return COND_FAILED;
-        if (cond->type == F_NOISE_SAMPLE && env->mc <= MC_1_17)
+        if (cond->type == F_NOISE_SAMPLE && (env->mc <= MC_1_17 || cond->para >= NP_MAX))
             return COND_FAILED;
 
         s = 2;
@@ -1852,8 +1864,8 @@ L_qm_any:
             }
             int ok = monteCarloBiomes(&env->g, r, &rng, cond->converage, cond->confidence, f, &sample);
             if (imax && cond->count == 1)
-            {
-                *imax = sample.n;
+            {   // the sampler stores at most MAX_INSTANCES positions
+                *imax = std::min({sample.n, *imax, MAX_INSTANCES});
             }
             else if (sample.n)
             {
@@ -1998,23 +2010,21 @@ L_qm_any:
                 }
             }
             else if (imax)
-            {   // just check there are at least *inst (== cond->count) instances
-                *imax = icnt = getBiomeCenters(
-                    cent, NULL, cond->count, &env->g, r, cond->biomeId, cond->biomeSize, cond->tol,
+            {   // collect up to *imax instances (all of them when each instance
+                // is checked individually), plus one if the origin is skipped
+                int nmax = std::min(*imax + (cond->skipref ? 1 : 0), MAX_INSTANCES);
+                icnt = getBiomeCenters(
+                    &p[0], NULL, nmax, &env->g, r, cond->biomeId, cond->biomeSize, cond->tol,
                     (volatile char*)env->stop
                 );
-                if (cond->skipref && icnt > 0)
-                {   // remove origin instance
-                    for (int i = 0; i < icnt; i++)
-                    {
-                        if (cent[i].x == at.x && cent[i].z == at.z)
-                        {
-                            cent[i] = cent[icnt-1];
-                            *imax = --icnt;
-                            break;
-                        }
-                    }
+                int j = 0;
+                for (int i = 0; i < icnt && j < *imax; i++)
+                {
+                    if (cond->skipref && p[i].x == at.x && p[i].z == at.z)
+                        continue; // remove origin instance
+                    cent[j++] = p[i];
                 }
+                *imax = icnt = j;
                 if (icnt >= cond->count)
                     return COND_OK;
             }

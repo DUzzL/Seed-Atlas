@@ -10,6 +10,8 @@
 #include <QBoxLayout>
 #include <QToolBar>
 #include <QVector>
+#include <QFrame>
+#include <QPointer>
 
 class QParallelAnimationGroup;
 class QToolButton;
@@ -62,6 +64,36 @@ private:
     bool collapsed;
 };
 
+class QAbstractButton;
+class QPushButton;
+
+// Every help ("i") button in the app looks and behaves the same: the info
+// icon, a brighter icon on hover or while its help is open, and a help
+// bubble next to the button that a second click closes again.
+void styleInfoButton(QAbstractButton *button);
+QPushButton *createInfoButton(QWidget *parent, const QString& title, const QString& text);
+
+class InfoPopup : public QFrame
+{
+public:
+    // Opens the help next to anchor (or next to area within it), or closes
+    // it if it is already open there. Only one help bubble is open at a time.
+    static void toggle(QWidget *anchor, const QString& title, const QString& text,
+            const QRect& area = QRect());
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
+private:
+    InfoPopup(QWidget *anchor, const QRect& area, const QString& title, const QString& text);
+    ~InfoPopup();
+    void place();
+
+    QPointer<QWidget> anchor;
+    QRect area;
+    static QPointer<InfoPopup> current;
+};
+
 class Collapsible : public QWidget
 {
     Q_OBJECT
@@ -87,6 +119,7 @@ public:
     int contentHeight;
     QString infotitle;
     QString infomsg;
+    QWidget *infoButton = nullptr;
 };
 
 class RangeSlider : public QSlider

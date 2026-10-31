@@ -1,6 +1,6 @@
 # Seed Atlas packaging
 
-All commands below package the current source tree as version `4.2.dev0`.
+All commands below package the current source tree as version `4.3.dev0`.
 The generated files are written to `dist/`.
 
 For the complete unsigned three-platform build procedure and detailed manual
@@ -26,13 +26,13 @@ From the project root, build the DMG:
 ```bash
 export QT_PREFIX="$HOME/Qt/6.8.3/macos"
 export SEED_ATLAS_UNIVERSAL=1
-bash installer/macos/build-dmg.sh 4.2.dev0
+bash installer/macos/build-dmg.sh 4.3.dev0
 ```
 
 Output:
 
 ```text
-dist/Seed-Atlas-4.2.dev0-macOS-UNNOTARIZED.dmg
+dist/Seed-Atlas-4.3.dev0-macOS-UNNOTARIZED.dmg
 ```
 
 To explicitly build without a Developer ID certificate, notarization, or a DMG
@@ -49,7 +49,7 @@ or the background is missing. You can verify an existing image separately:
 ```sh
 SEED_ATLAS_REQUIRE_UNIVERSAL=1 \
   bash installer/macos/verify-dmg.sh \
-  dist/Seed-Atlas-4.2.dev0-macOS-UNNOTARIZED.dmg
+  dist/Seed-Atlas-4.3.dev0-macOS-UNNOTARIZED.dmg
 ```
 
 Without signing credentials the script creates an ad-hoc-signed local DMG and
@@ -62,11 +62,11 @@ export MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export APPLE_ID="developer@example.com"
 export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
 export APPLE_TEAM_ID="TEAMID"
-bash installer/macos/build-dmg.sh 4.2.dev0
+bash installer/macos/build-dmg.sh 4.3.dev0
 ```
 
 A successful notarized build uses the public release name
-`dist/Seed-Atlas-4.2.dev0-macOS.dmg`.
+`dist/Seed-Atlas-4.3.dev0-macOS.dmg`.
 
 As an alternative to the three Apple variables, store notary credentials with
 `xcrun notarytool store-credentials` and set `MACOS_NOTARY_PROFILE` to that
@@ -104,21 +104,21 @@ sudo apt install flatpak flatpak-builder
 Then run from the project root:
 
 ```bash
-bash installer/flatpak/build-flatpak.sh 4.2.dev0
+bash installer/flatpak/build-flatpak.sh 4.3.dev0
 ```
 
 The script installs the supported KDE/Qt 6.10 runtime for the current user and creates one
 of these, depending on the Linux machine's architecture:
 
 ```text
-dist/Seed-Atlas-4.2.dev0-Linux-x86_64.flatpak
-dist/Seed-Atlas-4.2.dev0-Linux-aarch64.flatpak
+dist/Seed-Atlas-4.3.dev0-Linux-x86_64.flatpak
+dist/Seed-Atlas-4.3.dev0-Linux-aarch64.flatpak
 ```
 
 Install and test the bundle locally with:
 
 ```bash
-flatpak install --user ./dist/Seed-Atlas-4.2.dev0-Linux-*.flatpak
+flatpak install --user ./dist/Seed-Atlas-4.3.dev0-Linux-*.flatpak
 flatpak run org.seedatlas.SeedAtlas
 ```
 

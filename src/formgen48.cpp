@@ -66,17 +66,17 @@ FormGen48::FormGen48(MainWindow *parent)
     ui->lineEditZ1->setValidator(intval);
     ui->lineEditX2->setValidator(intval);
     ui->lineEditZ2->setValidator(intval);
-    connect(ui->lineEditX1, SIGNAL(editingFinished()), SLOT(onChange()));
-    connect(ui->lineEditZ1, SIGNAL(editingFinished()), SLOT(onChange()));
-    connect(ui->lineEditX2, SIGNAL(editingFinished()), SLOT(onChange()));
-    connect(ui->lineEditZ2, SIGNAL(editingFinished()), SLOT(onChange()));
+    connect(ui->lineEditX1, &QLineEdit::editingFinished, this, &FormGen48::onChange);
+    connect(ui->lineEditZ1, &QLineEdit::editingFinished, this, &FormGen48::onChange);
+    connect(ui->lineEditX2, &QLineEdit::editingFinished, this, &FormGen48::onChange);
+    connect(ui->lineEditZ2, &QLineEdit::editingFinished, this, &FormGen48::onChange);
 
     spinMonumentArea = new SetSpinBox(this);
     ui->tabQuadM->layout()->addWidget(spinMonumentArea);
 
-    connect(spinMonumentArea, SIGNAL(editingFinished()), SLOT(onChange()));
-    connect(ui->lineSalt, SIGNAL(editingFinished()), SLOT(onChange()));
-    connect(ui->lineListSalt, SIGNAL(editingFinished()), SLOT(onChange()));
+    connect(spinMonumentArea, &QSpinBox::editingFinished, this, &FormGen48::onChange);
+    connect(ui->lineSalt, &QLineEdit::editingFinished, this, &FormGen48::onChange);
+    connect(ui->lineListSalt, &QLineEdit::editingFinished, this, &FormGen48::onChange);
 
     cond.type = 0;
     Gen48Config defaults;
@@ -250,7 +250,8 @@ void FormGen48::updateAutoConditions(const std::vector<Condition>& condlist)
     for (const Condition& c : condlist)
     {
         const FilterInfo& finfo = g_filterinfo.list[c.type];
-        if (finfo.cat == CAT_QUAD)
+        // a disabled quad filter must not restrict the search to quad bases
+        if (finfo.cat == CAT_QUAD && !(c.meta & Condition::DISABLED))
         {
             cond = c;
             break;

@@ -98,6 +98,12 @@ enum
     FILTER_MAX,
 };
 
+// Structure type of the check that a quad condition depends on.
+inline int quadStructureType(int type)
+{
+    return type <= F_QH_BARELY ? F_HUT : F_MONUMENT;
+}
+
 struct FilterInfo
 {
     enum {
@@ -517,7 +523,7 @@ static const struct FilterList : private FilterInfo
         list[F_CAMP] = FilterInfo{
             CAT_STRUCT, 1, LOC_RAD, Abandoned_Camp, 1, BR_CLUST, MC_26_3, MC_NEWEST, 0, 0, disp++,
             "camp",
-            QT_TRANSLATE_NOOP("Filter", "Abandoned Camp"),
+            QT_TRANSLATE_NOOP("Filter", "Abandoned camp"),
             ""
         };
 
@@ -552,7 +558,7 @@ static const struct FilterList : private FilterInfo
         list[F_ENDCITY] = FilterInfo{
             CAT_STRUCT, 0, LOC_RAD, End_City, 1, BR_CLUST, MC_1_9, MC_NEWEST, +1, 0, disp++,
             "endcity",
-            QT_TRANSLATE_NOOP("Filter", "End City"),
+            QT_TRANSLATE_NOOP("Filter", "End city"),
             ""
         };
 
@@ -568,7 +574,7 @@ static const struct FilterList : private FilterInfo
         list[F_ENDCITYSHIP] = FilterInfo{
             CAT_STRUCT, 0, LOC_RAD, End_City, 1, BR_CLUST, MC_1_9, MC_NEWEST, +1, 0, disp++,
             "end_ship",
-            QT_TRANSLATE_NOOP("Filter", "End City (Ship)"),
+            QT_TRANSLATE_NOOP("Filter", "End city (ship)"),
             ""
         };
     }

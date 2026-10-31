@@ -96,6 +96,7 @@ private slots:
     void on_actionBiomeColors_triggered();
     void on_actionPresetLoad_triggered();
     void on_actionExamples_triggered();
+    void applySearchMode();
     void on_actionAbout_triggered();
     void on_actionCopy_triggered();
     void on_actionPaste_triggered();
@@ -159,6 +160,14 @@ public:
 
     QVector<QAction*> laction;
     QVector<QAction*> saction;
+    QAction *terrainAction = nullptr; // toolbar toggle for LOPT_TERRAIN
+    QAction *menuAction = nullptr; // opens the former menu bar menus
+    QAction *settingsAction = nullptr;
+    class TabLocations *tabLocations = nullptr;
+    bool layerSync = false; // set while the layer actions follow lopt
+    void syncLayerActions();
+    void updateTerrainAvailability(int mc); // the terrain map needs 1.18+
+    void updateStructureActions(); // only what exists in the shown dimension
     QAction *acthome;
     QAction *actzoom[2];
     QAction *dimactions[3];

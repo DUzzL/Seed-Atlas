@@ -1027,8 +1027,8 @@ TabStructures::TabStructures(MainWindow *parent)
 
     configureResultTree(ui->treeStructs);
     ui->treeStructs->header()->setMinimumSectionSize(24);
-    ui->treeStructs->header()->setSectionResizeMode(QHeaderView::Stretch);
-    ui->treeStructs->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    ui->treeStructs->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    ui->treeStructs->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     connect(ui->treeStructs->header(), &QHeaderView::sectionClicked, this,
         [=](int section){ onHeaderClick(ui->treeStructs, section); });
 
@@ -1036,8 +1036,8 @@ TabStructures::TabStructures(MainWindow *parent)
     configureResultTree(ui->treeDensity);
     setResultTreeSort(ui->treeDensity, C_COUNT, Qt::DescendingOrder, false);
     ui->treeDensity->header()->setMinimumSectionSize(24);
-    ui->treeDensity->header()->setSectionResizeMode(QHeaderView::Stretch);
-    ui->treeDensity->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    ui->treeDensity->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    ui->treeDensity->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     connect(ui->treeDensity->header(), &QHeaderView::sectionClicked, this,
         [=](int section){ onHeaderClick(ui->treeDensity, section); });
 
@@ -1604,8 +1604,10 @@ void TabStructures::on_buttonFromVisible_clicked()
     ui->lineZ2->setText( QString::number(z2) );
 }
 
-void TabStructures::on_tabWidget_currentChanged(int)
+void TabStructures::on_tabWidget_currentChanged(int index)
 {
+    if (index >= 0 && !thread.isRunning())
+        ui->labelStatus->setText(tr("Ready. Analyze this view to update its results."));
     bool ok = false;
     if (!thread.isRunning())
     {

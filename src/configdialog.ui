@@ -171,19 +171,9 @@
        <item row="2" column="0">
        <widget class="QGroupBox" name="groupSearch">
          <property name="title">
-          <string>Seed finding</string>
+          <string>Results</string>
          </property>
          <layout class="QGridLayout" name="gridLayout_3">
-          <item row="0" column="0" colspan="2">
-           <widget class="QCheckBox" name="checkEnableSeedFinding">
-            <property name="toolTip">
-             <string>Show the Search tab for finding seeds that match a set of conditions.</string>
-            </property>
-            <property name="text">
-             <string>Enable seed finding tools</string>
-            </property>
-           </widget>
-          </item>
           <item row="1" column="1">
            <widget class="QLineEdit" name="lineMatching"/>
           </item>

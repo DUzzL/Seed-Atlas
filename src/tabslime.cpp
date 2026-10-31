@@ -2,20 +2,19 @@
 
 #include "message.h"
 #include "util.h"
+#include "widgets.h"
 
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QIntValidator>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMessageBox>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTimer>
-#include <QToolButton>
 #include <QTreeWidget>
 #include <algorithm>
 #include <cmath>
@@ -203,7 +202,21 @@ void AnalysisSlime::run()
 TabSlime::TabSlime(MainWindow *parent)
     : QWidget(parent), parent(parent), thread(this)
 {
-    QVBoxLayout *layout = new QVBoxLayout(this);
+    // Slime chunks only exist in the Overworld; elsewhere the controls are
+    // disabled and this note says why.
+    QVBoxLayout *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    labelDimension = new QLabel(tr("Slime chunks only exist in the Overworld. "
+        "Switch the map to the Overworld to use this tool."), this);
+    labelDimension->setWordWrap(true);
+    labelDimension->setContentsMargins(9, 6, 9, 0);
+    labelDimension->setStyleSheet("QLabel { font-weight: 600; }");
+    labelDimension->hide();
+    outer->addWidget(labelDimension);
+    body = new QWidget(this);
+    outer->addWidget(body, 1);
+
+    QVBoxLayout *layout = new QVBoxLayout(body);
     layout->addWidget(new QLabel(tr("Find dense slime-chunk areas in the Overworld."), this));
 
     const auto inputWithInfo = [this](QLineEdit *&edit, const QString& value,
@@ -212,14 +225,7 @@ TabSlime::TabSlime(MainWindow *parent)
         QHBoxLayout *row = new QHBoxLayout(box);
         row->setContentsMargins(0, 0, 0, 0);
         edit = new QLineEdit(value, box);
-        QToolButton *button = new QToolButton(box);
-        button->setText("i");
-        button->setAutoRaise(true);
-        button->setToolTip(info);
-        button->setWhatsThis(info);
-        connect(button, &QToolButton::clicked, box, [box, info]() {
-            QMessageBox::information(box, QObject::tr("Slime chunk search"), info);
-        });
+        QPushButton *button = createInfoButton(box, tr("Help: slime chunk search"), info);
         row->addWidget(edit, 1);
         row->addWidget(button);
         return box;
@@ -232,14 +238,7 @@ TabSlime::TabSlime(MainWindow *parent)
         spin = new QSpinBox(box);
         spin->setRange(1, maximum);
         spin->setValue(value);
-        QToolButton *button = new QToolButton(box);
-        button->setText("i");
-        button->setAutoRaise(true);
-        button->setToolTip(info);
-        button->setWhatsThis(info);
-        connect(button, &QToolButton::clicked, box, [box, info]() {
-            QMessageBox::information(box, QObject::tr("Slime chunk search"), info);
-        });
+        QPushButton *button = createInfoButton(box, tr("Help: slime chunk search"), info);
         row->addWidget(spin, 1);
         row->addWidget(button);
         return box;
@@ -260,12 +259,12 @@ TabSlime::TabSlime(MainWindow *parent)
         tr("Second Z corner of the search area, in chunks.")), 1, 3);
     QPushButton *fromVisible = new QPushButton(tr("From visible"), this);
     options->addWidget(fromVisible, 0, 4, 2, 1);
-    options->addWidget(new QLabel(tr("Window (chunks):"), this), 2, 0, 1, 2);
+    options->addWidget(new QLabel(tr("Window (chunks):"), this), 2, 0);
     options->addWidget(spinWithInfo(spinWindow, 10, 256,
-        tr("Tests every possible square with this side length. A value of 10 means a 10 by 10 chunk square.")), 2, 2);
-    options->addWidget(new QLabel(tr("Minimum slime chunks:"), this), 3, 0, 1, 2);
+        tr("Tests every possible square with this side length. A value of 10 means a 10 by 10 chunk square.")), 2, 1);
+    options->addWidget(new QLabel(tr("Minimum slime chunks:"), this), 3, 0);
     options->addWidget(spinWithInfo(spinMinimum, 15, 65536,
-        tr("Only squares with at least this many slime chunks are listed. Higher values return fewer, denser places.")), 3, 2);
+        tr("Only squares with at least this many slime chunks are listed. Higher values return fewer, denser places.")), 3, 1);
     layout->addLayout(options);
 
     results = new QTreeWidget(this);
@@ -275,12 +274,17 @@ TabSlime::TabSlime(MainWindow *parent)
         tr("block X2"), tr("block Z2")});
     configureResultTree(results);
     setResultTreeSort(results, 0, Qt::DescendingOrder, false);
+    // ten columns do not fit the panel when stretched; keep headers readable
     results->header()->setMinimumSectionSize(24);
-    results->header()->setSectionResizeMode(QHeaderView::Stretch);
-    results->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    results->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    results->header()->setStretchLastSection(true);
+    results->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     connect(results->header(), &QHeaderView::sectionClicked, this,
         [this](int section) { cycleResultTreeSort(results, section); });
     layout->addWidget(results, 1);
+    labelStatus = new QLabel(tr("Ready"), this);
+    labelStatus->setWordWrap(true);
+    layout->addWidget(labelStatus);
 
     QHBoxLayout *actions = new QHBoxLayout;
     pushExport = new QPushButton(tr("Export..."), this);
@@ -292,6 +296,21 @@ TabSlime::TabSlime(MainWindow *parent)
     for (QLineEdit *line : {lineX1, lineZ1, lineX2, lineZ2})
         line->setValidator(new QIntValidator(-10000000, 10000000, this));
 
+    const auto invalidate = [this]() {
+        if (!thread.isRunning()) {
+            results->clear();
+            pushExport->setEnabled(false);
+            labelStatus->setText(tr("Inputs changed. Analyze again."));
+        }
+    };
+    for (QLineEdit *line : {lineX1, lineZ1, lineX2, lineZ2})
+        connect(line, &QLineEdit::textChanged, this, invalidate);
+    connect(spinWindow, &QSpinBox::valueChanged, this, [this, invalidate](int n) {
+        spinMinimum->setMaximum(n * n);
+        invalidate();
+    });
+    spinMinimum->setMaximum(spinWindow->value() * spinWindow->value());
+    connect(spinMinimum, &QSpinBox::valueChanged, this, invalidate);
     connect(fromVisible, &QPushButton::clicked, this, &TabSlime::onFromVisible);
     connect(pushStart, &QPushButton::clicked, this, &TabSlime::onStartClicked);
     connect(pushExport, &QPushButton::clicked, this, &TabSlime::onExportClicked);
@@ -330,7 +349,16 @@ void TabSlime::load(QSettings& settings)
 
 void TabSlime::refresh()
 {
-    setEnabled(parent->getDim() == DIM_OVERWORLD);
+    WorldInfo current;
+    parent->getSeed(&current);
+    if (!thread.isRunning() && results->topLevelItemCount() && current.seed != thread.wi.seed) {
+        results->clear();
+        pushExport->setEnabled(false);
+        labelStatus->setText(tr("Seed changed. Analyze again."));
+    }
+    const bool overworld = parent->getDim() == DIM_OVERWORLD;
+    body->setEnabled(overworld);
+    labelDimension->setVisible(!overworld);
 }
 
 void TabSlime::onStartClicked()
@@ -375,12 +403,12 @@ void TabSlime::exportResults(QTextStream& stream)
     };
 
     stream << "Sep=" << separator << '\n';
-    writeLine({"#seed", QString::number(thread.wi.seed)});
-    writeLine({"#chunk_x1", lineX1->text()});
-    writeLine({"#chunk_z1", lineZ1->text()});
-    writeLine({"#chunk_x2", lineX2->text()});
-    writeLine({"#chunk_z2", lineZ2->text()});
-    writeLine({"#window_chunks", QString::number(spinWindow->value())});
+    writeLine({"#seed", QString::number(qint64(thread.wi.seed))});
+    writeLine({"#chunk_x1", QString::number(thread.x1)});
+    writeLine({"#chunk_z1", QString::number(thread.z1)});
+    writeLine({"#chunk_x2", QString::number(thread.x2)});
+    writeLine({"#chunk_z2", QString::number(thread.z2)});
+    writeLine({"#window_chunks", QString::number(thread.window)});
     writeLine({"#minimum_slime_chunks", QString::number(thread.minimum)});
 
     QStringList headers;
@@ -447,6 +475,9 @@ void TabSlime::onFailed(const QString& message)
 void TabSlime::onFinished()
 {
     resortResultTree(results);
+    labelStatus->setText(tr("%1 — seed %2, %3 results.")
+        .arg(thread.stop ? tr("Stopped") : tr("Complete"))
+        .arg(qint64(thread.wi.seed)).arg(results->topLevelItemCount()));
     pushStart->setText(tr("Analyze"));
     pushExport->setEnabled(!thread.stop && results->topLevelItemCount() > 0);
 }

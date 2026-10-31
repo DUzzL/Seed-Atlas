@@ -28,6 +28,7 @@ signals:
 
 public slots:
     void setBiomeColor(int id, const QColor &col);
+    void reject() override;
     void editBiomeColor(int id);
 
 private slots:
@@ -43,6 +44,8 @@ private slots:
     void onAllToDimmed();
 
 private:
+    int colormapIndex(const QString& rc) const;
+    class QPushButton *helpButton = nullptr;
     bool saveAsColormap(bool closeAfter);
     void exportColors(QTextStream& stream);
     void importColors(QTextStream& stream);

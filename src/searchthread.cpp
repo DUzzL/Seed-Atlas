@@ -222,7 +222,7 @@ bool SearchMaster::set(QWidget *widget, const Session& s)
             for (const Condition& d : s.cv)
             {
                 if (d.relative == c.save && !(d.meta & Condition::DISABLED)
-                        && (d.type == F_HUT || d.type == F_MONUMENT))
+                        && d.type == quadStructureType(c.type))
                 {
                     active = true;
                     break;
@@ -388,20 +388,21 @@ static bool applyTranspose(std::vector<uint64_t>& slist,
 {
     std::vector<uint64_t> list48;
 
-    int x = gen48.x1;
-    int z = gen48.z1;
-    int w = gen48.x2 - x + 1;
-    int h = gen48.z2 - z + 1;
+    // accept the corners of the manual area in either order
+    int x = std::min(gen48.x1, gen48.x2);
+    int z = std::min(gen48.z1, gen48.z2);
+    int w = std::max(gen48.x1, gen48.x2) - x + 1;
+    int h = std::max(gen48.z1, gen48.z2) - z + 1;
 
     // does the set of candidates for this condition fit in memory?
-    if ((uint64_t)slist.size() * sizeof(int64_t) * w*h >= bufmax)
+    if ((uint64_t)slist.size() * sizeof(int64_t) * (uint64_t)w * (uint64_t)h >= bufmax)
     {
         slist.clear();
         return false;
     }
 
     try {
-        list48.resize(slist.size() * w*h);
+        list48.resize(slist.size() * (uint64_t)w * (uint64_t)h);
     } catch (...) {
         slist.clear();
         return false;
@@ -765,6 +766,11 @@ bool SearchMaster::getProgress(QString *status, uint64_t *prog, uint64_t *end, u
         }
     }
 
+    if (!std::isfinite(*avg) || !std::isfinite(*min) || !std::isfinite(*max))
+    {
+        *status = tr("Measuring search speed...");
+        return valid;
+    }
     qreal remain = ((qreal)*end - *prog) / (*avg + 1e-6);
     QString eta;
     if (remain >= 3600*24*1000)
@@ -993,9 +999,14 @@ bool SearchWorker::getNextItem()
 
 bool SearchWorker::reportResult(uint64_t seed)
 {
-    while (!*env.stop && !master->resultSlots.tryAcquire(1, 10)) {}
+    bool acquired = false;
+    while (!*env.stop && !(acquired = master->resultSlots.tryAcquire(1, 10))) {}
     if (*env.stop)
+    {   // the stop can arrive right after the slot was acquired
+        if (acquired)
+            master->resultSlots.release();
         return false;
+    }
 
     if (master->stoponres && master->stop.exchange(true))
     {

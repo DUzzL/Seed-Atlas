@@ -3,7 +3,7 @@
  <class>ExtGenDialog</class>
  <widget class="QDialog" name="ExtGenDialog">
   <property name="windowTitle">
-   <string>World Settings</string>
+   <string>Advanced World Settings</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">

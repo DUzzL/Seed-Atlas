@@ -6,6 +6,7 @@
 #include <QClipboard>
 #include <QDoubleValidator>
 #include <QKeyEvent>
+#include <QPushButton>
 
 static bool g_animate;
 
@@ -27,6 +28,8 @@ GotoDialog::GotoDialog(MapView *map, qreal x, qreal z, qreal scale)
     ui->lineScale->setText(QString::asprintf("%.4f", scale));
 
     ui->checkAnimate->setChecked(g_animate);
+    // two clear choices; the toolbar already has Origin for the old Reset
+    ui->buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Go"));
 }
 
 GotoDialog::~GotoDialog()
@@ -38,7 +41,7 @@ void GotoDialog::on_buttonBox_clicked(QAbstractButton *button)
 {
     QDialogButtonBox::StandardButton b = ui->buttonBox->standardButton(button);
 
-    if (b == QDialogButtonBox::Ok || b == QDialogButtonBox::Apply)
+    if (b == QDialogButtonBox::Ok)
     {
         qreal x = ui->lineX->text().toDouble();
         qreal z = ui->lineZ->text().toDouble();
@@ -52,18 +55,12 @@ void GotoDialog::on_buttonBox_clicked(QAbstractButton *button)
         else
             mapview->setView(x, z, scale);
     }
-    else if (b == QDialogButtonBox::Reset)
-    {
-        ui->lineX->setText("0");
-        ui->lineZ->setText("0");
-        ui->lineScale->setText("16");
-    }
 }
 
 void GotoDialog::on_lineScale_textChanged(const QString &text)
 {
     qreal value = text.toDouble();
-    ui->lineScale->setStyleSheet(value > 4096 ? "color: red" : "");
+    ui->lineScale->setStyleSheet(value < scalemin || value > scalemax ? "color: red" : "");
 }
 
 void GotoDialog::keyPressEvent(QKeyEvent *event)

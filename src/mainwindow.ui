@@ -248,7 +248,7 @@
             </sizepolicy>
            </property>
            <attribute name="title">
-            <string>Search</string>
+            <string>Seed Finder</string>
            </attribute>
            <layout class="QGridLayout" name="gridLayout_3">
             <property name="leftMargin">
@@ -468,6 +468,7 @@
     <addaction name="actionBetaHumidity"/>
     <addaction name="separator"/>
     <addaction name="actionHeight"/>
+    <addaction name="actionTerrain"/>
     <addaction name="actionStructures"/>
     <addaction name="separator"/>
    </widget>
@@ -528,7 +529,7 @@
   </action>
   <action name="actionPreferences">
    <property name="text">
-    <string>Edit preferences...</string>
+    <string>Settings...</string>
    </property>
   </action>
   <action name="actionQuit">
@@ -617,7 +618,7 @@
   </action>
   <action name="actionToolbarConfig">
    <property name="text">
-    <string>Edit map tools...</string>
+    <string>Toolbar tools...</string>
    </property>
   </action>
   <action name="actionParaTemperature">
@@ -719,6 +720,17 @@
    </property>
    <property name="shortcut">
     <string>Alt+Y</string>
+   </property>
+  </action>
+  <action name="actionTerrain">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Terrain map</string>
+   </property>
+   <property name="toolTip">
+    <string>Minecraft-like surface colors with hill shading from the approximate terrain height (1.18 and newer)</string>
    </property>
   </action>
   <action name="actionLayerDisplay">

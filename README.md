@@ -14,6 +14,7 @@ to follow the steps described there.
 ## Features
 
 - Explore biomes and structures in the Overworld, Nether, and End
+- Switch the map to a terrain view with Minecraft-like surface colors and hill shading
 - Search large areas for biomes, structures, and slime chunks
 - Use all available CPU threads for faster searches
 - Create advanced seed searches with combined conditions and Lua filters
@@ -24,7 +25,7 @@ to follow the steps described there.
 
 1. Download and start Seed Atlas.
 2. Select a Minecraft version and enter a seed.
-3. Explore the map or open a search tab.
+3. Explore the map or open the Seed Finder tab.
 4. Select an area and start the search.
 
 ## License

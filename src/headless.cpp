@@ -141,7 +141,7 @@ bool Headless::loadSession(QString sessionpath, bool reset)
 void Headless::run()
 {
     qOut() << "Condition summary:\n";
-    for (const Condition& cond : qAsConst(session.cv))
+    for (const Condition& cond : std::as_const(session.cv))
         qOut() << cond.summary(false) << "\n";
 
     if (sthread.isdone)
@@ -217,7 +217,9 @@ void Headless::progressTimeout()
     QString status;
     uint64_t prog, end, seed;
     qreal min, avg, max;
-    sthread.getProgress(&status, &prog, &end, &seed, &min, &avg, &max);
+    // the values stay unset when the progress lock is busy
+    if (!sthread.getProgress(&status, &prog, &end, &seed, &min, &avg, &max))
+        return;
 
     if (progressfp)
     {

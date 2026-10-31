@@ -1,6 +1,7 @@
 #include "formconditions.h"
 #include "ui_formconditions.h"
 
+#include "addfilterdialog.h"
 #include "conditiondialog.h"
 #include "mainwindow.h"
 
@@ -56,6 +57,14 @@ void ItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem& option, 
     }
 }
 
+// Reads the condition through a const reference: the rvalue overload of
+// qvariant_cast trips a false -Warray-bounds positive in GCC for large types.
+static Condition itemCondition(const QListWidgetItem *item)
+{
+    const QVariant data = item->data(Qt::UserRole);
+    return qvariant_cast<Condition>(data);
+}
+
 FormConditions::FormConditions(QWidget *parent)
     : QWidget(parent)
     , parent(dynamic_cast<MainWindow*>(parent))
@@ -71,7 +80,21 @@ FormConditions::FormConditions(QWidget *parent)
         while ((item = ui->layoutButtons->takeAt(0)))
         {
             delete item->widget();
+            delete item;
         }
+    }
+    else
+    {   // "Add filter..." starts with a plain list and leads on to the full
+        // condition editor, which replaces the former "Add" button
+        QPushButton *add = new QPushButton(tr("Add filter..."), this);
+        add->setToolTip(tr("Pick structures and biomes from a list, or open the full condition editor"));
+        QPushButton *examples = new QPushButton(tr("Example filters..."), this);
+        examples->setToolTip(tr("Load a ready-made example filter"));
+        connect(add, &QPushButton::clicked, this, &FormConditions::openAddFilter);
+        connect(examples, &QPushButton::clicked, this, &FormConditions::examplesRequested);
+        ui->layoutButtons->insertWidget(0, add);
+        ui->layoutButtons->insertWidget(1, examples);
+        ui->layoutButtons->insertStretch(2);
     }
 
 #if WASM
@@ -79,9 +102,6 @@ FormConditions::FormConditions(QWidget *parent)
 #endif
 
     qRegisterMetaType< Condition >("Condition");
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-    qRegisterMetaTypeStreamOperators< Condition >("Condition");
-#endif
 }
 
 FormConditions::~FormConditions()
@@ -95,7 +115,7 @@ std::vector<Condition> FormConditions::getConditions() const
 
     for (int i = 0, ie = ui->listConditions->count(); i < ie; i++)
     {
-        Condition c = qvariant_cast<Condition>(ui->listConditions->item(i)->data(Qt::UserRole));
+        Condition c = itemCondition(ui->listConditions->item(i));
         conds.push_back(c);
     }
     return conds;
@@ -127,7 +147,7 @@ void FormConditions::updateSensitivity()
     int disabled = 0;
     for (int i = 0; i < selected.size(); i++)
     {
-        Condition c = qvariant_cast<Condition>(selected[i]->data(Qt::UserRole));
+        Condition c = itemCondition(selected[i]);
         selcond.push_back(c);
         if (c.meta & Condition::DISABLED)
             disabled++;
@@ -223,7 +243,7 @@ void FormConditions::editCondition(QListWidgetItem *item)
     parent->getSeed(&wi);
     ConditionDialog *dialog = new ConditionDialog(this, parent->getMapView(), &parent->config, wi, item, (Condition*)item->data(Qt::UserRole).data());
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    QObject::connect(dialog, SIGNAL(setCond(QListWidgetItem*,Condition,int)), this, SLOT(addItemCondition(QListWidgetItem*,Condition,int)), Qt::QueuedConnection);
+    QObject::connect(dialog, &ConditionDialog::setCond, this, &FormConditions::addItemCondition, Qt::QueuedConnection);
     dialog->show();
 }
 
@@ -239,6 +259,16 @@ static void remove_selected(QListWidget *list)
 
 void FormConditions::on_buttonRemoveAll_clicked()
 {
+    if (ui->listConditions->count() == 0)
+        return;
+    if (QMessageBox::question(this, tr("Remove All"), tr("Remove all conditions?"))
+            != QMessageBox::Yes)
+        return;
+    clearConditions();
+}
+
+void FormConditions::clearConditions()
+{
     ui->listConditions->clear();
     emit changed();
 }
@@ -251,16 +281,17 @@ void FormConditions::on_buttonRemove_clicked()
 
 void FormConditions::on_buttonDisable_clicked()
 {
-    emit changed();
     const QList<QListWidgetItem*> selected = ui->listConditions->selectedItems();
     for (QListWidgetItem *item : selected)
     {
-        Condition c = qvariant_cast<Condition>(item->data(Qt::UserRole));
+        Condition c = itemCondition(item);
         c.meta ^= Condition::DISABLED;
         item->setText(c.summary(true));
         item->setData(Qt::UserRole, QVariant::fromValue(c));
     }
     updateSensitivity();
+    // listeners read the conditions, so notify after the toggle
+    emit changed();
 }
 
 void FormConditions::on_buttonEdit_clicked()
@@ -275,7 +306,7 @@ void FormConditions::on_buttonEdit_clicked()
         editCondition(edit);
 }
 
-void FormConditions::on_buttonAddFilter_clicked()
+void FormConditions::openConditionEditor()
 {
     if (!parent)
         return;
@@ -283,7 +314,9 @@ void FormConditions::on_buttonAddFilter_clicked()
     parent->getSeed(&wi);
     ConditionDialog *dialog = new ConditionDialog(this, parent->getMapView(), &parent->config, wi);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    QObject::connect(dialog, SIGNAL(setCond(QListWidgetItem*,Condition,int)), this, SLOT(addItemCondition(QListWidgetItem*,Condition)), Qt::QueuedConnection);
+    QObject::connect(dialog, &ConditionDialog::setCond, this,
+        [this](QListWidgetItem *item, Condition cond, int) { addItemCondition(item, cond); },
+        Qt::QueuedConnection);
     dialog->show();
 }
 
@@ -299,41 +332,41 @@ void FormConditions::on_listConditions_customContextMenuRequested(const QPoint &
     if (parent)
     {
         QAction *actadd = menu->addAction(QIcon::fromTheme("list-add"),
-            tr("Add new condition"), this,
-            &FormConditions::conditionsAdd, QKeySequence::New);
+            tr("Add filter..."), QKeySequence::New, this,
+            &FormConditions::openAddFilter);
         actadd->setEnabled(true);
 
         QAction *actedit = menu->addAction(QIcon(),
-            tr("Edit condition"), this,
-            &FormConditions::conditionsEdit, QKeySequence::Open);
+            tr("Edit condition"), QKeySequence::Open, this,
+            &FormConditions::conditionsEdit);
         actedit->setEnabled(n == 1);
 
         QAction *actcut = menu->addAction(QIcon::fromTheme("edit-cut"),
-            tr("Cut %n condition(s)", "", n), this,
-            &FormConditions::conditionsCut, QKeySequence::Cut);
+            tr("Cut %n condition(s)", "", n), QKeySequence::Cut, this,
+            &FormConditions::conditionsCut);
         actcut->setEnabled(n > 0);
 
         QAction *actcopy = menu->addAction(QIcon::fromTheme("edit-copy"),
-            tr("Copy %n condition(s)", "", n), this,
-            &FormConditions::conditionsCopy, QKeySequence::Copy);
+            tr("Copy %n condition(s)", "", n), QKeySequence::Copy, this,
+            &FormConditions::conditionsCopy);
         actcopy->setEnabled(n > 0);
 
         int pn = conditionsPaste(true);
         QAction *actpaste = menu->addAction(QIcon::fromTheme("edit-paste"),
-            tr("Paste %n condition(s)", "", pn), this,
-            &FormConditions::conditionsPaste, QKeySequence::Paste);
+            tr("Paste %n condition(s)", "", pn), QKeySequence::Paste, this,
+            &FormConditions::conditionsPaste);
         actpaste->setEnabled(pn > 0);
 
         QAction *actdel = menu->addAction(QIcon::fromTheme("edit-delete"),
-            tr("Remove %n condition(s)", "", n), this,
-            &FormConditions::conditionsDelete, QKeySequence::Delete);
+            tr("Remove %n condition(s)", "", n), QKeySequence::Delete, this,
+            &FormConditions::conditionsDelete);
         actdel->setEnabled(n > 0);
     }
     else
     {
         QAction *actcopy = menu->addAction(QIcon::fromTheme("edit-copy"),
-            tr("Copy %n condition(s)", "", n), this,
-            &FormConditions::conditionsCopy, QKeySequence::Copy);
+            tr("Copy %n condition(s)", "", n), QKeySequence::Copy, this,
+            &FormConditions::conditionsCopy);
         actcopy->setEnabled(n > 0);
     }
 
@@ -352,11 +385,23 @@ void FormConditions::on_listConditions_itemSelectionChanged()
     updateSensitivity();
 }
 
-void FormConditions::conditionsAdd()
+void FormConditions::openAddFilter()
 {
     if (!parent)
         return;
-    on_buttonAddFilter_clicked();
+    WorldInfo wi;
+    parent->getSeed(&wi, false);
+    AddFilterDialog dialog(this, wi);
+    int result = dialog.exec();
+    if (result == AddFilterDialog::Custom)
+    {
+        openConditionEditor();
+        return;
+    }
+    if (result != QDialog::Accepted)
+        return;
+    for (const Condition& c : dialog.getConditions())
+        addItemCondition(nullptr, c, 1);
 }
 
 void FormConditions::conditionsEdit()
@@ -380,7 +425,7 @@ void FormConditions::conditionsCopy()
     const QList<QListWidgetItem*> selected = ui->listConditions->selectedItems();
     for (QListWidgetItem *item : selected)
     {
-        Condition c = qvariant_cast<Condition>(item->data(Qt::UserRole));
+        Condition c = itemCondition(item);
         text += (text.isEmpty() ? "" : "\n") + c.toHex();
     }
     QClipboard *clipboard = QGuiApplication::clipboard();
@@ -393,18 +438,29 @@ int FormConditions::conditionsPaste(bool countonly)
         return 0;
     QClipboard *clipboard = QGuiApplication::clipboard();
     const QStringList slist = clipboard->text().split('\n');
-    Condition c;
-    int cnt = 0;
+    std::vector<Condition> pasted;
     for (const QString& s : slist)
     {
-        if (!c.readHex(s))
-            continue;
-        cnt++;
-        if (countonly)
-            continue;
-        addItemCondition(NULL, c, 1);
+        Condition c;
+        if (c.readHex(s))
+            pasted.push_back(c);
     }
-    return cnt;
+    if (countonly)
+        return pasted.size();
+    for (const Condition& c : pasted)
+    {
+        // a pasted quad condition only gets a new structure check if the
+        // clipboard does not bring its own
+        bool hasCheck = false;
+        if (g_filterinfo.list[c.type].cat == CAT_QUAD)
+        {
+            for (const Condition& d : pasted)
+                if (d.relative == c.save && d.type == quadStructureType(c.type))
+                    hasCheck = true;
+        }
+        addItemCondition(hasCheck ? new QListWidgetItem() : nullptr, c, 1);
+    }
+    return pasted.size();
 }
 
 void FormConditions::conditionsDelete()
@@ -417,17 +473,19 @@ void FormConditions::conditionsDelete()
 int FormConditions::ensureQuadDependencies(bool reenable)
 {
     std::vector<Condition> conds = getConditions();
-    int changed = 0;
+    int fixes = 0;
 
     for (const Condition& c : conds)
     {
         if (c.type < F_QH_IDEAL || c.type > F_QM_90)
             continue; // not a quad condition
+        if (c.meta & Condition::DISABLED)
+            continue; // a disabled quad does not take part in the search
 
         bool found = false;
         for (const Condition& d : conds)
         {
-            if (d.relative != c.save || (d.type != F_HUT && d.type != F_MONUMENT))
+            if (d.relative != c.save || d.type != quadStructureType(c.type))
                 continue;
             found = true;
             if (reenable && (d.meta & Condition::DISABLED))
@@ -435,13 +493,13 @@ int FormConditions::ensureQuadDependencies(bool reenable)
                 for (int i = 0, ie = ui->listConditions->count(); i < ie; i++)
                 {
                     QListWidgetItem *it = ui->listConditions->item(i);
-                    Condition cd = qvariant_cast<Condition>(it->data(Qt::UserRole));
+                    Condition cd = itemCondition(it);
                     if (cd.save == d.save && (cd.meta & Condition::DISABLED))
                     {
                         cd.meta &= ~Condition::DISABLED;
                         it->setText(cd.summary(true));
                         it->setData(Qt::UserRole, QVariant::fromValue(cd));
-                        changed++;
+                        fixes++;
                         break;
                     }
                 }
@@ -454,7 +512,8 @@ int FormConditions::ensureQuadDependencies(bool reenable)
         // same dependency as created for a new quad condition
         Condition cq;
         memset(&cq, 0, sizeof(cq));
-        cq.type = (c.type <= F_QH_BARELY) ? F_HUT : F_MONUMENT;
+        cq.version = Condition::VER_CURRENT;
+        cq.type = quadStructureType(c.type);
         // use 256 to avoid confusion when this restriction is removed
         cq.rmax = 256;
         cq.relative = c.save;
@@ -462,12 +521,15 @@ int FormConditions::ensureQuadDependencies(bool reenable)
         cq.count = 4;
         QListWidgetItem *item = new QListWidgetItem(ui->listConditions, QListWidgetItem::UserType);
         setItemCondition(ui->listConditions, item, &cq);
-        changed++;
+        fixes++;
     }
 
-    if (changed)
+    if (fixes)
+    {
         updateSensitivity();
-    return changed;
+        emit changed();
+    }
+    return fixes;
 }
 
 void FormConditions::addItemCondition(QListWidgetItem *item, Condition cond, int modified)
@@ -504,6 +566,7 @@ void FormConditions::addItemCondition(QListWidgetItem *item, Condition cond, int
         {
             Condition cq;
             memset(&cq, 0, sizeof(cq));
+            cq.version = Condition::VER_CURRENT;
             cq.type = F_HUT;
             //cq.x1 = -128; cq.z1 = -128;
             //cq.x2 = +128; cq.z2 = +128;
@@ -519,6 +582,7 @@ void FormConditions::addItemCondition(QListWidgetItem *item, Condition cond, int
         {
             Condition cq;
             memset(&cq, 0, sizeof(cq));
+            cq.version = Condition::VER_CURRENT;
             cq.type = F_MONUMENT;
             //cq.x1 = -160; cq.z1 = -160;
             //cq.x2 = +160; cq.z2 = +160;
@@ -547,7 +611,7 @@ void FormConditions::keyReleaseEvent(QKeyEvent *event)
     if (ui->listConditions->hasFocus())
     {
         if (event->matches(QKeySequence::New))
-            conditionsAdd();
+            openAddFilter();
         else if (event->matches(QKeySequence::Open))
             conditionsEdit();
         else if (event->matches(QKeySequence::Cut))

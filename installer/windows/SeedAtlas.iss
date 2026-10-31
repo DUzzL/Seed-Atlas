@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "4.2.dev0"
+  #define MyAppVersion "4.3.dev0"
 #endif
 
 #define MyAppName "Seed Atlas"
@@ -33,11 +33,11 @@ CloseApplications=yes
 CloseApplicationsFilter=seed-atlas.exe
 RestartApplications=no
 AppMutex=SeedAtlas_9EA88549_5B8A_493B_AD00_AA2FB6BE7D02
-VersionInfoVersion=4.2.0.0
+VersionInfoVersion=4.3.0.0
 VersionInfoCompany=Seed Atlas Project
 VersionInfoDescription=Seed Atlas Windows Installer
 VersionInfoProductName=Seed Atlas
-VersionInfoProductVersion=4.2.0.0
+VersionInfoProductVersion=4.3.0.0
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

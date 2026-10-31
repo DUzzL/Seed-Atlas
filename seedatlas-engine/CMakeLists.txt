@@ -1,14 +1,13 @@
-cmake_minimum_required(VERSION 2.8)
-project(seedatlas_engine)
+cmake_minimum_required(VERSION 3.10)
+project(seedatlas_engine C)
 
 if (NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
 endif()
-if (WIN32)
-	set(CMAKE_C_FLAGS "-D_WIN32")
-endif()
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
+# -fwrapv is required: the generators rely on wrapping signed arithmetic.
+# -ffp-contract=off keeps the noise rounding identical to Java (no FMA fusing).
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -fwrapv -ffp-contract=off")
 set(CMAKE_C_FLAGS_DEBUG "-O0 -g3 -DDEBUG")
 
 set(HEADERS

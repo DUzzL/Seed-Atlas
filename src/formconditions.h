@@ -44,6 +44,7 @@ public:
     int ensureQuadDependencies(bool reenable = false);
 
     void clearSelection();
+    void clearConditions();
 
     QListWidgetItem *lockItem(QListWidgetItem *item);
     void setItemCondition(QListWidget *list, QListWidgetItem *item, Condition *cond);
@@ -51,6 +52,7 @@ public:
 
 signals:
     void changed();
+    void examplesRequested();
     void selectionUpdate(const std::vector<Condition>& selected);
 
 public slots:
@@ -58,13 +60,14 @@ public slots:
     void on_buttonRemove_clicked();
     void on_buttonDisable_clicked();
     void on_buttonEdit_clicked();
-    void on_buttonAddFilter_clicked();
+    void openConditionEditor(); // the full condition editor
 
     void on_listConditions_customContextMenuRequested(const QPoint &pos);
     void on_listConditions_itemDoubleClicked(QListWidgetItem *item);
     void on_listConditions_itemSelectionChanged();
 
-    void conditionsAdd();
+    void openAddFilter(); // plain filter list, or the full editor via "Custom filter..."
+
     void conditionsEdit();
     void conditionsCut();
     void conditionsCopy();

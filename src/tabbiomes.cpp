@@ -270,7 +270,7 @@ void AnalysisBiomes::runStatistics(Generator *g)
     }
 
     int bcnt = 0;
-    for (uint64_t c : qAsConst(idcnt))
+    for (uint64_t c : std::as_const(idcnt))
         bcnt += !!c;
     idcnt[256] = bcnt;
 
@@ -285,7 +285,7 @@ bool AnalysisBiomes::runLocate(Generator *g)
     applySeed(g, dat.locateDim, wi.seed);
     std::atomic_bool allocationFailed(false);
     QTreeWidgetItem *seeditem = nullptr;
-    for (int biomeId : qAsConst(dat.locateBiomes))
+    for (int biomeId : std::as_const(dat.locateBiomes))
     {
         QVector<BiomeCenter> centers = locateBiomeAreas(wi.mc, wi.large, wi.seed,
             dat.locateDim, biomeId, dat.x1, dat.z1, dat.x2, dat.z2, wi.y >> 2,
@@ -306,7 +306,7 @@ bool AnalysisBiomes::runLocate(Generator *g)
             seeditem->setData(0, Qt::UserRole+0, QVariant::fromValue(wi.seed));
             seeditem->setData(0, Qt::UserRole+1, QVariant::fromValue(dat.locateDim));
         }
-        for (const BiomeCenter& center : qAsConst(centers))
+        for (const BiomeCenter& center : std::as_const(centers))
         {
             QTreeWidgetItem* item = new QTreeWidgetItem(seeditem);
             item->setText(0, "-");
@@ -331,7 +331,7 @@ bool AnalysisBiomes::runLocate(Generator *g)
 QVariant BiomeTableModel::data(const QModelIndex& index, int role) const
 {
     if (!index.isValid())
-        return QVariant::Invalid;
+        return QVariant();
     static QVariant align = QVariant::fromValue((int)Qt::AlignCenter);
     if (role == Qt::TextAlignmentRole)
         return align;
@@ -370,7 +370,7 @@ bool BiomeSortProxy::lessThan(const QModelIndex& a, const QModelIndex& b) const
 QVariant BiomeTableModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
     if (section < 0)
-        return QVariant::Invalid;
+        return QVariant();
     if (role == Qt::InitialSortOrderRole)
         return QVariant::fromValue(Qt::AscendingOrder);
     if (orientation == Qt::Vertical && section < seeds.size())
@@ -402,7 +402,7 @@ QVariant BiomeTableModel::headerData(int section, Qt::Orientation orientation, i
 
 void BiomeTableModel::insertIds(QSet<int>& nids)
 {
-    for (int id : qAsConst(nids))
+    for (int id : std::as_const(nids))
     {
         QList<int>::iterator it = std::lower_bound(ids.begin(), ids.end(), id, cmp);
         if (it == ids.end() || *it != id)
@@ -456,7 +456,7 @@ bool BiomeHeader::event(QEvent *e)
     {
     case QEvent::HoverEnter:
     case QEvent::HoverMove:
-        hover = logicalIndexAt(((QHoverEvent*)e)->pos());
+        hover = logicalIndexAt(static_cast<QHoverEvent*>(e)->position().toPoint());
         break;
     case QEvent::Leave:
     case QEvent::HoverLeave:
@@ -469,75 +469,13 @@ bool BiomeHeader::event(QEvent *e)
 
 void BiomeHeader::paintSection(QPainter *painter, const QRect& rect, int section) const
 {
-    if (!rect.isValid() || !model())
-        return;
-
-    QStyleOptionHeader opt;
-    initStyleOption(&opt);
-
-    QStyle::State state = QStyle::State_None;
-    state |= QStyle::State_Enabled;
-    state |= QStyle::State_Active;
-    if (section == hover)
-        state |= QStyle::State_MouseOver;
-    if (section == pressed)
-        state |= QStyle::State_Sunken;
-
-    QString s = model()->headerData(section, orientation()).toString();
-    painter->setFont(font());
-    QFontMetrics fm = fontMetrics();
-    int indicator_height = 0;
-    int margin = 2 + 2 * style()->pixelMetric(QStyle::PM_HeaderMargin, 0, this);
-    QStyleOptionHeader::SortIndicator sortindicator = QStyleOptionHeader::None;
-
-    if (isSortIndicatorShown() && sortIndicatorSection() == section)
-    {
-        if (sortIndicatorOrder() == Qt::AscendingOrder)
-            sortindicator = QStyleOptionHeader::SortDown;
-        else
-            sortindicator = QStyleOptionHeader::SortUp;
-        indicator_height = 20;
-    }
-
-    int x = -rect.height() + margin + indicator_height;
-    int y = rect.left() + (rect.width() + fm.descent()) / 2 + margin;
-
-    opt.rect = rect;
-    opt.section = section;
-    opt.state = state;
-
-    QPointF oldBO = painter->brushOrigin();
-    painter->save();
-
-    painter->setBrushOrigin(opt.rect.topLeft());
-    style()->drawControl(QStyle::CE_Header, &opt, painter, this);
-
-    painter->restore();
-
-    painter->rotate(-90);
-    painter->drawText(x, y, s);
-    painter->rotate(+90);
-
-    if (sortindicator != QStyleOptionHeader::None)
-    {
-        opt.sortIndicator = sortindicator;
-        opt.rect = rect.adjusted(0, rect.bottom()-rect.y()-indicator_height, 0, 0);
-        style()->drawControl(QStyle::CE_Header, &opt, painter, this);
-        painter->setBrushOrigin(oldBO);
-    }
-    painter->setBrushOrigin(oldBO);
+    QHeaderView::paintSection(painter, rect, section);
 }
 
 QSize BiomeHeader::sectionSizeFromContents(int section) const
 {
-    if (!model())
-        return QSize();
-    int margin = 2 * style()->pixelMetric(QStyle::PM_HeaderMargin, 0, this);
-    QString s = model()->headerData(section, orientation()).toString();
-    QFontMetrics fm = fontMetrics();
-    return QSize(fm.height() + 2*margin, txtWidth(fm, s) + 2*margin);
+    return QHeaderView::sectionSizeFromContents(section);
 }
-
 
 TabBiomes::TabBiomes(MainWindow *parent)
     : QWidget(parent)
@@ -563,7 +501,10 @@ TabBiomes::TabBiomes(MainWindow *parent)
     connect(ui->table->verticalHeader(), &QHeaderView::sectionClicked, this, &TabBiomes::onVHeaderClicked);
 
     ui->table->setSortingEnabled(true);
+    // all rows are single-line text: ResizeToContents would measure every row
+    // (and every biome column) again after each batch of up to 65536 seeds
     ui->table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    ui->table->verticalHeader()->setDefaultSectionSize(ui->table->fontMetrics().height() + 4);
     ui->table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 
     configureResultTree(ui->treeLocate);
@@ -692,6 +633,17 @@ void TabBiomes::refreshBiomes(int activeid)
 {
     WorldInfo wi;
     parent->getSeed(&wi);
+    if (!ui->labelDescription->property("originalText").isValid())
+        ui->labelDescription->setProperty("originalText", ui->labelDescription->text());
+    // thread.wi.seed is advanced by the worker; the seed list is set at the start
+    const std::vector<uint64_t>& analysed = thread.seeds;
+    const bool previous = ui->treeLocate->topLevelItemCount() && !analysed.empty() &&
+        std::find(analysed.begin(), analysed.end(), wi.seed) == analysed.end();
+    ui->labelDescription->setText(!previous
+        ? ui->labelDescription->property("originalText").toString()
+        : analysed.size() == 1
+        ? tr("Results from seed %1. Analyze again for the current map.").arg(qint64(analysed.front()))
+        : tr("Results from other seeds. Analyze again for the current map."));
     const int dim = parent->getDim();
     const int locateTab = ui->tabWidget->indexOf(ui->tabLocate);
     const bool canLocate = dim != DIM_END;
@@ -705,7 +657,7 @@ void TabBiomes::refreshBiomes(int activeid)
                                     : getDimension(id) == dim;
     };
     QSet<int> supportedBiomes;
-    for (int id : qAsConst(selectedBiomes))
+    for (int id : std::as_const(selectedBiomes))
         if (isLocateBiome(id))
             supportedBiomes.insert(id);
     selectedBiomes = supportedBiomes;
@@ -915,7 +867,7 @@ void TabBiomes::onBufferTimeout()
         for (int i = 0, n = proxy->columnCount(); i < n; i++)
         {
             int id = proxy->headerData(i, Qt::Horizontal, Qt::UserRole).toInt();
-            ui->table->setColumnWidth(i, colwidth[id]);
+            ui->table->setColumnWidth(i, qMax(80, colwidth[id] + 28));
         }
         int rowheight = fm.height() + 4;
         ui->table->verticalHeader()->setDefaultSectionSize(rowheight);
@@ -1095,7 +1047,7 @@ void TabBiomes::exportResults(QTextStream& stream)
         stream << qte << "#Z2" << sep << datl.z2 << sep << "(" << (datl.z2*datl.scale) << ")" << qte << "\n";
         stream << qte << "#scale" << sep << "1:" << datl.scale << qte << "\n";
         QStringList biomeNames;
-        for (int id : qAsConst(datl.locateBiomes))
+        for (int id : std::as_const(datl.locateBiomes))
             biomeNames.append(QString::fromLatin1(biome2str(MC_NEWEST, id)));
         stream << qte << "#biomes" << sep << biomeNames.join(",") << qte << "\n";
 

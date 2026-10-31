@@ -78,7 +78,7 @@
      </property>
     </widget>
    </item>
-   <item row="16" column="0" colspan="2">
+   <item row="17" column="0" colspan="2">
     <widget class="QDialogButtonBox" name="buttonBox">
      <property name="orientation">
       <enum>Qt::Horizontal</enum>
@@ -139,11 +139,18 @@
    <item row="5" column="0">
     <widget class="QRadioButton" name="radioNoiseC">
      <property name="text">
-      <string>Contnentalness octaves:</string>
+      <string>Continentalness octaves:</string>
      </property>
     </widget>
    </item>
    <item row="15" column="0">
+    <widget class="QRadioButton" name="radioTerrain">
+     <property name="text">
+      <string>Terrain map</string>
+     </property>
+    </widget>
+   </item>
+   <item row="16" column="0">
     <widget class="QRadioButton" name="radioStruct">
      <property name="text">
       <string>Structure potential</string>

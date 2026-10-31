@@ -36,6 +36,8 @@ private slots:
 
 private:
     void setupCategories();
+    void trackChanges();
+    void setModified(bool modified);
 
 private:
     Ui::ConfigDialog *ui;

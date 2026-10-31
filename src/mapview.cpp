@@ -75,7 +75,7 @@ MapView::MapView(QWidget *parent)
     overlay->setFont(font());
 
     setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(this, SIGNAL(customContextMenuRequested(QPoint)), this, SLOT(showContextMenu(QPoint)));
+    connect(this, &QWidget::customContextMenuRequested, this, &MapView::showContextMenu);
     frameTimer.setSingleShot(true);
     frameTimer.setInterval(16);
     connect(&frameTimer, &QTimer::timeout, this, [this]() {
@@ -96,19 +96,6 @@ void MapView::deleteWorld()
         disconnect(world);
         delete world;
         world = nullptr;
-    }
-}
-
-void MapView::refresh()
-{
-    if (world)
-    {
-        WorldInfo wi = world->wi;
-        int dim = world->dim;
-        deleteWorld();
-        world = new QWorld(wi, dim, lopt);
-        QObject::connect(world, &QWorld::update, this, &MapView::mapUpdate);
-        world->setBiomeHighlights(biomeHighlights);
     }
 }
 
@@ -463,14 +450,14 @@ void MapView::showContextMenu(const QPoint &pos)
             wmax = w;
     }
 
-    menu->addAction(tr("Go to coordinates..."), this, &MapView::onGoto, QKeySequence(Qt::CTRL + Qt::Key_G));
+    menu->addAction(tr("Go to coordinates..."), QKeySequence(Qt::CTRL | Qt::Key_G), this, &MapView::onGoto);
     if (world)
     {
         QString txt = tr("Copy seed:");
         while (txtWidth(menu->fontMetrics(), txt + " ") < wmax)
             txt += " ";
         txt += QString::asprintf("%" PRId64, (int64_t)world->wi.seed);
-        menu->addAction(txt, this, &MapView::copySeed, QKeySequence::Copy);
+        menu->addAction(txt, QKeySequence::Copy, this, &MapView::copySeed);
     }
     for (auto& it : cpy_dat)
     {
