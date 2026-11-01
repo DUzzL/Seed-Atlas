@@ -389,7 +389,7 @@ QMenu::separator {
     margin: 5px 8px;
 }
 
-QAbstractItemView, QTableView, QTreeView, QListView, QTableWidget, QTreeWidget {
+QAbstractItemView, QTableView, QTreeView, QListView, QTableWidget, QTreeWidget, ResultTable {
     color: @TEXT@;
     background-color: @INPUT@;
     alternate-background-color: @ALTERNATE@;

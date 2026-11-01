@@ -6,7 +6,6 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
-#include <QFontDatabase>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QPainter>
@@ -57,9 +56,6 @@ MapView::MapView(QWidget *parent)
     , config()
 {
     memset(sshow, 0, sizeof(sshow));
-
-    QFont fmono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    setFont(fmono);
 
     QPalette pal = palette();
     pal.setColor(QPalette::Dark, Qt::black);

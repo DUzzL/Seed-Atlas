@@ -6,8 +6,8 @@
 
 class QLineEdit;
 class QSpinBox;
-class QTreeWidget;
 class QPushButton;
+class ResultTable;
 
 class AnalysisSlime : public QThread
 {
@@ -18,10 +18,12 @@ public:
     void run() override;
 
 signals:
-    void resultReady(QTreeWidgetItem *item);
     void failed(const QString& message);
 
 public:
+    // the sorted results, COLUMNS values per row (see TabSlime)
+    static constexpr int COLUMNS = 10;
+    std::vector<int> rows;
     WorldInfo wi;
     std::atomic_bool stop;
     std::atomic_uint64_t tileDone;
@@ -48,21 +50,17 @@ private slots:
     void onStartClicked();
     void onExportClicked();
     void onFromVisible();
-    void onResultReady(QTreeWidgetItem *item);
     void onFailed(const QString& message);
     void onFinished();
     void onProgress();
-    void onItemClicked(QTreeWidgetItem *item, int column);
-
-private:
-    void exportResults(QTextStream& stream);
+    void onRowClicked(int row);
 
 private:
     MainWindow *parent;
     AnalysisSlime thread;
     QLineEdit *lineX1, *lineZ1, *lineX2, *lineZ2;
     QSpinBox *spinWindow, *spinMinimum;
-    QTreeWidget *results;
+    ResultTable *results;
     QPushButton *pushStart, *pushExport;
     class QLabel *labelStatus;
     class QLabel *labelDimension; // shown outside the Overworld

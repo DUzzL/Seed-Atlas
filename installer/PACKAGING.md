@@ -124,7 +124,13 @@ flatpak run org.seedatlas.SeedAtlas
 
 ## Build Linux and macOS without local machines
 
-The workflow `.github/workflows/native-packages.yml` builds both packages on
+The workflow `.github/workflows/unsigned-release.yml` runs on every push to
+the release branch and builds the unsigned Windows setup, the Linux Flatpak,
+and the universal unsigned macOS DMG from the same commit, so all three share
+its hash as their build ID. The run contains the three installers as
+downloadable artifacts.
+
+For a signed and notarized DMG, the workflow `.github/workflows/native-packages.yml` builds both packages on
 native GitHub-hosted systems. After this folder is pushed to a GitHub
 repository, open **Actions**, select **Native packages**, and choose
 **Run workflow**. The finished run contains the Flatpak and DMG as downloadable

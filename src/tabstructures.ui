@@ -111,12 +111,7 @@
         </layout>
        </item>
        <item row="1" column="0">
-        <widget class="QTreeWidget" name="treeStructs">
-         <property name="font">
-          <font>
-           <family>Courier New</family>
-          </font>
-         </property>
+        <widget class="ResultTree" name="treeStructs">
          <property name="editTriggers">
           <set>QAbstractItemView::NoEditTriggers</set>
          </property>
@@ -213,12 +208,7 @@
         </layout>
        </item>
        <item row="1" column="0">
-        <widget class="QTreeWidget" name="treeDensity">
-         <property name="font">
-          <font>
-           <family>Courier New</family>
-          </font>
-         </property>
+        <widget class="ResultTree" name="treeDensity">
          <property name="contextMenuPolicy">
           <enum>Qt::CustomContextMenu</enum>
          </property>
@@ -331,12 +321,7 @@
         </layout>
        </item>
        <item row="1" column="0">
-        <widget class="QTreeWidget" name="treeFortresses">
-         <property name="font">
-          <font>
-           <family>Courier New</family>
-          </font>
-         </property>
+        <widget class="ResultTree" name="treeFortresses">
          <property name="editTriggers">
           <set>QAbstractItemView::NoEditTriggers</set>
          </property>
@@ -477,6 +462,11 @@
   </layout>
  </widget>
  <customwidgets>
+  <customwidget>
+   <class>ResultTree</class>
+   <extends>QTreeWidget</extends>
+   <header>src/resultlist.h</header>
+  </customwidget>
   <customwidget>
    <class>CoordEdit</class>
    <extends>QLineEdit</extends>

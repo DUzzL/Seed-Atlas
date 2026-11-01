@@ -4,7 +4,6 @@
 #include "config.h"
 
 #include <QApplication>
-#include <QFontDatabase>
 
 bool getLayerOptionInfo(LayerOptInfo *info, int mode, int disp, WorldInfo wi)
 {
@@ -74,13 +73,14 @@ bool getLayerOptionInfo(LayerOptInfo *info, int mode, int disp, WorldInfo wi)
 
         if (disp == 0)
         {
-            txt += QString("%1..    (all)   x%2").arg(QChar(0x03A3)).arg(amptot, 0, 'f', 6);
+            // tab separated columns, aligned by the combo box delegate
+            txt += QString("%1..\t(all)\tx%2").arg(QChar(0x03A3)).arg(amptot, 0, 'f', 6);
             tip += QApplication::translate("LayerDialog", "All octaves");
         }
         else
         {
             txt += QString("%1..").arg(QChar(0x03A3));
-            txt += QString::asprintf("%d%c  1:%-5.0f x%.6f", idx, ab?'B':'A', 4/l, a);
+            txt += QString::asprintf("%d%c\t1:%.0f\tx%.6f", idx, ab?'B':'A', 4/l, a);
             tip += QApplication::translate("LayerDialog", "Contribution of the %n most significant octaves out of %1 total.", "", disp).arg(2*noct);
         }
         tip += "\n" + QApplication::translate("LayerDialog", "Total contribution: %1 = %2%").arg(ampsum).arg(100 * ampsum / amptot, 0, 'f', 1);
@@ -135,10 +135,9 @@ LayerDialog::LayerDialog(QWidget *parent, WorldInfo wi)
             LayerOptInfo info;
             if (!getLayerOptionInfo(&info, i, j, wi))
                 break;
-            QString s = info.summary.leftJustified(24);
+            combo[i]->addItem(info.summary);
             if (j <= 9)
-                s += "\tALT+"+QString::number(j);
-            combo[i]->addItem(s);
+                combo[i]->setItemData(combo[i]->count() - 1, "ALT+" + QString::number(j), ComboBoxDelegate::ShortcutRole);
             combo[i]->setItemData(combo[i]->count()-1, info.tooltip, Qt::ToolTipRole);
         }
         connect(combo[i], QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int){
@@ -147,14 +146,11 @@ LayerDialog::LayerDialog(QWidget *parent, WorldInfo wi)
         onComboChange(combo[i]);
     }
 
-    QFont fmono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     for (int i = 0; i < LOPT_MAX; i++)
     {
         if (!radio[i])
             continue;
         connect(radio[i], &QRadioButton::toggled, this, &LayerDialog::onRadioChange);
-        if (combo[i])
-            combo[i]->setFont(fmono);
         if (i >= LOPT_NOISE_T_4 && i <= LOPT_NOISE_W_4)
         {
             radio[i]->setEnabled(wi.mc > MC_1_17);

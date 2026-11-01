@@ -1,6 +1,7 @@
 #include "tabslime.h"
 
 #include "message.h"
+#include "resultlist.h"
 #include "util.h"
 #include "widgets.h"
 
@@ -9,13 +10,9 @@
 #include <QIntValidator>
 #include <QLabel>
 #include <QLineEdit>
-#include <QFile>
-#include <QFileDialog>
-#include <QFileInfo>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTimer>
-#include <QTreeWidget>
 #include <algorithm>
 #include <cmath>
 #include <mutex>
@@ -142,7 +139,8 @@ void AnalysisSlime::run()
     if (stop)
         return;
 
-    QTreeWidgetItem *batch = nullptr;
+    // The rows are prepared here, on the analysis thread, in the compact form
+    // the result table shows directly; the GUI only takes them over.
     try
     {
         std::sort(found.begin(), found.end(), [](const SlimeResult& a, const SlimeResult& b) {
@@ -151,52 +149,24 @@ void AnalysisSlime::run()
             return a.x < b.x;
         });
         resultCount.store(found.size(), std::memory_order_relaxed);
+        std::vector<int> table;
+        table.reserve(found.size() * COLUMNS);
         for (const SlimeResult& result : found)
         {
-            if (stop.load(std::memory_order_relaxed))
-                break;
-            if (!batch)
-                batch = new QTreeWidgetItem;
-            const int bx1 = result.x * 16;
-            const int bz1 = result.z * 16;
-            const int bx2 = (result.x + window) * 16 - 1;
-            const int bz2 = (result.z + window) * 16 - 1;
-            QTreeWidgetItem *item = new QTreeWidgetItem(batch);
-            item->setData(0, Qt::DisplayRole, result.count);
-            item->setData(1, Qt::DisplayRole, window);
-            item->setData(2, Qt::DisplayRole, result.x);
-            item->setData(3, Qt::DisplayRole, result.z);
-            item->setData(4, Qt::DisplayRole, result.x + window - 1);
-            item->setData(5, Qt::DisplayRole, result.z + window - 1);
-            item->setData(6, Qt::DisplayRole, bx1);
-            item->setData(7, Qt::DisplayRole, bz1);
-            item->setData(8, Qt::DisplayRole, bx2);
-            item->setData(9, Qt::DisplayRole, bz2);
-            item->setData(0, Qt::UserRole,
-                QVariant::fromValue<qulonglong>(static_cast<qulonglong>(wi.seed)));
-            item->setData(0, Qt::UserRole+1, bx1);
-            item->setData(0, Qt::UserRole+2, bz1);
-            item->setData(0, Qt::UserRole+3, bx2);
-            item->setData(0, Qt::UserRole+4, bz2);
-            if (batch->childCount() >= 256)
-            {
-                emit resultReady(batch);
-                batch = nullptr;
-            }
+            table.insert(table.end(), {
+                result.count, window, result.x, result.z,
+                result.x + window - 1, result.z + window - 1,
+                result.x * 16, result.z * 16,
+                (result.x + window) * 16 - 1, (result.z + window) * 16 - 1 });
         }
+        rows.swap(table);
     }
     catch (const std::bad_alloc&)
     {
-        delete batch;
         stop.store(true, std::memory_order_relaxed);
         emit failed(tr("Not enough memory to display all slime-chunk results. "
             "Use a smaller area or a higher minimum."));
-        return;
     }
-    if (batch && !stop.load(std::memory_order_relaxed))
-        emit resultReady(batch);
-    else
-        delete batch;
 }
 
 TabSlime::TabSlime(MainWindow *parent)
@@ -267,20 +237,14 @@ TabSlime::TabSlime(MainWindow *parent)
         tr("Only squares with at least this many slime chunks are listed. Higher values return fewer, denser places.")), 3, 1);
     layout->addLayout(options);
 
-    results = new QTreeWidget(this);
-    results->setColumnCount(10);
-    results->setHeaderLabels({tr("slime"), tr("window"), tr("chunk X1"), tr("chunk Z1"),
+    results = new ResultTable({tr("slime"), tr("window"), tr("chunk X1"), tr("chunk Z1"),
         tr("chunk X2"), tr("chunk Z2"), tr("block X1"), tr("block Z1"),
-        tr("block X2"), tr("block Z2")});
-    configureResultTree(results);
-    setResultTreeSort(results, 0, Qt::DescendingOrder, false);
+        tr("block X2"), tr("block Z2")}, this);
+    results->setSort(0, Qt::DescendingOrder);
     // ten columns do not fit the panel when stretched; keep headers readable
     results->header()->setMinimumSectionSize(24);
-    results->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     results->header()->setStretchLastSection(true);
     results->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    connect(results->header(), &QHeaderView::sectionClicked, this,
-        [this](int section) { cycleResultTreeSort(results, section); });
     layout->addWidget(results, 1);
     labelStatus = new QLabel(tr("Ready"), this);
     labelStatus->setWordWrap(true);
@@ -298,7 +262,7 @@ TabSlime::TabSlime(MainWindow *parent)
 
     const auto invalidate = [this]() {
         if (!thread.isRunning()) {
-            results->clear();
+            results->clearRows();
             pushExport->setEnabled(false);
             labelStatus->setText(tr("Inputs changed. Analyze again."));
         }
@@ -314,8 +278,8 @@ TabSlime::TabSlime(MainWindow *parent)
     connect(fromVisible, &QPushButton::clicked, this, &TabSlime::onFromVisible);
     connect(pushStart, &QPushButton::clicked, this, &TabSlime::onStartClicked);
     connect(pushExport, &QPushButton::clicked, this, &TabSlime::onExportClicked);
-    connect(results, &QTreeWidget::itemClicked, this, &TabSlime::onItemClicked);
-    connect(&thread, &AnalysisSlime::resultReady, this, &TabSlime::onResultReady, Qt::BlockingQueuedConnection);
+    connect(results, &ResultTable::rowClicked, this, &TabSlime::onRowClicked);
+    connect(results, &ResultTable::exportRequested, this, &TabSlime::onExportClicked);
     connect(&thread, &AnalysisSlime::failed, this, &TabSlime::onFailed, Qt::QueuedConnection);
     connect(&thread, &AnalysisSlime::finished, this, &TabSlime::onFinished, Qt::QueuedConnection);
 }
@@ -351,8 +315,8 @@ void TabSlime::refresh()
 {
     WorldInfo current;
     parent->getSeed(&current);
-    if (!thread.isRunning() && results->topLevelItemCount() && current.seed != thread.wi.seed) {
-        results->clear();
+    if (!thread.isRunning() && results->rowCount() && current.seed != thread.wi.seed) {
+        results->clearRows();
         pushExport->setEnabled(false);
         labelStatus->setText(tr("Seed changed. Analyze again."));
     }
@@ -378,7 +342,8 @@ void TabSlime::onStartClicked()
     if (thread.z2 < thread.z1) std::swap(thread.z1, thread.z2);
     thread.window = spinWindow->value();
     thread.minimum = std::min(spinMinimum->value(), thread.window * thread.window);
-    results->clear();
+    thread.rows.clear();
+    results->clearRows();
     pushExport->setEnabled(false);
     pushStart->setText(tr("Stop"));
     thread.stop = false;
@@ -387,66 +352,19 @@ void TabSlime::onStartClicked()
     QTimer::singleShot(250, this, &TabSlime::onProgress);
 }
 
-void TabSlime::exportResults(QTextStream& stream)
-{
-    const QString quote = parent->config.quote;
-    const QString separator = parent->config.separator;
-    const auto writeLine = [&](QStringList fields) {
-        for (QString& field : fields)
-        {
-            if (!quote.isEmpty())
-                field.replace(quote, quote + quote);
-            if (field.contains(separator) || field.contains('\n'))
-                field = quote + field + quote;
-        }
-        stream << fields.join(separator) << '\n';
-    };
-
-    stream << "Sep=" << separator << '\n';
-    writeLine({"#seed", QString::number(qint64(thread.wi.seed))});
-    writeLine({"#chunk_x1", QString::number(thread.x1)});
-    writeLine({"#chunk_z1", QString::number(thread.z1)});
-    writeLine({"#chunk_x2", QString::number(thread.x2)});
-    writeLine({"#chunk_z2", QString::number(thread.z2)});
-    writeLine({"#window_chunks", QString::number(thread.window)});
-    writeLine({"#minimum_slime_chunks", QString::number(thread.minimum)});
-
-    QStringList headers;
-    for (int column = 0; column < results->columnCount(); column++)
-        headers.append(results->headerItem()->text(column));
-    writeLine(headers);
-    for (int row = 0; row < results->topLevelItemCount(); row++)
-    {
-        QTreeWidgetItem *item = results->topLevelItem(row);
-        QStringList fields;
-        for (int column = 0; column < results->columnCount(); column++)
-            fields.append(item->text(column));
-        writeLine(fields);
-    }
-}
-
 void TabSlime::onExportClicked()
 {
-#if WASM
-    QByteArray content;
-    QTextStream stream(&content);
-    exportResults(stream);
-    QFileDialog::saveFileContent(content, "slime-chunks.csv");
-#else
-    const QString fileName = QFileDialog::getSaveFileName(this, tr("Export slime-chunk analysis"),
-        parent->prevdir, tr("Text files (*.txt *csv);;Any files (*)"));
-    if (fileName.isEmpty())
-        return;
-    QFile file(fileName);
-    parent->prevdir = QFileInfo(fileName).absolutePath();
-    if (!file.open(QIODevice::WriteOnly))
-    {
-        warn(parent, tr("Failed to open file for export:\n\"%1\"").arg(fileName));
-        return;
-    }
-    QTextStream stream(&file);
-    exportResults(stream);
-#endif
+    exportCsv(this, parent->prevdir, tr("Export slime-chunk analysis"), "slime-chunks.csv",
+        parent->config, [this](CsvWriter& csv) {
+        csv.row({"#seed", QString::number(qint64(thread.wi.seed))});
+        csv.row({"#chunk_x1", QString::number(thread.x1)});
+        csv.row({"#chunk_z1", QString::number(thread.z1)});
+        csv.row({"#chunk_x2", QString::number(thread.x2)});
+        csv.row({"#chunk_z2", QString::number(thread.z2)});
+        csv.row({"#window_chunks", QString::number(thread.window)});
+        csv.row({"#minimum_slime_chunks", QString::number(thread.minimum)});
+        results->writeCsv(csv);
+    });
 }
 
 void TabSlime::onFromVisible()
@@ -459,14 +377,6 @@ void TabSlime::onFromVisible()
     lineZ2->setText(QString::number(blockToChunk(z2)));
 }
 
-void TabSlime::onResultReady(QTreeWidgetItem *item)
-{
-    results->setUpdatesEnabled(false);
-    results->addTopLevelItems(item->takeChildren());
-    results->setUpdatesEnabled(true);
-    delete item;
-}
-
 void TabSlime::onFailed(const QString& message)
 {
     warn(this, message);
@@ -474,12 +384,13 @@ void TabSlime::onFailed(const QString& message)
 
 void TabSlime::onFinished()
 {
-    resortResultTree(results);
+    // taking over the prepared rows costs no time, however many there are
+    results->setRows(std::move(thread.rows));
     labelStatus->setText(tr("%1 — seed %2, %3 results.")
         .arg(thread.stop ? tr("Stopped") : tr("Complete"))
-        .arg(qint64(thread.wi.seed)).arg(results->topLevelItemCount()));
+        .arg(qint64(thread.wi.seed)).arg(results->rowCount()));
     pushStart->setText(tr("Analyze"));
-    pushExport->setEnabled(!thread.stop && results->topLevelItemCount() > 0);
+    pushExport->setEnabled(!thread.stop && results->rowCount() > 0);
 }
 
 void TabSlime::onProgress()
@@ -501,12 +412,12 @@ void TabSlime::onProgress()
     QTimer::singleShot(250, this, &TabSlime::onProgress);
 }
 
-void TabSlime::onItemClicked(QTreeWidgetItem *item, int)
-{
-    const int x1 = item->data(0, Qt::UserRole+1).toInt();
-    const int z1 = item->data(0, Qt::UserRole+2).toInt();
-    const int x2 = item->data(0, Qt::UserRole+3).toInt();
-    const int z2 = item->data(0, Qt::UserRole+4).toInt();
+void TabSlime::onRowClicked(int row)
+{   // the block area of the square
+    const int x1 = results->value(row, 6);
+    const int z1 = results->value(row, 7);
+    const int x2 = results->value(row, 8);
+    const int z2 = results->value(row, 9);
     const qreal viewScale = std::max<qreal>(1.0, (x2 - x1 + 1) / 400.0);
     parent->getMapView()->setView((x1 + x2 + 1) / 2.0, (z1 + z2 + 1) / 2.0, viewScale);
     Shape square;

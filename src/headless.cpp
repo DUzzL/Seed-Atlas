@@ -220,6 +220,7 @@ void Headless::progressTimeout()
     // the values stay unset when the progress lock is busy
     if (!sthread.getProgress(&status, &prog, &end, &seed, &min, &avg, &max))
         return;
+    status.replace(QChar(0x2007), ' '); // figure spaces are for the GUI font
 
     if (progressfp)
     {

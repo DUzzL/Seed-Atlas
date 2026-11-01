@@ -487,9 +487,21 @@ QPixmap getPix(QString rc, int width)
         pix = canvas;
     }
     else
-    {   // without a target size, QIcon scales the pixmap to the toolbar and
-        // menu sizes; a large nearest-neighbour copy keeps the pixel art crisp
+    {   // Without a target size, QIcon scales the pixmap to the toolbar and
+        // menu sizes: a large nearest-neighbour copy keeps the pixel art crisp,
+        // and a square canvas keeps narrow icons (the 8x11 village) centered
+        // in their slot like the square ones.
         pix = pix.scaled(pix.size() * 8, Qt::KeepAspectRatio, Qt::FastTransformation);
+        const int side = qMax(pix.width(), pix.height());
+        if (pix.width() != pix.height())
+        {
+            QPixmap canvas(side, side);
+            canvas.fill(Qt::transparent);
+            QPainter painter(&canvas);
+            painter.drawPixmap((side - pix.width()) / 2, (side - pix.height()) / 2, pix);
+            painter.end();
+            pix = canvas;
+        }
     }
 
     return pix;

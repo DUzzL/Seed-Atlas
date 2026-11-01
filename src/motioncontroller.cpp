@@ -131,8 +131,6 @@ bool MotionController::shouldAnimatePopup(const QWidget *widget) const
         return false;
     if (widget->inherits("QComboBoxPrivateContainer"))
         return false; // dropdowns roll down on their own
-    if (widget->objectName() == QLatin1String("infoPopup"))
-        return false; // help bubbles appear in place
     // windowType(): testFlag(Qt::Popup) is also true for Qt::Tool windows,
     // whose bits include those of Qt::Popup
     return qobject_cast<const QDialog*>(widget) || qobject_cast<const QMenu*>(widget) ||

@@ -38,17 +38,12 @@
           <item row="3" column="0" colspan="2">
            <widget class="QLabel" name="label_13">
             <property name="text">
-             <string>Monospace font:</string>
+             <string>Code font:</string>
             </property>
            </widget>
           </item>
           <item row="3" column="2">
            <widget class="QFontComboBox" name="fontComboMono">
-            <property name="font">
-             <font>
-              <family>Courier New</family>
-             </font>
-            </property>
             <property name="fontFilters">
              <set>QFontComboBox::MonospacedFonts</set>
             </property>

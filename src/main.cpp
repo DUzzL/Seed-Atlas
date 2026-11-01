@@ -7,6 +7,7 @@
 #include "tabbiomes.h"
 #include "tablocations.h"
 #include "tabslime.h"
+#include "resultlist.h"
 #include "tabstructures.h"
 #include "world.h"
 #include "seedtables.h"
@@ -235,33 +236,6 @@ bool testSlimeCompleteness(const QString& name, QTextStream& report,
     bool sorted = true;
     bool first = true;
     int previousCount = 0, previousX = 0, previousZ = 0;
-    QObject::connect(&analysis, &AnalysisSlime::resultReady, &analysis,
-        [&](QTreeWidgetItem *batch) {
-            for (int index = 0; index < batch->childCount(); index++)
-            {
-                const QTreeWidgetItem *item = batch->child(index);
-                const int count = item->data(0, Qt::DisplayRole).toInt();
-                const int x = item->data(2, Qt::DisplayRole).toInt();
-                const int z = item->data(3, Qt::DisplayRole).toInt();
-                if (!first && (count > previousCount ||
-                        (count == previousCount && (z < previousZ ||
-                        (z == previousZ && x < previousX)))))
-                    sorted = false;
-                first = false;
-                previousCount = count;
-                previousX = x;
-                previousZ = z;
-                delivered++;
-                sumX += x;
-                sumZ += z;
-                sumCount += count;
-                fnvInt32(hash, count);
-                fnvInt32(hash, x);
-                fnvInt32(hash, z);
-            }
-            delete batch;
-        }, Qt::DirectConnection);
-
     QElapsedTimer elapsed;
     elapsed.start();
     analysis.start();
@@ -270,6 +244,29 @@ bool testSlimeCompleteness(const QString& name, QTextStream& report,
     {
         analysis.stop.store(true, std::memory_order_relaxed);
         analysis.wait(2000);
+    }
+    // the rows handed to the result table: slime count, window, chunk x, chunk z, ...
+    for (size_t row = 0; row + AnalysisSlime::COLUMNS <= analysis.rows.size();
+            row += AnalysisSlime::COLUMNS)
+    {
+        const int count = analysis.rows[row + 0];
+        const int x = analysis.rows[row + 2];
+        const int z = analysis.rows[row + 3];
+        if (!first && (count > previousCount ||
+                (count == previousCount && (z < previousZ ||
+                (z == previousZ && x < previousX)))))
+            sorted = false;
+        first = false;
+        previousCount = count;
+        previousX = x;
+        previousZ = z;
+        delivered++;
+        sumX += x;
+        sumZ += z;
+        sumCount += count;
+        fnvInt32(hash, count);
+        fnvInt32(hash, x);
+        fnvInt32(hash, z);
     }
     const uint64_t count = analysis.resultCount.load(std::memory_order_relaxed);
     const uint64_t done = analysis.tileDone.load(std::memory_order_relaxed);
@@ -1431,11 +1428,11 @@ int main(int argc, char *argv[])
                         while (analysis && analysis->isRunning() && timeout.elapsed() < 5000)
                             QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
                         QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-                        auto rows = slime->findChild<QTreeWidget *>();
-                        interactionOk &= rows && rows->topLevelItemCount() > 0;
+                        auto rows = slime->findChild<ResultTable *>();
+                        interactionOk &= rows && rows->rowCount() > 0;
                         auditWorld.seed = 42;
                         mw.setSeed(auditWorld, DIM_OVERWORLD);
-                        interactionOk &= rows && rows->topLevelItemCount() == 0;
+                        interactionOk &= rows && rows->rowCount() == 0;
                     } else interactionOk = false;
                     for (const char *name : {"village", "ancient_city", "treasure", "spawn"}) {
                         auto icon = getPix(name, 20);

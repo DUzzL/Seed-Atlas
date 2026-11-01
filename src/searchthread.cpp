@@ -786,10 +786,12 @@ bool SearchMaster::getProgress(QString *status, uint64_t *prog, uint64_t *end, u
             eta = QString("%1:%2").arg(s / 60).arg(s % 60, 2, 10, QLatin1Char('0'));
     }
     *status = QString("seeds/sec: %1 min: %2 max: %3 isize: %4 eta: %5")
-        .arg(getAbbrNum(*avg), -8)
-        .arg(getAbbrNum(*min), -8)
-        .arg(getAbbrNum(*max), -8)
-        .arg(itemsize, -3)
+        // padded with figure spaces, which are as wide as the digits of the
+        // proportional UI font, so the values do not shift while they change
+        .arg(getAbbrNum(*avg), -8, QChar(0x2007))
+        .arg(getAbbrNum(*min), -8, QChar(0x2007))
+        .arg(getAbbrNum(*max), -8, QChar(0x2007))
+        .arg(itemsize, -3, 10, QChar(0x2007))
         .arg(eta);
 
     return valid;

@@ -1,8 +1,7 @@
-name: Unsigned release (Windows + Linux)
+name: Unsigned release (Windows + Linux + macOS)
 
-# Builds the unsigned Windows setup and the Linux Flatpak for the current
-# release source so all packages can share one build ID. The macOS DMG is
-# built locally (see buildguide.md) and uses the same SEED_ATLAS_BUILD_ID.
+# Builds the unsigned Windows setup, the Linux Flatpak and the universal macOS
+# DMG from the same commit, so all packages share its hash as their build ID.
 on:
   push:
     branches:
@@ -14,9 +13,6 @@ permissions:
 
 env:
   SEED_ATLAS_VERSION: 4.3.dev0
-  # Must match the ID used for the macOS DMG of this release. Do not change
-  # without repackaging every platform.
-  SEED_ATLAS_BUILD_ID: 3bb0471645dd4ac7c139c1aa09649335417ed318
 
 jobs:
   windows:
@@ -109,5 +105,38 @@ jobs:
           name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-Linux-Flatpak
           path: |
             dist/*.flatpak
+            dist/update.json
+          if-no-files-found: error
+
+  dmg:
+    name: macOS DMG (universal)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Qt 6.8.3 universal SDK
+        run: |
+          python3 -m venv "$RUNNER_TEMP/aqt-venv"
+          "$RUNNER_TEMP/aqt-venv/bin/python" -m pip install aqtinstall==3.3.0
+          "$RUNNER_TEMP/aqt-venv/bin/python" -m aqt install-qt mac desktop 6.8.3 clang_64 \
+            --outputdir "$HOME/Qt"
+      - name: Build and verify the DMG
+        env:
+          SEED_ATLAS_UNIVERSAL: "1"
+          SEED_ATLAS_UNSIGNED: "1"
+        run: |
+          export QT_PREFIX="$HOME/Qt/6.8.3/macos"
+          bash installer/macos/build-dmg.sh "$SEED_ATLAS_VERSION"
+      - name: Smoke-test the app in the DMG
+        run: |
+          dmg="$(ls dist/*.dmg | head -n 1)"
+          mount_path="$(hdiutil attach -nobrowse -readonly "$dmg" | awk -F '\t' '/\/Volumes\// { print $NF }')"
+          trap 'hdiutil detach "$mount_path" >/dev/null 2>&1 || true' EXIT
+          "$mount_path/Seed Atlas.app/Contents/MacOS/seed-atlas" --version | tee version.txt
+          grep -q "seed-atlas" version.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Seed-Atlas-${{ env.SEED_ATLAS_VERSION }}-macOS-DMG
+          path: |
+            dist/*.dmg
             dist/update.json
           if-no-files-found: error

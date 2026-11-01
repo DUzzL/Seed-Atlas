@@ -4,6 +4,7 @@
 #include "config.h"
 #include "message.h"
 #include "util.h"
+#include "resultlist.h"
 
 #include <QDebug>
 #include <QElapsedTimer>
@@ -147,24 +148,20 @@ TabLocations::TabLocations(MainWindow *parent)
     , thread()
     , timer()
     , maxresults(1)
-    , nextupdate()
-    , updt(20)
 {
     ui->setupUi(this);
     connect(parent->formCond, &FormConditions::changed, this, [this]() {
         thread.stop = true;
         resultsInvalidated = true;
-        ui->treeWidget->clear();
-        qDeleteAll(qbuf);
-        qbuf.clear();
+        ui->treeWidget->clearResults();
         ui->pushExport->setEnabled(false);
         ui->labelStatus->setText(tr("Filters changed. Analyze again."));
     });
     ui->treeWidget->header()->setMinimumSectionSize(24);
     ui->treeWidget->header()->setSectionResizeMode(QHeaderView::Stretch);
     ui->treeWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    configureResultTree(ui->treeWidget);
     ui->treeWidget->header()->setSectionsClickable(false); // sortable triggers are not necessary
+    connect(ui->treeWidget, &ResultTree::exportRequested, this, &TabLocations::on_pushExport_clicked);
 
     ui->comboSampling->addItem(tr("Lattice points in radial order") + ", ||α·n, α·m|| < r", SMODE_RADIAL_GRID);
     ui->comboSampling->addItem(tr("Square spiral") + ", (α·n, α·m)", SMODE_SQUARE_SPIRAL);
@@ -175,7 +172,15 @@ TabLocations::TabLocations(MainWindow *parent)
     ui->lineX->setValidator(new QIntValidator((int)-3e7, (int)3e7, this));
     ui->lineZ->setValidator(new QIntValidator((int)-3e7, (int)3e7, this));
 
-    connect(&thread, &AnalysisLocations::itemDone, this, &TabLocations::onAnalysisItemDone, Qt::BlockingQueuedConnection);
+    // runs on the analysis thread; the list adds the rows in a few batches
+    connect(&thread, &AnalysisLocations::itemDone, ui->treeWidget, [this](QTreeWidgetItem *item) {
+        if (resultsInvalidated) {
+            delete item;
+            return;
+        }
+        if (ui->treeWidget->post(item) >= maxresults)
+            thread.stop = true;
+    }, Qt::DirectConnection);
     connect(&thread, &AnalysisLocations::finished, this, &TabLocations::onAnalysisFinished);
 
     connect(&timer, &QTimer::timeout, this, QOverload<>::of(&TabLocations::onProgressTimeout));
@@ -233,27 +238,10 @@ void TabLocations::load(QSettings& settings)
     maxresults = settings.value("config/maxMatching", maxresults).toInt();
 }
 
-void TabLocations::onAnalysisItemDone(QTreeWidgetItem *item)
-{
-    if (resultsInvalidated) { delete item; return; }
-    if (qbuf.size() + ui->treeWidget->topLevelItemCount() >= maxresults)
-    {
-        thread.stop = true;
-    }
-
-    qbuf.push_back(item);
-    quint64 ns = elapsed.nsecsElapsed();
-    if (ns > nextupdate)
-    {
-        nextupdate = ns + updt * 1e6;
-        QTimer::singleShot(updt, this, &TabLocations::onBufferTimeout);
-    }
-}
-
 void TabLocations::onAnalysisFinished()
 {
     timer.stop();
-    onBufferTimeout();
+    ui->treeWidget->finish();
     ui->pushExport->setEnabled(ui->treeWidget->topLevelItemCount() > 0);
     ui->pushStart->setChecked(false);
     ui->pushStart->setText(tr("Analyze"));
@@ -263,27 +251,6 @@ void TabLocations::onAnalysisFinished()
         : tr("Analysis complete. %1 results.").arg(ui->treeWidget->topLevelItemCount()));
     if (parent)
         parent->setProgressIndication();
-}
-
-void TabLocations::onBufferTimeout()
-{
-    uint64_t t = -elapsed.elapsed();
-
-    if (!qbuf.empty())
-    {
-        ui->treeWidget->setUpdatesEnabled(false);
-        ui->treeWidget->addTopLevelItems(qbuf);
-        ui->treeWidget->setUpdatesEnabled(true);
-        qbuf.clear();
-        onProgressTimeout();
-    }
-
-    QApplication::processEvents(); // force processing of events so we can time correctly
-
-    t += elapsed.elapsed();
-    if (8*t > updt)
-        updt = 4*t;
-    nextupdate = elapsed.nsecsElapsed() + 1e6 * updt;
 }
 
 void TabLocations::onProgressTimeout()
@@ -305,10 +272,6 @@ void TabLocations::on_pushStart_clicked()
         ui->pushStart->setText(tr("Stopping..."));
         return;
     }
-    updt = 20;
-    nextupdate = 0;
-    elapsed.start();
-
     thread.pos.clear();
     int mode = ui->comboSampling->currentData().toInt();
     int a = ui->lineA->text().toInt();
@@ -467,9 +430,7 @@ void TabLocations::on_pushStart_clicked()
         return;
     }
 
-    //ui->treeWidget->setSortingEnabled(false);
-    while (ui->treeWidget->topLevelItemCount() > 0)
-        delete ui->treeWidget->takeTopLevelItem(0);
+    ui->treeWidget->clearResults();
 
     ui->pushExport->setEnabled(false);
     ui->pushStart->setChecked(true);
@@ -556,68 +517,11 @@ void TabLocations::on_pushExpand_clicked()
         ui->treeWidget->collapseAll();
 }
 
-static void csvline(QTextStream& stream, const QString& qte, const QString& sep, QStringList& cols)
-{
-    if (qte.isEmpty())
-    {
-        for (QString& s : cols)
-            if (s.contains(sep))
-                s = "\"" + s + "\"";
-    }
-    stream << qte << cols.join(sep) << qte << "\n";
-}
-
-void TabLocations::exportResults(QTextStream& stream)
-{
-    QString qte = parent->config.quote;
-    QString sep = parent->config.separator;
-
-    stream << "Sep=" + sep + "\n";
-    sep = qte + sep + qte;
-
-    QStringList header = { tr("id"), tr("seed/condition"), tr("x"), tr("z"), tr("distance") };
-    csvline(stream, qte, sep, header);
-
-    QTreeWidgetItemIterator it(ui->treeWidget);
-    for (; *it; ++it)
-    {
-        QTreeWidgetItem *item = *it;
-        QStringList cols;
-        for (int i = 0, n = item->columnCount(); i < n; i++)
-        {
-            QString s = item->text(i);
-            if (s == "-") s = "";
-            cols.append(s);
-        }
-        csvline(stream, qte, sep, cols);
-    }
-    stream.flush();
-}
-
 void TabLocations::on_pushExport_clicked()
 {
-#if WASM
-    QByteArray content;
-    QTextStream stream(&content);
-    exportResults(stream);
-    QFileDialog::saveFileContent(content, "locations.csv");
-#else
-    QString fnam = QFileDialog::getSaveFileName(
-        this, tr("Export locations"), parent->prevdir, tr("Text files (*.txt *csv);;Any files (*)"));
-    if (fnam.isEmpty())
-        return;
-
-    QFileInfo finfo(fnam);
-    QFile file(fnam);
-    parent->prevdir = finfo.absolutePath();
-
-    if (!file.open(QIODevice::WriteOnly))
-    {
-        warn(parent, tr("Failed to open file for export:\n\"%1\"").arg(fnam));
-        return;
-    }
-
-    QTextStream stream(&file);
-    exportResults(stream);
-#endif
+    exportCsv(this, parent->prevdir, tr("Export locations"), "locations.csv",
+        parent->config, [this](CsvWriter& csv) {
+        ui->treeWidget->writeCsv(csv,
+            { tr("id"), tr("seed/condition"), tr("x"), tr("z"), tr("distance") });
+    });
 }

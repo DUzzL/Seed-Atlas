@@ -134,11 +134,10 @@ SOURCES += \
         src/maptoolsdialog.cpp \
         src/message.cpp \
         src/motioncontroller.cpp \
-        src/presetdialog.cpp \
-        src/addfilterdialog.cpp \
         src/layerdialog.cpp \
         src/mapview.cpp \
         src/rangedialog.cpp \
+        src/resultlist.cpp \
         src/scripts.cpp \
         src/search.cpp \
         src/searchthread.cpp \
@@ -204,12 +203,11 @@ HEADERS += \
         src/maptoolsdialog.h \
         src/message.h \
         src/motioncontroller.h \
-        src/presetdialog.h \
-        src/addfilterdialog.h \
         src/layerdialog.h \
         src/mapview.h \
         src/qzipwriter.h \
         src/rangedialog.h \
+        src/resultlist.h \
         src/scripts.h \
         src/search.h \
         src/searchthread.h \
@@ -237,7 +235,6 @@ FORMS += \
         src/formsearchcontrol.ui \
         src/gotodialog.ui \
         src/maptoolsdialog.ui \
-        src/presetdialog.ui \
         src/layerdialog.ui \
         src/mainwindow.ui \
         src/rangedialog.ui \

@@ -409,6 +409,27 @@ void MapConfig::save(QSettings& settings)
     settings.setValue(QString("structscale/zoom"), zoomEnabled);
 }
 
+// the first installed family of the list, else the system font
+static QFont preferredFont(std::initializer_list<const char *> families,
+    QFontDatabase::SystemFont fallback, int pointSize)
+{
+    QFont font = QFontDatabase::systemFont(fallback);
+    for (const char *family : families)
+    {
+        if (QFontDatabase::hasFamily(family))
+        {
+            font = QFont(family);
+            break;
+        }
+    }
+    font.setPointSize(pointSize);
+    return font;
+}
+
+// raised when the default fonts change, so stored fonts from older versions
+// are replaced once by the new defaults
+static const int FONT_VERSION = 1;
+
 void Config::reset()
 {
     smoothMotion = true;
@@ -428,15 +449,11 @@ void Config::reset()
     biomeColorPath = "";
     separator = ";";
     quote = "";
-    fontNorm = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
-    fontMono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    //fontNorm.setFamily(QString::fromUtf8("DejaVu Sans"));
-    //fontMono.setFamily(QString::fromUtf8("DejaVu Sans Mono"));
+    fontNorm = preferredFont({"Calibri", "Carlito"}, QFontDatabase::GeneralFont, 11);
+    fontMono = preferredFont({"Consolas", "Cascadia Mono", "DejaVu Sans Mono"}, QFontDatabase::FixedFont, 10);
     fontMono.setStyleHint(QFont::Monospace);
     fontMono.setFixedPitch(true);
     fontNorm.setStyleHint(QFont::AnyStyle);
-    fontMono.setPointSize(10);
-    fontNorm.setPointSize(10);
     iconScale = 1.0;
 }
 
@@ -468,8 +485,11 @@ void Config::load(QSettings& settings)
     biomeColorPath = settings.value("config/biomeColorPath", biomeColorPath).toString();
     separator = settings.value("config/separator", separator).toString();
     quote = settings.value("config/quote", quote).toString();
-    fontNorm = settings.value("config/fontNorm", fontNorm).value<QFont>();
-    fontMono = settings.value("config/fontMono", fontMono).value<QFont>();
+    if (settings.value("config/fontVersion", 0).toInt() >= FONT_VERSION)
+    {
+        fontNorm = settings.value("config/fontNorm", fontNorm).value<QFont>();
+        fontMono = settings.value("config/fontMono", fontMono).value<QFont>();
+    }
     iconScale = settings.value("config/iconScale", iconScale).toDouble();
     if (!std::isfinite(iconScale))
         iconScale = 1.0;
@@ -502,6 +522,7 @@ void Config::save(QSettings& settings)
     settings.setValue("config/quote", quote);
     settings.setValue("config/fontNorm", fontNorm);
     settings.setValue("config/fontMono", fontMono);
+    settings.setValue("config/fontVersion", FONT_VERSION);
     settings.setValue("config/iconScale", iconScale);
 }
 

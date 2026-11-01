@@ -5,6 +5,7 @@
 #include "mainwindow.h"
 #include "message.h"
 #include "rangedialog.h"
+#include "resultlist.h"
 #include "search.h"
 #include "util.h"
 
@@ -421,7 +422,8 @@ void FormSearchControl::on_buttonStart_clicked()
 
         if (session.cv.empty())
         {
-            warn(this, tr("Add at least one filter with \"Add filter...\" first."));
+            warn(this, tr("Add at least one filter first: pick it in the row above the list "
+                "and press \"Add\", or use \"Advanced filter...\"."));
             ok = false;
         }
         if (session.sc.searchtype == SEARCH_LIST && slist64.empty())
@@ -609,6 +611,10 @@ void FormSearchControl::on_results_customContextMenuRequested(const QPoint &pos)
         tr("Paste %n seed(s) from clipboard", "", n), QKeySequence::Paste, this,
         &FormSearchControl::pasteResults);
     actpaste->setEnabled(n > 0);
+    menu->addSeparator();
+    QAction *actexport = menu->addAction(QIcon::fromTheme("document-save"), tr("Export..."),
+        this, &FormSearchControl::on_buttonExport_clicked);
+    actexport->setEnabled(ui->results->model()->rowCount() > 0);
     menu->popup(ui->results->mapToGlobal(pos));
 }
 
@@ -1006,35 +1012,12 @@ void FormSearchControl::on_buttonExport_clicked()
     const std::vector<uint64_t> results = getResults();
     if (results.empty())
         return;
-
-#if WASM
-    QByteArray content;
-    QTextStream stream(&content);
-    for (uint64_t seed : results)
-        stream << QString::number(qint64(seed)) << '\n';
-    stream.flush();
-    QFileDialog::saveFileContent(content, "seeds.txt");
-#else
-    QString fnam = QFileDialog::getSaveFileName(
-        this, tr("Export matching seeds"), parent->prevdir, tr("Text files (*.txt);;Any files (*)"));
-    if (fnam.isEmpty())
-        return;
-
-    QFileInfo finfo(fnam);
-    parent->prevdir = finfo.absolutePath();
-
-    QFile file(fnam);
-    if (!file.open(QIODevice::WriteOnly))
-    {
-        warn(this, tr("Failed to open file for export:\n\"%1\"").arg(fnam));
-        return;
-    }
-
-    QTextStream stream(&file);
-    for (uint64_t seed : results)
-        stream << QString::number(qint64(seed)) << '\n';
-    stream.flush();
-#endif
+    // one signed seed per line, as the paste and the seed list search read it
+    saveTextFile(this, parent->prevdir, tr("Export matching seeds"), "seeds.txt",
+        tr("Text files (*.txt);;Any files (*)"), [&](QTextStream& stream) {
+        for (uint64_t seed : results)
+            stream << QString::number(qint64(seed)) << '\n';
+    });
 }
 
 void FormSearchControl::keyReleaseEvent(QKeyEvent *event)

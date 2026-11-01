@@ -6,6 +6,7 @@
 #include "seedtables.h"
 #include "util.h"
 #include "seedatlas-engine/quadbase.h"
+#include "resultlist.h"
 
 #include <QButtonGroup>
 #include <QFileDialog>
@@ -1013,8 +1014,6 @@ TabStructures::TabStructures(MainWindow *parent)
     , ui(new Ui::TabStructures)
     , parent(parent)
     , thread(this)
-    , nextupdate()
-    , updt(100)
 {
     ui->setupUi(this);
     for (QLineEdit *line : {ui->lineX1, ui->lineZ1, ui->lineX2, ui->lineZ2})
@@ -1025,38 +1024,35 @@ TabStructures::TabStructures(MainWindow *parent)
     structureScope->addButton(ui->radioMap);
     structureScope->addButton(ui->radioAll);
 
-    configureResultTree(ui->treeStructs);
     ui->treeStructs->header()->setMinimumSectionSize(24);
-    ui->treeStructs->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     ui->treeStructs->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    connect(ui->treeStructs->header(), &QHeaderView::sectionClicked, this,
-        [=](int section){ onHeaderClick(ui->treeStructs, section); });
 
     ui->treeDensity->setColumnWidth(0, 160);
-    configureResultTree(ui->treeDensity);
     setResultTreeSort(ui->treeDensity, C_COUNT, Qt::DescendingOrder, false);
     ui->treeDensity->header()->setMinimumSectionSize(24);
-    ui->treeDensity->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     ui->treeDensity->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    connect(ui->treeDensity->header(), &QHeaderView::sectionClicked, this,
-        [=](int section){ onHeaderClick(ui->treeDensity, section); });
+    ui->treeDensity->setExpandDepth(1);
 
     // Results are constructed in the full deterministic key order (seed,
     // fortress coordinates, layout, match coordinates). Start without a live
     // sort column so equal parent/child display cells cannot disturb it.
-    configureResultTree(ui->treeFortresses);
     ui->treeFortresses->header()->setMinimumSectionSize(24);
-    ui->treeFortresses->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     ui->treeFortresses->header()->setStretchLastSection(true);
-    connect(ui->treeFortresses->header(), &QHeaderView::sectionClicked,
-        this, [=](int section){ onHeaderClick(ui->treeFortresses, section); });
+    ui->treeFortresses->setExpandDepth(2);
 
-    connect(&thread, &AnalysisStructures::itemDone, this, &TabStructures::onAnalysisItemDone, Qt::BlockingQueuedConnection);
-    connect(&thread, &AnalysisStructures::quadDone, this, &TabStructures::onAnalysisQuadDone, Qt::BlockingQueuedConnection);
-    connect(&thread, &AnalysisStructures::densityDone, this, &TabStructures::onAnalysisDensityDone, Qt::BlockingQueuedConnection);
-    connect(&thread, &AnalysisStructures::fortressDone, this,
-        &TabStructures::onAnalysisFortressDone, Qt::BlockingQueuedConnection);
+    // The analysis thread hands its rows straight to the lists, which add
+    // them in a few batches without holding up the thread.
+    connect(&thread, &AnalysisStructures::itemDone, ui->treeStructs,
+        [this](QTreeWidgetItem *item) { ui->treeStructs->post(item); }, Qt::DirectConnection);
+    connect(&thread, &AnalysisStructures::quadDone, this,
+        [](QTreeWidgetItem *item) { delete item; }, Qt::DirectConnection);
+    connect(&thread, &AnalysisStructures::densityDone, ui->treeDensity,
+        [this](QTreeWidgetItem *item) { ui->treeDensity->post(item); }, Qt::DirectConnection);
+    connect(&thread, &AnalysisStructures::fortressDone, ui->treeFortresses,
+        [this](QTreeWidgetItem *item) { ui->treeFortresses->post(item); }, Qt::DirectConnection);
     connect(&thread, &AnalysisStructures::finished, this, &TabStructures::onAnalysisFinished);
+    for (ResultTree *tree : {ui->treeStructs, ui->treeDensity, ui->treeFortresses})
+        connect(tree, &ResultTree::exportRequested, this, &TabStructures::on_pushExport_clicked);
 
     connect(ui->treeStructs, &QTreeWidget::itemClicked, this, &TabStructures::onTreeItemClicked);
     connect(ui->treeDensity, &QTreeWidget::itemClicked, this, &TabStructures::onTreeItemClicked);
@@ -1155,52 +1151,11 @@ void TabStructures::refreshFortressTab()
     on_tabWidget_currentChanged(-1);
 }
 
-void TabStructures::onHeaderClick(QTreeWidget *tree, int section)
-{
-    cycleResultTreeSort(tree, section);
-}
-
-void TabStructures::onAnalysisItemDone(QTreeWidgetItem *item)
-{
-    qbufs.push_back(item);
-    quint64 ns = elapsed.nsecsElapsed();
-    if (ns > nextupdate)
-    {
-        nextupdate = ns + updt * 1e6;
-        QTimer::singleShot(updt, this, &TabStructures::onBufferTimeout);
-    }
-}
-
-void TabStructures::onAnalysisQuadDone(QTreeWidgetItem *item)
-{
-    delete item;
-}
-
-void TabStructures::onAnalysisDensityDone(QTreeWidgetItem *item)
-{
-    qbufd.push_back(item);
-    quint64 ns = elapsed.nsecsElapsed();
-    if (ns > nextupdate)
-    {
-        nextupdate = ns + updt * 1e6;
-        QTimer::singleShot(updt, this, &TabStructures::onBufferTimeout);
-    }
-}
-
-void TabStructures::onAnalysisFortressDone(QTreeWidgetItem *item)
-{
-    qbuff.push_back(item);
-    quint64 ns = elapsed.nsecsElapsed();
-    if (ns > nextupdate)
-    {
-        nextupdate = ns + updt * 1e6;
-        QTimer::singleShot(updt, this, &TabStructures::onBufferTimeout);
-    }
-}
-
 void TabStructures::onAnalysisFinished()
 {
-    onBufferTimeout();
+    ResultTree *resultTree = thread.fortress ? ui->treeFortresses
+        : thread.density ? ui->treeDensity : ui->treeStructs;
+    resultTree->finish();
     const bool hasResults = thread.fortress
         ? ui->treeFortresses->topLevelItemCount() > 0
         : thread.density ? ui->treeDensity->topLevelItemCount() > 0
@@ -1217,45 +1172,12 @@ void TabStructures::onAnalysisFinished()
     else
         ui->labelStatus->setText(tr("Analysis complete. ") + details);
     on_tabWidget_currentChanged(-1);
-    QTreeWidget *resultTree = thread.fortress ? ui->treeFortresses
-        : thread.density ? ui->treeDensity : ui->treeStructs;
-    resortResultTree(resultTree);
     ui->pushStart->setChecked(false);
     ui->pushStart->setText(tr("Analyze"));
 }
 
-void TabStructures::onBufferTimeout()
+void TabStructures::onProgressTimeout()
 {
-    uint64_t t = -elapsed.elapsed();
-    if (!qbufs.empty())
-    {
-        ui->treeStructs->setUpdatesEnabled(false);
-        ui->treeStructs->addTopLevelItems(qbufs);
-        ui->treeStructs->setUpdatesEnabled(true);
-        qbufs.clear();
-    }
-    if (!qbufd.empty())
-    {
-        ui->treeDensity->setUpdatesEnabled(false);
-        ui->treeDensity->addTopLevelItems(qbufd);
-        for (QTreeWidgetItem *item: std::as_const(qbufd))
-            item->setExpanded(true);
-        ui->treeDensity->setUpdatesEnabled(true);
-        qbufd.clear();
-    }
-    if (!qbuff.empty())
-    {
-        ui->treeFortresses->setUpdatesEnabled(false);
-        ui->treeFortresses->addTopLevelItems(qbuff);
-        for (QTreeWidgetItem *item : std::as_const(qbuff))
-        {
-            item->setExpanded(true);
-            for (int i = 0; i < item->childCount(); i++)
-                item->child(i)->setExpanded(true);
-        }
-        ui->treeFortresses->setUpdatesEnabled(true);
-        qbuff.clear();
-    }
     if (thread.isRunning())
     {
         if (thread.stop.load(std::memory_order_relaxed))
@@ -1273,16 +1195,8 @@ void TabStructures::onBufferTimeout()
                     thread.seeds.size(), thread.workers.peak.load(std::memory_order_relaxed));
             ui->pushStart->setText(tr("Stop") + progress);
         }
+        QTimer::singleShot(250, this, &TabStructures::onProgressTimeout);
     }
-
-    QApplication::processEvents(); // force processing of events so we can time correctly
-
-    t += elapsed.elapsed();
-    if (8*t > updt)
-        updt = 4*t;
-    nextupdate = elapsed.nsecsElapsed() + 1e6 * updt;
-    if (thread.isRunning())
-        QTimer::singleShot(100, this, &TabStructures::onBufferTimeout);
 }
 
 void TabStructures::onTreeItemClicked(QTreeWidgetItem *item, int column)
@@ -1335,8 +1249,6 @@ void TabStructures::on_pushStart_clicked()
         ui->labelStatus->setText(tr("Select at least one Fortress layout."));
         return;
     }
-    updt = 20;
-    nextupdate = 0;
     elapsed.start();
     ui->labelStatus->clear();
     thread.stop = false;
@@ -1389,13 +1301,13 @@ void TabStructures::on_pushStart_clicked()
     if (ui->tabWidget->currentWidget() == ui->tabStructures)
     {
         dats = thread.area;
-        ui->treeStructs->clear();
+        ui->treeStructs->clearResults();
     }
     else if (ui->tabWidget->currentWidget() == ui->tabDensity)
     {
         thread.density = true;
         datq = thread.area;
-        ui->treeDensity->clear();
+        ui->treeDensity->clearResults();
     }
     else
     {
@@ -1404,7 +1316,7 @@ void TabStructures::on_pushStart_clicked()
         thread.fortress = true;
         thread.dim = DIM_NETHER;
         datf = thread.area;
-        ui->treeFortresses->clear();
+        ui->treeFortresses->clearResults();
     }
 
     ui->pushExport->setEnabled(false);
@@ -1412,39 +1324,23 @@ void TabStructures::on_pushStart_clicked()
     QString progress = QString::asprintf(" (0/%zu)", thread.seeds.size());
     ui->pushStart->setText(tr("Stop") + progress);
     thread.start();
-    QTimer::singleShot(50, this, &TabStructures::onBufferTimeout);
+    QTimer::singleShot(250, this, &TabStructures::onProgressTimeout);
 }
 
-static void csvline(QTextStream& stream, const QString& qte, const QString& sep, QStringList& cols)
+void TabStructures::exportResults(CsvWriter& csv)
 {
-    if (qte.isEmpty())
-    {
-        for (QString& s : cols)
-            if (s.contains(sep))
-                s = "\"" + s + "\"";
-    }
-    stream << qte << cols.join(sep) << qte << "\n";
-}
-
-void TabStructures::exportResults(QTextStream& stream)
-{
-    QString qte = parent->config.quote;
-    QString sep = parent->config.separator;
-
-    stream << "Sep=" + sep + "\n";
-    sep = qte + sep + qte;
-
+    const auto area = [&](const auto& dat) {
+        csv.row({"#X1", QString::number(dat.x1)});
+        csv.row({"#Z1", QString::number(dat.z1)});
+        csv.row({"#X2", QString::number(dat.x2)});
+        csv.row({"#Z2", QString::number(dat.z2)});
+    };
     if (ui->tabWidget->currentWidget() == ui->tabStructures)
     {
-        stream << qte << "#X1" << sep << dats.x1 << qte << "\n";
-        stream << qte << "#Z1" << sep << dats.z1 << qte << "\n";
-        stream << qte << "#X2" << sep << dats.x2 << qte << "\n";
-        stream << qte << "#Z2" << sep << dats.z2 << qte << "\n";
-
+        area(dats);
         if (ui->checkCollect->isChecked())
         {
-            QStringList header = { tr("seed"), tr("structure"), tr("x"), tr("z"), tr("details") };
-            csvline(stream, qte, sep, header);
+            csv.row({ tr("seed"), tr("structure"), tr("x"), tr("z"), tr("details") });
             QString seed;
             QString structure;
             for (QTreeWidgetItemIterator it(ui->treeStructs); *it; ++it)
@@ -1456,14 +1352,7 @@ void TabStructures::exportResults(QTextStream& stream)
                     structure = item->text(C_STRUCT);
                 if (!item->data(0, Qt::UserRole+2).isValid())
                     continue;
-
-                QStringList cols;
-                cols.append(seed);
-                cols.append(structure);
-                cols.append(item->text(C_X));
-                cols.append(item->text(C_Z));
-                cols.append(item->text(C_DETAIL));
-                csvline(stream, qte, sep, cols);
+                csv.row({ seed, structure, item->text(C_X), item->text(C_Z), item->text(C_DETAIL) });
             }
         }
         else
@@ -1487,7 +1376,7 @@ void TabStructures::exportResults(QTextStream& stream)
             QStringList header = { tr("seed") };
             for (auto& sit : structures)
                 header.append(sit);
-            csvline(stream, qte, sep, header);
+            csv.row(header);
             for (auto& m : cnt)
             {
                 QStringList cols;
@@ -1499,19 +1388,14 @@ void TabStructures::exportResults(QTextStream& stream)
                         cntstr = "0";
                     cols.append(cntstr);
                 }
-                csvline(stream, qte, sep, cols);
+                csv.row(cols);
             }
         }
     }
-    else if(ui->tabWidget->currentWidget() == ui->tabDensity)
+    else if (ui->tabWidget->currentWidget() == ui->tabDensity)
     {
-        stream << qte << "#X1" << sep << datq.x1 << qte << "\n";
-        stream << qte << "#Z1" << sep << datq.z1 << qte << "\n";
-        stream << qte << "#X2" << sep << datq.x2 << qte << "\n";
-        stream << qte << "#Z2" << sep << datq.z2 << qte << "\n";
-
-        QStringList header = { tr("seed"), tr("structure"), tr("count"), tr("x"), tr("z"), tr("radius"), tr("details") };
-        csvline(stream, qte, sep, header);
+        area(datq);
+        csv.row({ tr("seed"), tr("structure"), tr("count"), tr("x"), tr("z"), tr("radius"), tr("details") });
         QString seed;
         for (QTreeWidgetItemIterator it(ui->treeDensity); *it; ++it)
         {
@@ -1524,23 +1408,18 @@ void TabStructures::exportResults(QTextStream& stream)
             QStringList cols = { seed };
             for (int i = 1, n = item->columnCount(); i < n; i++)
                 cols.append(item->text(i));
-            csvline(stream, qte, sep, cols);
+            csv.row(cols);
         }
     }
     else if (ui->tabWidget->currentWidget() == ui->tabFortresses)
     {
-        stream << qte << "#X1" << sep << datf.x1 << qte << "\n";
-        stream << qte << "#Z1" << sep << datf.z1 << qte << "\n";
-        stream << qte << "#X2" << sep << datf.x2 << qte << "\n";
-        stream << qte << "#Z2" << sep << datf.z2 << qte << "\n";
-
-        QStringList header = {
+        area(datf);
+        csv.row({
             tr("seed"), tr("layout"), tr("fortress start x"),
             tr("fortress start z"), tr("match x"), tr("match z"),
             tr("orientation"), tr("qualifying pieces"), tr("fortress size"),
             tr("blaze spawners"), tr("nether wart fields")
-        };
-        csvline(stream, qte, sep, header);
+        });
         QString seed;
         for (QTreeWidgetItemIterator it(ui->treeFortresses); *it; ++it)
         {
@@ -1557,38 +1436,15 @@ void TabStructures::exportResults(QTextStream& stream)
             QStringList cols = {seed};
             for (int column = F_LAYOUT; column <= F_WART; column++)
                 cols.append(item->text(column));
-            csvline(stream, qte, sep, cols);
+            csv.row(cols);
         }
     }
-    stream.flush();
 }
 
 void TabStructures::on_pushExport_clicked()
 {
-#if WASM
-    QByteArray content;
-    QTextStream stream(&content);
-    exportResults(stream);
-    QFileDialog::saveFileContent(content, "structures.csv");
-#else
-    QString fnam = QFileDialog::getSaveFileName(
-        this, tr("Export structure analysis"), parent->prevdir, tr("Text files (*.txt *csv);;Any files (*)"));
-    if (fnam.isEmpty())
-        return;
-
-    QFileInfo finfo(fnam);
-    QFile file(fnam);
-    parent->prevdir = finfo.absolutePath();
-
-    if (!file.open(QIODevice::WriteOnly))
-    {
-        warn(parent, tr("Failed to open file for export:\n\"%1\"").arg(fnam));
-        return;
-    }
-
-    QTextStream stream(&file);
-    exportResults(stream);
-#endif
+    exportCsv(this, parent->prevdir, tr("Export structure analysis"), "structures.csv",
+        parent->config, [this](CsvWriter& csv) { exportResults(csv); });
 }
 
 void TabStructures::on_buttonFromVisible_clicked()

@@ -45,7 +45,7 @@ QString Condition::summary(bool aligntab) const
     {
         QByteArray txta = QByteArray(text, sizeof(text));
         txta.resize(qstrlen(txta));
-        txts = QString::fromUtf8(txta); // written as UTF-8 by AddFilterDialog
+        txts = QString::fromUtf8(txta); // written as UTF-8 by the quick filters
     }
     else
     {
@@ -65,14 +65,13 @@ QString Condition::summary(bool aligntab) const
         }
     }
 
+    // the tab separated columns are aligned by the list delegate, which works
+    // in proportional fonts; the padded variant needs a monospace font
+    const QString rel = relative ? QString::asprintf("[%02d]+", relative) : QString();
     if (aligntab)
-        s += QString(" %1\t%2").arg(txts).arg(cnts, -4);
+        s += QString(" %1\t%2\t%3\t").arg(txts, cnts, rel);
     else
-        s += QString(" %1%2").arg(txts, -26).arg(cnts, -4);
-    if (relative)
-        s += QString::asprintf("[%02d]+", relative);
-    else
-        s += "     ";
+        s += QString(" %1%2%3").arg(txts, -26).arg(cnts, -4).arg(rel, -5);
 
     if (rmax > 0)
     {

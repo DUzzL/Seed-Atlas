@@ -18,92 +18,17 @@
 #include <QGuiApplication>
 #include <QInputDialog>
 #include <QIntValidator>
-#include <QPainter>
 #include <QScreen>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSpacerItem>
 #include <QStandardPaths>
-#include <QStyledItemDelegate>
 #include <QTextStream>
 
 #include <functional>
 
 
 #define WARNING_CHAR QChar(0x26A0)
-
-/* Draws a clickable info button ("i") into each entry of the condition type
- * combo and handles clicks on it. The info window replaces the former
- * description panel and shows a short explanation of the condition type,
- * including the Minecraft versions it was made for.
- */
-class ComboTypeInfo : public QStyledItemDelegate
-{
-public:
-    ComboTypeInfo(QComboBox *combo, QObject *parent,
-            std::function<void(int, QWidget*, const QRect&)> infoHandler)
-        : QStyledItemDelegate(parent)
-        , combo(combo)
-        , handler(std::move(infoHandler))
-        , infoIcon(":/icons/info.png")
-    {
-    }
-
-    static int filterType(const QModelIndex &index)
-    {   // 0 = "Select type", separators carry no data at all
-        return index.data(Qt::UserRole).toInt();
-    }
-
-    static QRect infoRect(const QRect &item)
-    {
-        const int w = iconWidth;
-        return QRect(item.right() - w - 2, item.top(), w + 2, item.height());
-    }
-
-    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override
-    {
-        QStyledItemDelegate::paint(painter, option, index);
-        if (filterType(index) > 0)
-            infoIcon.paint(painter, infoRect(option.rect), Qt::AlignCenter);
-    }
-
-    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
-    {
-        QSize size = QStyledItemDelegate::sizeHint(option, index);
-        if (filterType(index) > 0)
-            size.rwidth() += iconWidth + 6;
-        return size;
-    }
-
-    bool eventFilter(QObject *watched, QEvent *event) override
-    {   // this filter runs before the combo popup's own handling, so a click
-        // on the info button does not activate (select) the entry
-        if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)
-        {
-            QAbstractItemView *view = combo ? combo->view() : nullptr;
-            if (view)
-            {
-                QMouseEvent *mouse = static_cast<QMouseEvent *>(event);
-                QModelIndex index = view->indexAt(mouse->pos());
-                int type = index.isValid() ? filterType(index) : 0;
-                if (type > 0 && infoRect(view->visualRect(index)).contains(mouse->pos()))
-                {
-                    if (event->type() == QEvent::MouseButtonRelease)
-                        handler(type, view->viewport(), view->visualRect(index));
-                    return true;
-                }
-            }
-        }
-        return QStyledItemDelegate::eventFilter(watched, event);
-    }
-
-private:
-    static const int iconWidth = 16;
-
-    QComboBox *combo;
-    std::function<void(int, QWidget*, const QRect&)> handler;
-    QIcon infoIcon;
-};
 
 ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Config *config, WorldInfo wi, QListWidgetItem *item, Condition *initcond)
     : QDialog(parent, Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint)
@@ -118,19 +43,29 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
     ui->setupUi(this);
     styleInfoButton(ui->buttonAreaInfo);
     styleInfoButton(ui->pushInfoLua);
+    if (config)
+    {   // Lua scripts keep a monospace font for their indentation
+        for (QWidget *w : std::initializer_list<QWidget *>{ui->textEditLua, ui->textEditLuaOut, ui->labelLuaCall})
+            w->setFont(config->fontMono);
+    }
 
     connect(ui->buttonBox, &QDialogButtonBox::accepted, this, &ConditionDialog::onAccept);
     connect(ui->buttonBox, &QDialogButtonBox::rejected, this, &ConditionDialog::onReject);
 
-    // Info buttons in the condition type combo replace the old description
-    // panel: clicking the "i" of an entry shows a short explanation including
-    // the Minecraft versions the condition type was made for.
-    ComboTypeInfo *typeInfo = new ComboTypeInfo(ui->comboType, this,
-            [this](int filterIndex, QWidget *anchor, const QRect& area) {
-                showTypeInfo(filterIndex, anchor, area);
-            });
-    ui->comboType->setItemDelegate(typeInfo);
-    ui->comboType->view()->viewport()->installEventFilter(typeInfo);
+    // The entries of the type list explain themselves in their tooltips, and
+    // the "i" next to the list shows the help of the chosen type. (An "i"
+    // inside the list could not work: the list closes on every click.)
+    typeInfoButton = new QPushButton(this);
+    styleInfoButton(typeInfoButton);
+    typeInfoButton->setEnabled(false);
+    ui->gridLayout_2->addWidget(typeInfoButton, 0, 6);
+    connect(typeInfoButton, &QPushButton::clicked, this, [this]() {
+        const int filterIndex = ui->comboType->currentData().toInt();
+        if (filterIndex > 0)
+            InfoPopup::toggle(typeInfoButton, tr("Help: %1").arg(
+                QApplication::translate("Filter", g_filterinfo.list[filterIndex].name)),
+                typeInfoText(filterIndex));
+    });
 
     QString mcs = tr("MC %1", "Minecraft version").arg(mc2str(wi.mc));
     ui->labelMC->setText(mcs);
@@ -344,19 +279,19 @@ ConditionDialog::ConditionDialog(FormConditions *parent, MapView *mapview, Confi
         if (!lim)
             continue;
         NoiseBiomeIndicator *cb = new NoiseBiomeIndicator(getBiomeDisplay(wi.mc, id), this);
-        QString tip = "<pre>";
+        QString tip = "<table>";
         for (int j = 0; j < NP_MAX; j++)
         {
             if (j == NP_DEPTH)
                 continue;
-            tip += climate[j].leftJustified(18);
             const int *l = lim + 2 * j;
-            tip += (l[0] == INT_MIN) ? tr("  -Inf") : QString::asprintf("%6d", (int)l[0]);
-            tip += " - ";
-            tip += (l[1] == INT_MAX) ? tr("  +Inf") : QString::asprintf("%6d", (int)l[1]);
-            if (j < 4) tip += "\n";
+            tip += "<tr><td style='padding-right:12px'>" + climate[j] + "</td><td align=right>";
+            tip += (l[0] == INT_MIN) ? tr("-Inf") : QString::number(l[0]);
+            tip += "</td><td>&nbsp;-&nbsp;</td><td align=right>";
+            tip += (l[1] == INT_MAX) ? tr("+Inf") : QString::number(l[1]);
+            tip += "</td></tr>";
         }
-        tip += "</pre>";
+        tip += "</table>";
         cb->setFocusPolicy(Qt::NoFocus);
         cb->setCheckState(Qt::Unchecked);
         cb->setToolTip(tip);
@@ -775,12 +710,13 @@ void ConditionDialog::updateMode()
     ui->lineEditX2->setToolTip(uptip);
     ui->lineEditZ2->setToolTip(uptip);
     ui->buttonBox->button(QDialogButtonBox::Ok)->setEnabled(filterindex != F_SELECT);
+    typeInfoButton->setEnabled(filterindex != F_SELECT);
 }
 
-void ConditionDialog::showTypeInfo(int filterIndex, QWidget *anchor, const QRect& area)
+QString ConditionDialog::typeInfoText(int filterIndex) const
 {
     if (filterIndex <= 0 || filterIndex >= FILTER_MAX)
-        return;
+        return QString();
     const FilterInfo &ft = g_filterinfo.list[filterIndex];
 
     QString text = QApplication::translate("Filter", ft.description);
@@ -810,9 +746,7 @@ void ConditionDialog::showTypeInfo(int filterIndex, QWidget *anchor, const QRect
                 + tr("Not available in the current version (MC %1).").arg(mc2str(wi.mc))
                 + "</b></font></p>";
     }
-
-    InfoPopup::toggle(anchor, tr("Help: %1").arg(QApplication::translate("Filter", ft.name)),
-        text, area);
+    return text;
 }
 
 static QString layerText(int layerId)
@@ -1298,7 +1232,7 @@ void ConditionDialog::onAccept()
 
     getClimateLimits(c.limok, c.limex);
 
-    // a label from the quick "Add filter" list names the original choice
+    // a label from the quick filter row names the original choice
     if (c.type != cond.type || c.biomeToFind != cond.biomeToFind ||
             c.biomeToFindM != cond.biomeToFindM)
         memset(c.text, 0, sizeof(c.text));
@@ -1343,6 +1277,7 @@ void ConditionDialog::on_comboCat_currentIndexChanged(int)
             ui->comboType->insertItem(slot, getPix(ft->icon), txt, vidx);
         else
             ui->comboType->insertItem(slot, txt, vidx);
+        ui->comboType->setItemData(slot, typeInfoText(vidx.toInt()), Qt::ToolTipRole);
 
         if (wi.mc < ft->mcmin || wi.mc > ft->mcmax)
             ui->comboType->setItemData(slot, false, Qt::UserRole-1); // deactivate

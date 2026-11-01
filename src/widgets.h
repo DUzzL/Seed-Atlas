@@ -67,17 +67,18 @@ private:
 class QAbstractButton;
 class QPushButton;
 
-// Every help ("i") button in the app looks and behaves the same: the info
-// icon, a brighter icon on hover or while its help is open, and a help
-// bubble next to the button that a second click closes again.
+// Every help ("i") button in the app looks and behaves the same: an "i" in a
+// ring of the theme's accent color, filled on hover or while its help is
+// open, and a help card below the button that a second click, a click
+// anywhere else or Esc closes again.
 void styleInfoButton(QAbstractButton *button);
 QPushButton *createInfoButton(QWidget *parent, const QString& title, const QString& text);
 
 class InfoPopup : public QFrame
 {
 public:
-    // Opens the help next to anchor (or next to area within it), or closes
-    // it if it is already open there. Only one help bubble is open at a time.
+    // Opens the help below anchor (or below area within it), or closes it if
+    // it is already open there. Only one help card is open at a time.
     static void toggle(QWidget *anchor, const QString& title, const QString& text,
             const QRect& area = QRect());
 
@@ -202,12 +203,18 @@ class ComboBoxDelegate : public QStyledItemDelegate
 {
     Q_OBJECT
 public:
+    // item texts may hold tab separated columns, which are aligned over all
+    // items, and a shortcut in this role, which is shown right-aligned
+    enum { ShortcutRole = Qt::UserRole + 64 };
+
     ComboBoxDelegate(QObject *parent, QComboBox *cmb);
     virtual ~ComboBoxDelegate();
     virtual void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override;
     virtual QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override;
 
 private:
+    static QList<int> columnStarts(const QAbstractItemModel *model, const QFontMetrics& fm);
+
     QComboBox *combo;
 };
 
@@ -219,6 +226,10 @@ public:
     {
         setItemDelegate(new ComboBoxDelegate(parent, this));
     }
+
+protected:
+    // shows the tab separated columns of an item with spaces between them
+    void paintEvent(QPaintEvent *e) override;
 };
 
 class CheckableComboBox : public StyledComboBox

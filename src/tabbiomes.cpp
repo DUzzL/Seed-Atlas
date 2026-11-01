@@ -3,6 +3,7 @@
 
 #include "message.h"
 #include "util.h"
+#include "resultlist.h"
 
 #include <QDebug>
 #include <QFileDialog>
@@ -507,11 +508,11 @@ TabBiomes::TabBiomes(MainWindow *parent)
     ui->table->verticalHeader()->setDefaultSectionSize(ui->table->fontMetrics().height() + 4);
     ui->table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 
-    configureResultTree(ui->treeLocate);
     ui->treeLocate->header()->setMinimumSectionSize(24);
     ui->treeLocate->header()->setSectionResizeMode(QHeaderView::Stretch);
     ui->treeLocate->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    connect(ui->treeLocate->header(), &QHeaderView::sectionClicked, this, &TabBiomes::onLocateHeaderClick);
+    connect(ui->treeLocate, &ResultTree::exportRequested, this, &TabBiomes::on_pushExport_clicked);
+    addResultMenu(ui->table, [this]() { on_pushExport_clicked(); });
 
     QIntValidator *intval = new QIntValidator(-60e6, 60e6, this);
     ui->lineX1->setValidator(intval);
@@ -524,8 +525,10 @@ TabBiomes::TabBiomes(MainWindow *parent)
     ui->lineBiomeSize->setText("1");
     ui->lineTolerance->setText("0");
 
-    connect(&thread, &AnalysisBiomes::seedDone, this, &TabBiomes::onAnalysisSeedDone, Qt::BlockingQueuedConnection);
-    connect(&thread, &AnalysisBiomes::seedItem, this, &TabBiomes::onAnalysisSeedItem, Qt::BlockingQueuedConnection);
+    // the arguments are copies, so the analysis thread need not wait for the GUI
+    connect(&thread, &AnalysisBiomes::seedDone, this, &TabBiomes::onAnalysisSeedDone, Qt::QueuedConnection);
+    connect(&thread, &AnalysisBiomes::seedItem, ui->treeLocate,
+        [this](QTreeWidgetItem *item) { ui->treeLocate->post(item); }, Qt::DirectConnection);
     connect(&thread, &AnalysisBiomes::failed, this,
         [this](const QString& message) { warn(this, message); }, Qt::QueuedConnection);
     connect(&thread, &AnalysisBiomes::finished, this, &TabBiomes::onAnalysisFinished,
@@ -725,11 +728,6 @@ void TabBiomes::updateBiomeSelectionControls()
     }
 }
 
-void TabBiomes::onLocateHeaderClick(int section)
-{
-    cycleResultTreeSort(ui->treeLocate, section);
-}
-
 void TabBiomes::onTableSort(int, Qt::SortOrder)
 {
     QHeaderView *header = ui->table->horizontalHeader();
@@ -771,22 +769,11 @@ void TabBiomes::onAnalysisSeedDone(uint64_t seed, QVector<uint64_t> idcnt)
     }
 }
 
-void TabBiomes::onAnalysisSeedItem(QTreeWidgetItem *item)
-{
-    qbufl.push_back(item);
-    quint64 ns = elapsed.nsecsElapsed();
-    if (ns > nextupdate)
-    {
-        nextupdate = ns + updt * 1e6;
-        QTimer::singleShot(updt, this, &TabBiomes::onBufferTimeout);
-    }
-}
-
 void TabBiomes::onAnalysisFinished()
 {
     onBufferTimeout();
     if (!thread.dat.locateBiomes.isEmpty())
-        resortResultTree(ui->treeLocate);
+        ui->treeLocate->finish();
     else if (proxy->column >= 0)
         proxy->sort(proxy->column, proxy->order);
     on_tabWidget_currentChanged(-1);
@@ -815,7 +802,7 @@ void TabBiomes::onBufferTimeout()
                     thread.resultCount.load(std::memory_order_relaxed)));
         ui->pushStart->setText(tr("Stop") + progress);
     };
-    if (qbufs.empty() && qbufl.empty())
+    if (qbufs.empty())
     {
         if (!thread.isRunning())
             return;
@@ -872,14 +859,6 @@ void TabBiomes::onBufferTimeout()
         int rowheight = fm.height() + 4;
         ui->table->verticalHeader()->setDefaultSectionSize(rowheight);
         qbufs.clear();
-    }
-
-    if (!qbufl.empty())
-    {
-        ui->treeLocate->setUpdatesEnabled(false);
-        ui->treeLocate->addTopLevelItems(qbufl);
-        ui->treeLocate->setUpdatesEnabled(true);
-        qbufl.clear();
     }
 
     if (thread.isRunning())
@@ -948,8 +927,7 @@ void TabBiomes::on_pushStart_clicked()
             warn(parent, tr("Select at least one biome."));
             return;
         }
-        //ui->treeWidget->clear();
-        ui->treeLocate->clear();
+        ui->treeLocate->clearResults();
         thread.dat.locateBiomes = selectedBiomeList();
         thread.dat.locate = thread.dat.locateBiomes.isEmpty()
                 ? -1 : thread.dat.locateBiomes.constFirst();
@@ -993,39 +971,25 @@ void TabBiomes::on_pushStart_clicked()
 }
 
 
-static void csvline(QTextStream& stream, const QString& qte, const QString& sep, QStringList& cols)
+void TabBiomes::exportResults(CsvWriter& csv)
 {
-    if (qte.isEmpty())
-    {
-        for (QString& s : cols)
-            if (s.contains(sep))
-                s = "\"" + s + "\"";
-    }
-    stream << qte << cols.join(sep) << qte << "\n";
-}
-
-void TabBiomes::exportResults(QTextStream& stream)
-{
-    QString qte = parent->config.quote;
-    QString sep = parent->config.separator;
-
-    stream << "Sep=" + sep + "\n";
-    sep = qte + sep + qte;
-
+    const auto area = [&](const char *key, qint64 v, qint64 scale) {
+        csv.row({key, QString::number(v), QString("(%1)").arg(v * scale)});
+    };
     if (ui->tabWidget->currentWidget() == ui->tabStats)
     {
-        stream << qte << "#X1" << sep << dats.x1 << sep << "(" << (dats.x1*dats.scale) << ")" << qte << "\n";
-        stream << qte << "#Z1" << sep << dats.z1 << sep << "(" << (dats.z1*dats.scale) << ")" << qte << "\n";
-        stream << qte << "#X2" << sep << dats.x2 << sep << "(" << (dats.x2*dats.scale) << ")" << qte << "\n";
-        stream << qte << "#Z2" << sep << dats.z2 << sep << "(" << (dats.z2*dats.scale) << ")" << qte << "\n";
-        stream << qte << "#scale" << sep << "1:" << dats.scale << qte << "\n";
+        area("#X1", dats.x1, dats.scale);
+        area("#Z1", dats.z1, dats.scale);
+        area("#X2", dats.x2, dats.scale);
+        area("#Z2", dats.z2, dats.scale);
+        csv.row({"#scale", QString("1:%1").arg(dats.scale)});
         if (dats.samples != ~0ULL)
-            stream << qte << "#samples" << sep << dats.samples << qte << "\n";
+            csv.row({"#samples", QString::number(dats.samples)});
 
         QStringList header = { tr("seed") };
         for (int col = 0, ncol = proxy->columnCount(); col < ncol; col++)
             header.append(proxy->headerData(col, Qt::Horizontal, Qt::UserRole+1).toString());
-        csvline(stream, qte, sep, header);
+        csv.row(header);
 
         for (int row = 0, nrow = proxy->rowCount(); row < nrow; row++)
         {
@@ -1036,27 +1000,24 @@ void TabBiomes::exportResults(QTextStream& stream)
                 QString cntstr = proxy->data(proxy->index(row, col)).toString();
                 cols.append(cntstr == "" ? "0" : cntstr);
             }
-            csvline(stream, qte, sep, cols);
+            csv.row(cols);
         }
     }
     else if (ui->tabWidget->currentWidget() == ui->tabLocate)
     {
-        stream << qte << "#X1" << sep << datl.x1 << sep << "(" << (datl.x1*datl.scale) << ")" << qte << "\n";
-        stream << qte << "#Z1" << sep << datl.z1 << sep << "(" << (datl.z1*datl.scale) << ")" << qte << "\n";
-        stream << qte << "#X2" << sep << datl.x2 << sep << "(" << (datl.x2*datl.scale) << ")" << qte << "\n";
-        stream << qte << "#Z2" << sep << datl.z2 << sep << "(" << (datl.z2*datl.scale) << ")" << qte << "\n";
-        stream << qte << "#scale" << sep << "1:" << datl.scale << qte << "\n";
+        area("#X1", datl.x1, datl.scale);
+        area("#Z1", datl.z1, datl.scale);
+        area("#X2", datl.x2, datl.scale);
+        area("#Z2", datl.z2, datl.scale);
+        csv.row({"#scale", QString("1:%1").arg(datl.scale)});
         QStringList biomeNames;
         for (int id : std::as_const(datl.locateBiomes))
             biomeNames.append(QString::fromLatin1(biome2str(MC_NEWEST, id)));
-        stream << qte << "#biomes" << sep << biomeNames.join(",") << qte << "\n";
+        csv.row({"#biomes", biomeNames.join(",")});
 
-        QStringList header = { tr("seed"), tr("biome"), tr("area"), tr("x"), tr("z") };
-        csvline(stream, qte, sep, header);
-
-        QTreeWidgetItemIterator it(ui->treeLocate);
+        csv.row({ tr("seed"), tr("biome"), tr("area"), tr("x"), tr("z") });
         QString seed;
-        for (; *it; ++it)
+        for (QTreeWidgetItemIterator it(ui->treeLocate); *it; ++it)
         {
             QTreeWidgetItem *item = *it;
             if (item->text(0) != "-")
@@ -1064,44 +1025,15 @@ void TabBiomes::exportResults(QTextStream& stream)
                 seed = item->text(0);
                 continue;
             }
-            QStringList cols;
-            cols.append(seed);
-            cols.append(item->text(1));
-            cols.append(item->text(2));
-            cols.append(item->text(3));
-            cols.append(item->text(4));
-            csvline(stream, qte, sep, cols);
+            csv.row({ seed, item->text(1), item->text(2), item->text(3), item->text(4) });
         }
     }
-    stream.flush();
 }
 
 void TabBiomes::on_pushExport_clicked()
 {
-#if WASM
-    QByteArray content;
-    QTextStream stream(&content);
-    exportResults(stream);
-    QFileDialog::saveFileContent(content, "biomes.csv");
-#else
-    QString fnam = QFileDialog::getSaveFileName(
-        this, tr("Export biome analysis"), parent->prevdir, tr("Text files (*.txt *csv);;Any files (*)"));
-    if (fnam.isEmpty())
-        return;
-
-    QFileInfo finfo(fnam);
-    QFile file(fnam);
-    parent->prevdir = finfo.absolutePath();
-
-    if (!file.open(QIODevice::WriteOnly))
-    {
-        warn(parent, tr("Failed to open file for export:\n\"%1\"").arg(fnam));
-        return;
-    }
-
-    QTextStream stream(&file);
-    exportResults(stream);
-#endif
+    exportCsv(this, parent->prevdir, tr("Export biome analysis"), "biomes.csv",
+        parent->config, [this](CsvWriter& csv) { exportResults(csv); });
 }
 
 void TabBiomes::on_buttonFromVisible_clicked()

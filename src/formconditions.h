@@ -24,6 +24,7 @@ public:
     virtual ~ItemDelegate();
 
     virtual void paint(QPainter *painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+    virtual QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
 };
 
 class FormConditions : public QWidget
@@ -52,7 +53,6 @@ public:
 
 signals:
     void changed();
-    void examplesRequested();
     void selectionUpdate(const std::vector<Condition>& selected);
 
 public slots:
@@ -66,7 +66,8 @@ public slots:
     void on_listConditions_itemDoubleClicked(QListWidgetItem *item);
     void on_listConditions_itemSelectionChanged();
 
-    void openAddFilter(); // plain filter list, or the full editor via "Custom filter..."
+    void updateQuickFilters(int mc); // offer what generates in this version
+    void popupSavedFilters();
 
     void conditionsEdit();
     void conditionsCut();
@@ -81,10 +82,21 @@ private slots:
 
 protected:
     void keyReleaseEvent(QKeyEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    void setupQuickFilters();
+    void fillQuickWhat();
+    void fillSavedMenu();
+    void saveCurrentFilters();
+
     MainWindow *parent;
     Ui::FormConditions *ui;
+    class QComboBox *quickKind = nullptr, *quickWhat = nullptr, *quickDistance = nullptr;
+    bool quickKeepDistance = false; // the user picked a distance
+    int quickMc = MC_NEWEST;
+    class QPushButton *savedButton = nullptr;
+    class QMenu *savedMenu = nullptr;
 };
 
 #endif // FORMCONDITIONS_H

@@ -117,11 +117,12 @@ private slots:
 
 private:
     bool resolveLuaChanges();
-    void showTypeInfo(int filterIndex, QWidget *anchor, const QRect& area);
+    QString typeInfoText(int filterIndex) const; // help of a filter type
 
     Ui::ConditionDialog *ui;
 
     QFrame *separator;
+    class QPushButton *typeInfoButton;
     std::map<int, QCheckBox*> biomecboxes;
     SpinExclude *tempsboxes[9];
     LabeledRange *climaterange[2][6];

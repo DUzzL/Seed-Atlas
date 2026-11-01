@@ -224,12 +224,7 @@
         </widget>
        </item>
        <item row="3" column="0" colspan="4">
-        <widget class="QTreeWidget" name="treeLocate">
-         <property name="font">
-          <font>
-           <family>Courier New</family>
-          </font>
-         </property>
+        <widget class="ResultTree" name="treeLocate">
          <property name="editTriggers">
           <set>QAbstractItemView::NoEditTriggers</set>
          </property>
@@ -246,50 +241,25 @@
           <property name="text">
            <string>seed</string>
           </property>
-          <property name="font">
-           <font>
-            <family>Courier New</family>
-           </font>
-          </property>
          </column>
          <column>
           <property name="text">
            <string>biome</string>
-          </property>
-          <property name="font">
-           <font>
-            <family>Courier New</family>
-           </font>
           </property>
          </column>
          <column>
           <property name="text">
            <string>area @ 1:4</string>
           </property>
-          <property name="font">
-           <font>
-            <family>Courier New</family>
-           </font>
-          </property>
          </column>
          <column>
           <property name="text">
            <string>x</string>
           </property>
-          <property name="font">
-           <font>
-            <family>Courier New</family>
-           </font>
-          </property>
          </column>
          <column>
           <property name="text">
            <string>z</string>
-          </property>
-          <property name="font">
-           <font>
-            <family>Courier New</family>
-           </font>
           </property>
          </column>
         </widget>
@@ -418,11 +388,6 @@
        </item>
        <item row="2" column="0">
         <widget class="QTableView" name="table">
-         <property name="font">
-          <font>
-           <family>Courier New</family>
-          </font>
-         </property>
          <property name="editTriggers">
           <set>QAbstractItemView::NoEditTriggers</set>
          </property>
@@ -441,6 +406,11 @@
   </layout>
  </widget>
  <customwidgets>
+  <customwidget>
+   <class>ResultTree</class>
+   <extends>QTreeWidget</extends>
+   <header>src/resultlist.h</header>
+  </customwidget>
   <customwidget>
    <class>CoordEdit</class>
    <extends>QLineEdit</extends>

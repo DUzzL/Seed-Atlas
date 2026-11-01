@@ -56,9 +56,7 @@ public:
     void setAdvanced(bool advanced);
 
 private slots:
-    void onAnalysisItemDone(QTreeWidgetItem *item);
     void onAnalysisFinished();
-    void onBufferTimeout();
     void onProgressTimeout();
 
     void on_pushStart_clicked();
@@ -67,7 +65,6 @@ private slots:
     void on_treeWidget_itemClicked(QTreeWidgetItem *item, int column);
 
 private:
-    void exportResults(QTextStream& stream);
 
 private:
     Ui::TabLocations *ui;
@@ -75,12 +72,7 @@ private:
     AnalysisLocations thread;
     QTimer timer;
     int maxresults;
-    bool resultsInvalidated = false;
-
-    QElapsedTimer elapsed;
-    uint64_t nextupdate;
-    uint64_t updt;
-    QList<QTreeWidgetItem*> qbuf;
+    std::atomic_bool resultsInvalidated = false; // also read by the analysis thread
 };
 
 #endif // TABLOCATIONS_H

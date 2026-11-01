@@ -144,11 +144,9 @@ public:
     void updateBiomeSelectionControls();
 
 private slots:
-    void onLocateHeaderClick(int section);
     void onTableSort(int column, Qt::SortOrder);
     void onVHeaderClicked(int row);
     void onAnalysisSeedDone(uint64_t seed, QVector<uint64_t> idcnt);
-    void onAnalysisSeedItem(QTreeWidgetItem *item);
     void onAnalysisFinished();
     void onBufferTimeout();
 
@@ -162,7 +160,7 @@ private slots:
     void on_tabWidget_currentChanged(int index);
 
 private:
-    void exportResults(QTextStream& stream);
+    void exportResults(class CsvWriter& csv);
 
 private:
     Ui::TabBiomes *ui;
@@ -178,7 +176,6 @@ private:
     uint64_t updt;
     uint64_t nextupdate;
     QVector<QVector<uint64_t>> qbufs;
-    QList<QTreeWidgetItem*> qbufl;
 };
 
 #endif // TABBIOMES_H

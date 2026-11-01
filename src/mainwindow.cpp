@@ -9,7 +9,6 @@
 #include "layerdialog.h"
 #include "maptoolsdialog.h"
 #include "message.h"
-#include "presetdialog.h"
 #include "tabbiomes.h"
 #include "tablocations.h"
 #include "tabslime.h"
@@ -121,6 +120,28 @@ QIcon menuIcon(QColor color)
     return icon;
 }
 
+// A right arrow on a 16px canvas, drawn as a shape so it is centered in its
+// button; the "\u2192" text glyph sat on the font's baseline instead.
+QIcon goIcon(QColor color)
+{
+    QIcon icon;
+    for (int size : {16, 32})
+    {
+        const qreal s = size / 16.0;
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        QPen pen(color, 2 * s, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        painter.setPen(pen);
+        painter.drawLine(QPointF(3 * s, 8 * s), QPointF(12.5 * s, 8 * s));
+        painter.drawPolyline(QPolygonF({QPointF(8.5 * s, 4 * s), QPointF(12.5 * s, 8 * s),
+            QPointF(8.5 * s, 12 * s)}));
+        icon.addPixmap(pixmap);
+    }
+    return icon;
+}
+
 constexpr int SIDE_PANEL_MINIMUM_WIDTH = 420;
 constexpr int SIDE_PANEL_DEFAULT_WIDTH = 560;
 
@@ -213,7 +234,6 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     QFrame *coordinateFinder = new QFrame(mapView);
     coordinateFinder->setObjectName("mapCoordinateFinder");
     coordinateFinder->setAttribute(Qt::WA_StyledBackground, true);
-    coordinateFinder->setFont(QFontDatabase::systemFont(QFontDatabase::GeneralFont));
     coordinateFinder->setMinimumHeight(62);
 
     QHBoxLayout *coordinateLayout = new QHBoxLayout(coordinateFinder);
@@ -229,7 +249,8 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     QLabel *coordinateZLabel = new QLabel(tr("Z"), coordinateFinder);
     coordinateZLabel->setObjectName("coordinateFinderAxis");
     QLineEdit *coordinateZ = new QLineEdit(coordinateFinder);
-    QPushButton *coordinateGo = new QPushButton(QString::fromUtf8("\xe2\x86\x92"), coordinateFinder);
+    coordinateGo = new QPushButton(coordinateFinder);
+    coordinateGo->setIconSize(QSize(16, 16));
     coordinateGo->setObjectName("coordinateFinderGo");
     coordinateGo->setToolTip(tr("Go to coordinates"));
     coordinateGo->setAccessibleName(tr("Go to coordinates"));
@@ -258,7 +279,7 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     connect(coordinateGo, &QPushButton::clicked, this, goToCoordinates);
     connect(coordinateX, &QLineEdit::returnPressed, this, goToCoordinates);
     connect(coordinateZ, &QLineEdit::returnPressed, this, goToCoordinates);
-    auto updateCoordinateButton = [coordinateX, coordinateZ, coordinateGo]() {
+    auto updateCoordinateButton = [this, coordinateX, coordinateZ]() {
         coordinateGo->setEnabled(coordinateX->hasAcceptableInput() && coordinateZ->hasAcceptableInput());
     };
     connect(coordinateX, &QLineEdit::textChanged, this, updateCoordinateButton);
@@ -455,8 +476,6 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     qRegisterMetaType< QVector<uint64_t> >("QVector<uint64_t>");
     qRegisterMetaType< Config >("Config");
 
-    ui->comboY->lineEdit()->setValidator(new QIntValidator(-64, 320, this));
-
     formCond->updateSensitivity();
 
     connect(&autosaveTimer, &QTimer::timeout, this, &MainWindow::onAutosaveTimeout);
@@ -466,11 +485,15 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     ui->collapseConstraints->init(tr("Conditions"), formCond, false);
     connect(formCond, &FormConditions::changed, this, &MainWindow::onConditionsChanged);
     connect(formCond, &FormConditions::selectionUpdate, this, &MainWindow::onConditionsSelect);
-    connect(formCond, &FormConditions::examplesRequested, this, &MainWindow::on_actionExamples_triggered);
     ui->collapseConstraints->setInfo(
         tr("Help: Conditions"),
         tr(
         "<html><head/><body><p>"
+        "Pick a structure or biome and how far from the world center it may be, "
+        "then press <b>Add</b>. <b>Advanced filter...</b> offers every filter "
+        "type and option, and <b>Saved filters</b> loads examples or your own "
+        "filter lists and saves the current one."
+        "</p><p>"
         "The search conditions define the properties by which potential seeds "
         "are filtered."
         "</p><p>"
@@ -550,8 +573,6 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     update();
 
 #if WASM
-    ui->menuFile->removeAction(ui->actionPresetLoad);
-    ui->menuFile->removeAction(ui->actionPresetSave);
     ui->menuFile->removeAction(ui->actionQuit);
 #endif
 
@@ -861,6 +882,7 @@ bool MainWindow::setSeed(WorldInfo wi, int dim)
     ui->comboBoxMC->setCurrentText(mc2str(wi.mc));
     ui->seedEdit->setText(QString::asprintf("%" PRId64, (int64_t)wi.seed));
     updateTerrainAvailability(wi.mc);
+    formCond->updateQuickFilters(wi.mc);
     getMapView()->setSeed(wi, dim, lopt);
 
     ui->comboBoxMC->setEnabled(true);
@@ -1164,6 +1186,7 @@ void MainWindow::updateMapSeed()
     ui->actionParaDepth->setEnabled(state);
     ui->actionParaWeirdness->setEnabled(state);
     updateTerrainAvailability(wi.mc);
+    formCond->updateQuickFilters(wi.mc);
 
     ui->actionAddShadow->setEnabled(wi.mc <= MC_1_17);
     ui->actionOpenShadow->setEnabled(wi.mc <= MC_1_17);
@@ -1403,24 +1426,7 @@ void MainWindow::on_actionBiomeColors_triggered()
 
 void MainWindow::on_actionPresetLoad_triggered()
 {
-    WorldInfo wi;
-    getSeed(&wi);
-    PresetDialog *dialog = new PresetDialog(this, wi, false);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setActiveFilter(formCond->getConditions());
-    connect(dialog, &QDialog::accepted, [=] { loadSession(dialog->rc, true); });
-    dialog->show();
-}
-
-void MainWindow::on_actionExamples_triggered()
-{
-    WorldInfo wi;
-    getSeed(&wi);
-    PresetDialog *dialog = new PresetDialog(this, wi, true);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setActiveFilter(formCond->getConditions());
-    connect(dialog, &QDialog::accepted, [=] { loadSession(dialog->rc, true); });
-    dialog->show();
+    formCond->popupSavedFilters();
 }
 
 void MainWindow::applySearchMode()
@@ -1695,6 +1701,7 @@ void MainWindow::onSearchStatusChanged(bool running)
     formGen48->setEnabled(!running);
     formCond->setEnabled(!running);
     ui->actionExtGen->setEnabled(!running);
+    ui->actionPresetLoad->setEnabled(!running); // loading replaces the filters
 }
 
 void MainWindow::onUpdateConfig()
@@ -1901,6 +1908,8 @@ void MainWindow::onStyleChanged(int style)
         settingsAction->setIcon(pixelGearIcon(iconColor));
     if (menuAction)
         menuAction->setIcon(menuIcon(iconColor));
+    if (coordinateGo)
+        coordinateGo->setIcon(goIcon(QColor(colors.text)));
 
     QFile file(":/modern.qss");
     if (!file.open(QFile::ReadOnly))

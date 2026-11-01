@@ -74,14 +74,9 @@ public:
     virtual void refresh() override;
 
 private slots:
-    void onHeaderClick(QTreeWidget *tree, int section);
 
-    void onAnalysisItemDone(QTreeWidgetItem *item);
-    void onAnalysisQuadDone(QTreeWidgetItem *item);
-    void onAnalysisDensityDone(QTreeWidgetItem *item);
-    void onAnalysisFortressDone(QTreeWidgetItem *item);
     void onAnalysisFinished();
-    void onBufferTimeout();
+    void onProgressTimeout();
 
     void onTreeItemClicked(QTreeWidgetItem *item, int column);
 
@@ -91,7 +86,7 @@ private slots:
     void on_tabWidget_currentChanged(int index);
 
 private:
-    void exportResults(QTextStream& stream);
+    void exportResults(class CsvWriter& csv);
     void refreshFortressTab();
 
 private:
@@ -100,12 +95,6 @@ private:
     AnalysisStructures thread;
     AnalysisStructures::Dat dats, datq, datf;
     QElapsedTimer elapsed;
-    uint64_t nextupdate;
-    uint64_t updt;
-    QList<QTreeWidgetItem*> qbufs;
-    QList<QTreeWidgetItem*> qbufq;
-    QList<QTreeWidgetItem*> qbufd;
-    QList<QTreeWidgetItem*> qbuff;
 };
 
 #endif // TABSTRUCTURES_H

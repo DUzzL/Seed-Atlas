@@ -3,7 +3,7 @@
  <class>ConditionDialog</class>
  <widget class="QDialog" name="ConditionDialog">
   <property name="windowTitle">
-   <string>Condition Editor</string>
+   <string>Advanced Filter</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">
@@ -1246,11 +1246,6 @@ yield each sampled position individually</string>
               </item>
               <item row="1" column="1" colspan="4">
                <widget class="StyledComboBox" name="comboOctaves">
-                <property name="font">
-                 <font>
-                  <family>Courier New</family>
-                 </font>
-                </property>
                </widget>
               </item>
               <item row="1" column="0">
@@ -1441,11 +1436,6 @@ yield each sampled position individually</string>
                </item>
                <item row="0" column="3" colspan="3">
                 <widget class="ScriptEditor" name="textEditLua">
-                 <property name="font">
-                  <font>
-                   <family>Courier New</family>
-                  </font>
-                 </property>
                 </widget>
                </item>
               </layout>
@@ -1469,11 +1459,6 @@ yield each sampled position individually</string>
                </property>
                <item row="1" column="0" colspan="2">
                 <widget class="QPlainTextEdit" name="textEditLuaOut">
-                 <property name="font">
-                  <font>
-                   <family>Courier New</family>
-                  </font>
-                 </property>
                  <property name="readOnly">
                   <bool>true</bool>
                  </property>
@@ -1481,11 +1466,6 @@ yield each sampled position individually</string>
                </item>
                <item row="0" column="0" colspan="2">
                 <widget class="QLabel" name="labelLuaCall">
-                 <property name="font">
-                  <font>
-                   <family>Courier New</family>
-                  </font>
-                 </property>
                  <property name="text">
                   <string/>
                  </property>

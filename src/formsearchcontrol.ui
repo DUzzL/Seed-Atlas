@@ -84,11 +84,6 @@
      </item>
      <item row="4" column="0" colspan="7">
       <widget class="QLabel" name="labelStatus">
-       <property name="font">
-        <font>
-         <family>Courier New</family>
-        </font>
-       </property>
        <property name="text">
         <string>Idle</string>
        </property>
@@ -145,11 +140,6 @@
      </item>
      <item row="3" column="0" colspan="7">
       <widget class="QProgressBar" name="progressBar">
-       <property name="font">
-        <font>
-         <family>Courier New</family>
-        </font>
-       </property>
        <property name="toolTip">
         <string>Queued progress within the search set</string>
        </property>
@@ -195,11 +185,6 @@
        <width>0</width>
        <height>20</height>
       </size>
-     </property>
-     <property name="font">
-      <font>
-       <family>Courier New</family>
-      </font>
      </property>
      <property name="contextMenuPolicy">
       <enum>Qt::CustomContextMenu</enum>

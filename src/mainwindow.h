@@ -58,12 +58,12 @@ public:
     bool setSeed(WorldInfo wi, int dim = DIM_UNDEF);
     int getDim();
     MapView *getMapView();
+    bool loadSession(QString path, bool keepresults);
 
 protected:
     void saveSettings();
     void loadSettings();
     bool saveSession(QString path, bool quiet);
-    bool loadSession(QString path, bool keepresults);
     bool saveSession(QTextStream& stream);
     bool loadSession(QTextStream& stream, bool keepresults, bool quiet);
     void updateMapSeed();
@@ -95,7 +95,6 @@ private slots:
     void on_actionToolbarConfig_triggered();
     void on_actionBiomeColors_triggered();
     void on_actionPresetLoad_triggered();
-    void on_actionExamples_triggered();
     void applySearchMode();
     void on_actionAbout_triggered();
     void on_actionCopy_triggered();
@@ -163,6 +162,7 @@ public:
     QAction *terrainAction = nullptr; // toolbar toggle for LOPT_TERRAIN
     QAction *menuAction = nullptr; // opens the former menu bar menus
     QAction *settingsAction = nullptr;
+    class QPushButton *coordinateGo = nullptr; // "go to" button of the map
     class TabLocations *tabLocations = nullptr;
     bool layerSync = false; // set while the layer actions follow lopt
     void syncLayerActions();
