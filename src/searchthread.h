@@ -13,6 +13,7 @@
 #include <QSemaphore>
 
 #include <deque>
+#include <map>
 
 struct Session
 {
@@ -98,6 +99,20 @@ public:
     bool                        stopping;
     bool                        finishQueued;
     bool                        stoponres;
+
+    // 48-bit family block search without a seed list: the workers scan
+    // ranges of lower 48-bit seeds in parallel and hand their candidates
+    // back; the master then splits each candidate into upper 16-bit items.
+    std::map<uint64_t, uint32_t> bcand;     // candidate low -> next high
+    uint64_t                    bscan;      // next low to scan
+    uint64_t                    bfirst;     // low that starts at bhigh0
+    uint32_t                    bhigh0;     // first high of the resumed low
+    int                         bscansize;  // number of lows per scan item
+    int                         binflight;  // scan items being processed
+
+private:
+    bool requestBlockItem(SearchWorker *item);
+    void updateBlockProgress();
 };
 
 
@@ -122,6 +137,10 @@ public:
     uint64_t            len;        // number of candidates
 
     /// current work item
+    enum { ITEM_SEEDS, ITEM_SCAN48, ITEM_WAIT };
+    int                 itemkind;   // kind of work item
+    std::vector<uint64_t> found;    // (out) candidates of a scan item
+    uint64_t            scanns;     // (out) duration of the last scan item
     uint64_t            prog;       // search space progress
     uint64_t            idx;        // current index in candidate buffer
     uint64_t            sstart;     // starting seed

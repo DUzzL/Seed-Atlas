@@ -154,6 +154,12 @@ SearchMaster::SearchMaster(QWidget *parent)
     , stopping()
     , finishQueued()
     , stoponres()
+    , bcand()
+    , bscan()
+    , bfirst()
+    , bhigh0()
+    , bscansize(64)
+    , binflight()
 {
     env.stop = &stop;
 }
@@ -593,6 +599,10 @@ void SearchMaster::preSearch()
             scnt = smax = ~(uint64_t)0;
             seed = sstart;
             prog = (seed << 16) | (seed >> 48);
+            bcand.clear();
+            bscan = bfirst = sstart & MASK48;
+            bhigh0 = (uint32_t)(sstart >> 48);
+            binflight = 0;
         }
     }
 }
@@ -681,17 +691,7 @@ static QString getAbbrNum(double x)
 bool SearchMaster::getProgress(QString *status, uint64_t *prog, uint64_t *end, uint64_t *seed, qreal *min, qreal *avg, qreal *max)
 {
     if (!mutex.tryLock(10))
-    {
-        if (searchtype == SEARCH_BLOCKS && slist.empty())
-        {   // a block search with no list looks for candidates in the search
-            // master and can therefore make progress outside of workers
-            *prog = this->prog;
-            *end  = this->scnt;
-            *seed = this->seed;
-            return true;
-        }
         return false;
-    }
     *prog = this->prog;
     *end  = this->scnt;
     *seed = this->seed;
@@ -817,6 +817,9 @@ bool SearchMaster::requestItem(SearchWorker *item)
         count = 0;
     }
 
+    if (searchtype == SEARCH_BLOCKS && slist.empty())
+        return requestBlockItem(item);
+
     item->prog      = prog;
     item->idx       = idx;
     item->sstart    = seed;
@@ -898,38 +901,104 @@ bool SearchMaster::requestItem(SearchWorker *item)
             else
                 seed = (high << 48) | slist[idx];
         }
-        else
-        {
-            Pos origin = {0,0};
-            uint64_t high = (seed >> 48) & 0xffff;
-            uint64_t low = seed & MASK48;
-            high += itemsize;
-            if (high >= 0x10000)
-            {
-                item->scnt -= high - 0x10000;
-                high = 0;
-                low++;
-
-                for (; low <= MASK48 && !stop; low++)
-                {
-                    env.setSeed(low);
-                    if (testTreeAt(origin, &env, PASS_FAST_48, nullptr)
-                        != COND_FAILED)
-                    {
-                        break;
-                    }
-                    // update progress for skipped block
-                    seed = low;
-                    prog += 0x10000;
-                }
-                if (low > MASK48)
-                    isdone = true;
-            }
-            seed = (high << 48) | low;
-        }
     }
 
     return true;
+}
+
+// Called with the mutex held. Collects the candidates of the scan item the
+// worker has just finished and assigns it a new item. A candidate is moved
+// into bcand in the same locked step that ends the worker's scan item, so
+// it is covered by the progress at all times.
+bool SearchMaster::requestBlockItem(SearchWorker *item)
+{
+    if (item->itemkind == SearchWorker::ITEM_SCAN48)
+    {
+        for (uint64_t low : item->found)
+            bcand.emplace(low, low == bfirst ? bhigh0 : 0);
+        item->found.clear();
+        binflight--;
+        // aim for scan items of a few milliseconds
+        if (item->scanns < 2e6 && bscansize < (1 << 20))
+            bscansize *= 2;
+        else if (item->scanns > 20e6 && bscansize > 1)
+            bscansize /= 2;
+    }
+
+    if (!bcand.empty())
+    {   // upper 16-bit items of the lowest candidate
+        auto it = bcand.begin();
+        uint64_t low = it->first;
+        uint32_t high = it->second;
+        int cnt = itemsize;
+        if (high + cnt > 0x10000)
+            cnt = 0x10000 - high;
+        item->itemkind  = SearchWorker::ITEM_SEEDS;
+        item->sstart    = item->seed = ((uint64_t)high << 48) | low;
+        item->prog      = (low << 16) | high;
+        item->scnt      = cnt;
+        high += cnt;
+        if (high >= 0x10000)
+            bcand.erase(it);
+        else
+            it->second = high;
+    }
+    else if (bscan <= MASK48)
+    {   // a range of lower 48-bit seeds to scan
+        uint64_t cnt = bscansize;
+        if (cnt > MASK48 - bscan + 1)
+            cnt = MASK48 - bscan + 1;
+        uint32_t high = bscan == bfirst ? bhigh0 : 0;
+        item->itemkind  = SearchWorker::ITEM_SCAN48;
+        item->sstart    = bscan;
+        item->seed      = ((uint64_t)high << 48) | bscan;
+        item->prog      = (bscan << 16) | high;
+        item->scnt      = (int) cnt;
+        item->found.clear();
+        bscan += cnt;
+        binflight++;
+    }
+    else if (binflight > 0)
+    {   // other workers may still find candidates
+        item->itemkind  = SearchWorker::ITEM_WAIT;
+        item->prog      = ~(uint64_t)0;
+        item->scnt      = 0;
+    }
+    else
+    {
+        isdone = true;
+    }
+
+    updateBlockProgress();
+    return !isdone;
+}
+
+// The progress of the master is the first position that has not been
+// assigned to a worker yet: the lowest open candidate or the scan position.
+void SearchMaster::updateBlockProgress()
+{
+    uint64_t p = ~(uint64_t)0, s = ~(uint64_t)0;
+    if (bscan <= MASK48)
+    {
+        uint32_t high = bscan == bfirst ? bhigh0 : 0;
+        p = (bscan << 16) | high;
+        s = ((uint64_t)high << 48) | bscan;
+    }
+    if (!bcand.empty())
+    {
+        auto it = bcand.begin();
+        uint64_t pc = (it->first << 16) | it->second;
+        if (pc < p)
+        {
+            p = pc;
+            s = ((uint64_t)it->second << 48) | it->first;
+        }
+    }
+    if (p != ~(uint64_t)0)
+    {
+        prog = p;
+        seed = s;
+    }
 }
 
 void SearchMaster::onWorkerResult(uint64_t seed)
@@ -985,6 +1054,8 @@ SearchWorker::SearchWorker(SearchMaster *master)
     this->sstart        = master->seed;
     this->scnt          = 0;
     this->seed          = master->seed;
+    this->itemkind      = ITEM_SEEDS;
+    this->scanns        = 0;
 
     this->env.stop      = &master->stop;
 }
@@ -1136,6 +1207,49 @@ void SearchWorker::run()
         break;
 
     case SEARCH_BLOCKS:
+        if (!slist)
+        {
+            QElapsedTimer scantimer;
+            while (!*env.stop && getNextItem())
+            {
+                if (itemkind == ITEM_WAIT)
+                {
+                    QThread::usleep(500);
+                    continue;
+                }
+                if (itemkind == ITEM_SCAN48)
+                {   // find the lower 48-bit seeds that can have results;
+                    // the full 48-bit pass starts with the fast one
+                    scantimer.start();
+                    uint64_t end = sstart + (uint64_t) scnt;
+                    for (uint64_t low = sstart; low < end; low++)
+                    {
+                        env.setSeed(low);
+                        if (testTreeAt(origin, &env, PASS_FULL_48, nullptr) != COND_FAILED)
+                            found.push_back(low);
+                        if (*env.stop)
+                            break;
+                    }
+                    scanns = scantimer.nsecsElapsed();
+                    continue;
+                }
+                // seed = (high << 48) | low, for the assigned highs
+                uint64_t high = (sstart >> 48) & 0xffff;
+                uint64_t low = sstart & MASK48;
+                for (int i = 0; i < scnt; i++)
+                {
+                    seed = (high << 48) | low;
+                    env.setSeed(seed);
+                    if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
+                    {
+                        reportResult(seed);
+                    }
+                    if (++high >= 0x10000)
+                        break; // done
+                }
+            }
+            break;
+        }
         while (!*env.stop && getNextItem())
         {   // seed = ([..] << 48) | low
             if (slist && idx >= len)
