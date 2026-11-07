@@ -45,6 +45,39 @@ static inline double indexedLerp(uint8_t idx, double a, double b, double c)
    UNREACHABLE();
    return 0;
 }
+
+// Branchless variant of indexedLerp(): every case is (+-u) + (+-v) with u, v
+// taken from {a, b, c}. Flipping sign bits and adding performs the very same
+// IEEE operations (x - y is x + (-y)), so the results are bit-identical. The
+// switch is faster when consecutive samples share lattice cells (gradient
+// descents), this one when they are scattered (maps, spawn, structures).
+#define SGN (1ULL << 63)
+static const uint64_t g_grad_s1[16] = {
+    0,SGN,0,SGN, 0,SGN,0,SGN, 0,SGN,0,SGN, 0,SGN,SGN,SGN };
+static const uint64_t g_grad_s2[16] = {
+    0,0,SGN,SGN, 0,0,SGN,SGN, 0,0,SGN,SGN, 0,0,0,SGN };
+#undef SGN
+
+ATTR(hot, const)
+static inline double flipSign(double x, uint64_t s)
+{
+    uint64_t u;
+    memcpy(&u, &x, sizeof(u));
+    u ^= s;
+    memcpy(&x, &u, sizeof(x));
+    return x;
+}
+
+ATTR(hot, const)
+static inline double indexedLerpSel(uint8_t idx, double a, double b, double c)
+{
+    // first operand: b for the cases 8..11, 13 and 15, otherwise a;
+    // second operand: b for the cases 0..3, 12 and 14, otherwise c
+    idx &= 0xf;
+    double u = (0xAF00 >> idx) & 1 ? b : a;
+    double v = (0x500F >> idx) & 1 ? b : c;
+    return flipSign(u, g_grad_s1[idx]) + flipSign(v, g_grad_s2[idx]);
+}
 #endif
 
 void perlinInit(PerlinNoise *noise, uint64_t *seed)
@@ -192,8 +225,10 @@ void xPerlinInitJobs(PerlinJob *jobs, int n)
     }
 }
 
-double samplePerlin(const PerlinNoise *noise, double d1, double d2, double d3,
-        double yamp, double ymin)
+#define IDXLERP(...) (coherent ? indexedLerp(__VA_ARGS__) : indexedLerpSel(__VA_ARGS__))
+ATTR(hot, always_inline)
+static inline double samplePerlinT(const PerlinNoise *noise, double d1, double d2, double d3,
+        double yamp, double ymin, int coherent)
 {
     uint8_t h1, h2, h3;
     double t1, t2, t3;
@@ -255,14 +290,14 @@ double samplePerlin(const PerlinNoise *noise, double d1, double d2, double d3,
     vec2 v6 = { idx[v3.a], idx[v3.a+1] };
     vec2 v7 = { idx[v3.b], idx[v3.b+1] };
 
-    double l1 = indexedLerp(v4.a, d1,   d2,   d3);
-    double l5 = indexedLerp(v4.b, d1,   d2,   d3-1);
-    double l2 = indexedLerp(v6.a, d1-1, d2,   d3);
-    double l6 = indexedLerp(v6.b, d1-1, d2,   d3-1);
-    double l3 = indexedLerp(v5.a, d1,   d2-1, d3);
-    double l7 = indexedLerp(v5.b, d1,   d2-1, d3-1);
-    double l4 = indexedLerp(v7.a, d1-1, d2-1, d3);
-    double l8 = indexedLerp(v7.b, d1-1, d2-1, d3-1);
+    double l1 = IDXLERP(v4.a, d1,   d2,   d3);
+    double l5 = IDXLERP(v4.b, d1,   d2,   d3-1);
+    double l2 = IDXLERP(v6.a, d1-1, d2,   d3);
+    double l6 = IDXLERP(v6.b, d1-1, d2,   d3-1);
+    double l3 = IDXLERP(v5.a, d1,   d2-1, d3);
+    double l7 = IDXLERP(v5.b, d1,   d2-1, d3-1);
+    double l4 = IDXLERP(v7.a, d1-1, d2-1, d3);
+    double l8 = IDXLERP(v7.b, d1-1, d2-1, d3-1);
 #else
     uint8_t a1 = idx[h1]   + h2;
     uint8_t b1 = idx[h1+1] + h2;
@@ -272,14 +307,14 @@ double samplePerlin(const PerlinNoise *noise, double d1, double d2, double d3,
     uint8_t a3 = idx[a1+1] + h3;
     uint8_t b3 = idx[b1+1] + h3;
 
-    double l1 = indexedLerp(idx[a2],   d1,   d2,   d3);
-    double l2 = indexedLerp(idx[b2],   d1-1, d2,   d3);
-    double l3 = indexedLerp(idx[a3],   d1,   d2-1, d3);
-    double l4 = indexedLerp(idx[b3],   d1-1, d2-1, d3);
-    double l5 = indexedLerp(idx[a2+1], d1,   d2,   d3-1);
-    double l6 = indexedLerp(idx[b2+1], d1-1, d2,   d3-1);
-    double l7 = indexedLerp(idx[a3+1], d1,   d2-1, d3-1);
-    double l8 = indexedLerp(idx[b3+1], d1-1, d2-1, d3-1);
+    double l1 = IDXLERP(idx[a2],   d1,   d2,   d3);
+    double l2 = IDXLERP(idx[b2],   d1-1, d2,   d3);
+    double l3 = IDXLERP(idx[a3],   d1,   d2-1, d3);
+    double l4 = IDXLERP(idx[b3],   d1-1, d2-1, d3);
+    double l5 = IDXLERP(idx[a2+1], d1,   d2,   d3-1);
+    double l6 = IDXLERP(idx[b2+1], d1-1, d2,   d3-1);
+    double l7 = IDXLERP(idx[a3+1], d1,   d2-1, d3-1);
+    double l8 = IDXLERP(idx[b3+1], d1-1, d2-1, d3-1);
 #endif
 
     l1 = lerp(t1, l1, l2);
@@ -291,6 +326,19 @@ double samplePerlin(const PerlinNoise *noise, double d1, double d2, double d3,
     l5 = lerp(t2, l5, l7);
 
     return lerp(t3, l1, l5);
+}
+#undef IDXLERP
+
+double samplePerlin(const PerlinNoise *noise, double d1, double d2, double d3,
+        double yamp, double ymin)
+{
+    return samplePerlinT(noise, d1, d2, d3, yamp, ymin, 0);
+}
+
+double samplePerlinCoherent(const PerlinNoise *noise, double d1, double d2, double d3,
+        double yamp, double ymin)
+{
+    return samplePerlinT(noise, d1, d2, d3, yamp, ymin, 1);
 }
 
 static
@@ -562,7 +610,9 @@ double sampleOctaveAmp(const OctaveNoise *noise, double x, double y, double z,
     return v;
 }
 
-double sampleOctave(const OctaveNoise *noise, double x, double y, double z)
+ATTR(hot, always_inline)
+static inline double sampleOctaveT(const OctaveNoise *noise, double x, double y, double z,
+        int coherent)
 {
     double v = 0;
     int i;
@@ -573,10 +623,15 @@ double sampleOctave(const OctaveNoise *noise, double x, double y, double z)
         double ax = maintainPrecision(x * lf);
         double ay = maintainPrecision(y * lf);
         double az = maintainPrecision(z * lf);
-        double pv = samplePerlin(p, ax, ay, az, 0, 0);
+        double pv = samplePerlinT(p, ax, ay, az, 0, 0, coherent);
         v += p->amplitude * pv;
     }
     return v;
+}
+
+double sampleOctave(const OctaveNoise *noise, double x, double y, double z)
+{
+    return sampleOctaveT(noise, x, y, z, 0);
 }
 
 double sampleOctaveBeta17Biome(const OctaveNoise *noise, double x, double z)
@@ -677,8 +732,20 @@ double sampleDoublePerlin(const DoublePerlinNoise *noise,
     const double f = 337.0 / 331.0;
     double v = 0;
 
-    v += sampleOctave(&noise->octA, x, y, z);
-    v += sampleOctave(&noise->octB, x*f, y*f, z*f);
+    v += sampleOctaveT(&noise->octA, x, y, z, 0);
+    v += sampleOctaveT(&noise->octB, x*f, y*f, z*f, 0);
+
+    return v * noise->amplitude;
+}
+
+double sampleDoublePerlinCoherent(const DoublePerlinNoise *noise,
+        double x, double y, double z)
+{
+    const double f = 337.0 / 331.0;
+    double v = 0;
+
+    v += sampleOctaveT(&noise->octA, x, y, z, 1);
+    v += sampleOctaveT(&noise->octB, x*f, y*f, z*f, 1);
 
     return v * noise->amplitude;
 }

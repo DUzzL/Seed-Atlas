@@ -5432,7 +5432,7 @@ double getParaDescent(const DoublePerlinNoise *para, double factor,
     int dirx = 0, dirz = 0, dira;
     int k, i, j;
     double v, vd, va;
-    v = factor * sampleDoublePerlin(para, x+i0, 0, z+j0);
+    v = factor * sampleDoublePerlinCoherent(para, x+i0, 0, z+j0);
     if (func)
     {
         if (func(data, x+i0, z+j0, factor < 0 ? -v : v))
@@ -5444,13 +5444,13 @@ double getParaDescent(const DoublePerlinNoise *para, double factor,
     {
         if (dirx == 0) dirx = +1;
         if (i+dirx >= 0 && i+dirx < w)
-            vd = factor * sampleDoublePerlin(para, x+i+dirx, 0, z+j);
+            vd = factor * sampleDoublePerlinCoherent(para, x+i+dirx, 0, z+j);
         else vd = v;
         if (vd >= v)
         {
             dirx *= -1;
             if (i+dirx >= 0 && i+dirx < w)
-                vd = factor * sampleDoublePerlin(para, x+i+dirx, 0, z+j);
+                vd = factor * sampleDoublePerlinCoherent(para, x+i+dirx, 0, z+j);
             else vd = v;
             if (vd >= v)
                 dirx = 0;
@@ -5460,7 +5460,7 @@ double getParaDescent(const DoublePerlinNoise *para, double factor,
             dira = (int)(dirx * alpha * (v - vd));
             if (abs(dira) > 2 && i+dira >= 0 && i+dira < w)
             {   // try jumping by more than 1
-                va = factor * sampleDoublePerlin(para, x+i+dira, 0, z+j);
+                va = factor * sampleDoublePerlinCoherent(para, x+i+dira, 0, z+j);
                 if (va < vd)
                 {
                     i += dira;
@@ -5480,13 +5480,13 @@ double getParaDescent(const DoublePerlinNoise *para, double factor,
 
         if (dirz == 0) dirz = +1;
         if (j+dirz >= 0 && j+dirz < h)
-            vd = factor * sampleDoublePerlin(para, x+i, 0, z+j+dirz);
+            vd = factor * sampleDoublePerlinCoherent(para, x+i, 0, z+j+dirz);
         else vd = v;
         if (vd >= v)
         {
             dirz *= -1;
             if (j+dirz >= 0 && j+dirz < h)
-                vd = factor * sampleDoublePerlin(para, x+i, 0, z+j+dirz);
+                vd = factor * sampleDoublePerlinCoherent(para, x+i, 0, z+j+dirz);
             else vd = v;
             if (vd >= v)
                 dirz = 0;
@@ -5496,7 +5496,7 @@ double getParaDescent(const DoublePerlinNoise *para, double factor,
             dira = (int)(dirz * alpha * (v - vd));
             if (abs(dira) > 2 && j+dira >= 0 && j+dira < h)
             {   // try jumping by more than 1
-                va = factor * sampleDoublePerlin(para, x+i, 0, z+j+dira);
+                va = factor * sampleDoublePerlinCoherent(para, x+i, 0, z+j+dira);
                 if (va < vd)
                 {
                     j += dira;
@@ -5523,7 +5523,7 @@ double getParaDescent(const DoublePerlinNoise *para, double factor,
                 dirz = (c & 2) ? -1 : +1;
                 if (i+dirx < 0 || i+dirx >= w || j+dirz < 0 || j+dirz >= h)
                     continue;
-                vd = factor * sampleDoublePerlin(para, x+i+dirx, 0, z+j+dirz);
+                vd = factor * sampleDoublePerlinCoherent(para, x+i+dirx, 0, z+j+dirz);
                 if (vd < v)
                 {
                     v = vd;
@@ -5575,7 +5575,7 @@ int getParaRange(const DoublePerlinNoise *para, double *pmin, double *pmax,
         {
             for (i = 0; i < w; i++)
             {
-                v = factor * sampleDoublePerlin(para, x+i, 0, z+j);
+                v = factor * sampleDoublePerlinCoherent(para, x+i, 0, z+j);
                 if (func)
                 {
                     err = func(data, x+i, z+j, v);
@@ -5660,7 +5660,7 @@ int getParaRange(const DoublePerlinNoise *para, double *pmin, double *pmax,
                 i = ii * step; if (i >= w) i = w-1;
                 if (skip[jj*ww+ii]) continue;
 
-                v = factor * sampleDoublePerlin(para, x+i, 0, z+j);
+                v = factor * sampleDoublePerlinCoherent(para, x+i, 0, z+j);
                 if (func)
                 {
                     int e = func(data, x+i, z+j, v);
@@ -5708,7 +5708,7 @@ int getParaRange(const DoublePerlinNoise *para, double *pmin, double *pmax,
                 i = ii * step; if (i >= w) i = w-1;
                 if (skip[jj*ww+ii]) continue;
 
-                v = -factor * sampleDoublePerlin(para, x+i, 0, z+j);
+                v = -factor * sampleDoublePerlinCoherent(para, x+i, 0, z+j);
                 if (func)
                 {
                     int e = func(data, x+i, z+j, -v);

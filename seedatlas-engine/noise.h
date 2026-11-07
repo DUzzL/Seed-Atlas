@@ -62,6 +62,10 @@ void xPerlinInitJobs(PerlinJob *jobs, int n);
 
 double samplePerlin(const PerlinNoise *noise, double x, double y, double z,
         double yamp, double ymin);
+/// Same results as samplePerlin(), faster when consecutive calls sample
+/// nearby positions (such as in a gradient descent).
+double samplePerlinCoherent(const PerlinNoise *noise, double x, double y, double z,
+        double yamp, double ymin);
 double sampleSimplex2D(const PerlinNoise *noise, double x, double y);
 
 /// Perlin Octaves
@@ -95,6 +99,9 @@ int xDoublePerlinInitDeferred(DoublePerlinNoise *noise, Xoroshiro *xr,
         PerlinJob *jobs, int *njobs);
 
 double sampleDoublePerlin(const DoublePerlinNoise *noise,
+        double x, double y, double z);
+/// Same results as sampleDoublePerlin(), for nearby consecutive positions.
+double sampleDoublePerlinCoherent(const DoublePerlinNoise *noise,
         double x, double y, double z);
 
 
