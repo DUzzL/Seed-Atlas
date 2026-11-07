@@ -243,6 +243,14 @@ enum {
 };
 void initBiomeNoise(BiomeNoise *bn, int mc);
 void setBiomeSeed(BiomeNoise *bn, uint64_t seed, int large);
+/**
+ * Initializes only the climate noises in @mask (bits 1 << NP_*), in the same
+ * layout as setBiomeSeed(). The other climate noises are left as they are, so
+ * a BiomeNoise can be completed for the same seed in several steps. The
+ * result is fully initialized (as with setBiomeSeed()) once every parameter
+ * has been initialized for that seed.
+ */
+void setBiomeSeedParts(BiomeNoise *bn, uint64_t seed, int large, uint32_t mask);
 void setBetaBiomeSeed(BiomeNoiseBeta *bnb, uint64_t seed);
 int sampleBiomeNoise(const BiomeNoise *bn, int64_t *np, int x, int y, int z,
     uint64_t *dat, uint32_t sample_flags);

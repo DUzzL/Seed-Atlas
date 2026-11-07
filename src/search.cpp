@@ -273,6 +273,8 @@ SearchThreadEnv::SearchThreadEnv()
 , seed()
 , surfdim(DIM_UNDEF)
 , octaves()
+, climask()
+, climseed()
 , searchpass(PASS_FAST_48)
 , stop()
 , l_states()
@@ -295,6 +297,7 @@ QString SearchThreadEnv::init(int mc, bool large, const ConditionTree& condtree)
     this->seed = 0;
     this->surfdim = DIM_UNDEF;
     this->octaves = 0;
+    this->climask = 0;
     uint32_t flags = 0;
     if (large)
         flags |= LARGE_BIOMES;
@@ -343,7 +346,18 @@ void SearchThreadEnv::init4Dim(int dim)
     uint64_t mask = (dim == DIM_OVERWORLD ? ~0ULL : MASK48);
     if (dim != g.dim || (seed & mask) != (g.seed & mask))
     {
-        applySeed(&g, dim, seed);
+        if (dim == DIM_OVERWORLD && g.mc >= MC_1_18 && climask && climseed == seed)
+        {   // complete the partially initialized climate noise
+            setBiomeSeedParts(&g.bn, seed, large, ((1U << NP_MAX) - 1) & ~climask);
+            g.dim = dim;
+            g.seed = seed;
+            g.sha = getVoronoiSHA(seed);
+        }
+        else
+        {
+            applySeed(&g, dim, seed);
+        }
+        climask = 0;
         this->surfdim = DIM_UNDEF;
     }
     else if (g.mc >= MC_1_15 && seed != g.seed)
@@ -362,6 +376,26 @@ void SearchThreadEnv::init4Noise(int nptype, int octaves)
         return; // fully initialized biome noise
     setClimateParaSeed(&g.bn, seed, large, nptype, octaves);
     this->octaves = octaves;
+    climask = 0; // the octave buffer layout differs
+}
+
+void SearchThreadEnv::init4Climate(uint32_t mask)
+{
+    if (g.dim == DIM_OVERWORLD && g.seed == seed && g.bn.nptype == -1)
+        return; // fully initialized
+    if (climseed != seed)
+    {
+        climask = 0;
+        climseed = seed;
+    }
+    uint32_t need = mask & ~climask;
+    if (!need)
+        return;
+    // the remaining noises belong to another seed or layout from now on
+    if (g.dim == DIM_OVERWORLD)
+        g.dim = DIM_UNDEF;
+    setBiomeSeedParts(&g.bn, seed, large, need);
+    climask |= need;
 }
 
 void SearchThreadEnv::prepareSurfaceNoise(int dim)
@@ -2119,7 +2153,6 @@ L_qm_any:
             int w = rx2 - rx1 + 1;
             int h = rz2 - rz1 + 1;
             //int y = cond->y >> 2;
-            env->init4Dim(DIM_OVERWORLD);
             int order[] = { // use this order for performance
                 NP_TEMPERATURE,
                 NP_HUMIDITY,
@@ -2141,6 +2174,8 @@ L_qm_any:
                     (double)cond->limex[i][0],
                     (double)cond->limex[i][1],
                 };
+                // only this climate noise is needed (initialized on demand)
+                env->init4Climate(1U << i);
                 int err = getParaRange(&env->g.bn.climate[i], &pmin, &pmax, rx1, rz1, w, h, (void*)bounds, f_confine);
                 if (err)
                 {

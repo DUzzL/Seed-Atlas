@@ -715,6 +715,10 @@ struct SearchThreadEnv
     uint64_t seed;
     int surfdim;
     int octaves;
+    // climate noises of g.bn that are initialized for climseed (1.18+),
+    // while the generator itself is not (yet) fully initialized
+    uint32_t climask;
+    uint64_t climseed;
 
     int searchpass;
     std::atomic_bool *stop;
@@ -729,6 +733,8 @@ struct SearchThreadEnv
     void setSeed(uint64_t seed);
     void init4Dim(int dim);
     void init4Noise(int nptype, int octaves);
+    // initialize only the overworld climate noises in mask (1 << NP_*)
+    void init4Climate(uint32_t mask);
     void prepareSurfaceNoise(int dim);
 };
 
