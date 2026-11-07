@@ -1442,6 +1442,141 @@ int get_resulting_node(const uint64_t np[6], const BiomeTree *bt, int idx,
     return leaf;
 }
 
+// Table driven variant of the nearest neighbour search. A lookup visits about
+// 150 nodes, but a tree only has about 150 distinct (dimension, interval)
+// pairs. So the squared distances of the point to those intervals are
+// computed once per lookup, and the distance of a node is the sum of six
+// table entries. The integer arithmetic is the same as in get_np_dist(), so
+// the search is exactly the same.
+#if defined(_MSC_VER)
+#define BT_THREAD_LOCAL __declspec(thread)
+#else
+#define BT_THREAD_LOCAL _Thread_local
+#endif
+
+typedef struct
+{
+    const BiomeTree *bt;
+    uint16_t cnt[6];
+    uint8_t idx[6][256];
+} BiomeTreeDims;
+
+static const BiomeTreeDims *get_tree_dims(const BiomeTree *bt)
+{
+    enum { NTREES = 8 };
+    static BT_THREAD_LOCAL BiomeTreeDims dims[NTREES];
+    int t;
+    for (t = 0; t < NTREES && dims[t].bt; t++)
+    {
+        if (dims[t].bt == bt)
+            return &dims[t];
+    }
+    if (t == NTREES)
+        return NULL;
+
+    BiomeTreeDims *bd = &dims[t];
+    uint8_t seen[6][256];
+    memset(seen, 0, sizeof(seen));
+    memset(bd->cnt, 0, sizeof(bd->cnt));
+    uint32_t n, i;
+    for (n = 0; n < bt->len; n++)
+    {
+        uint64_t node = bt->nodes[n];
+        for (i = 0; i < 6; i++)
+        {
+            uint8_t k = (node >> 8*i) & 0xFF;
+            if (!seen[i][k])
+            {
+                seen[i][k] = 1;
+                bd->idx[i][bd->cnt[i]++] = k;
+            }
+        }
+    }
+    bd->bt = bt;
+    return bd;
+}
+
+typedef struct
+{
+    uint64_t d[6][256];
+} NodeDistTable;
+
+static void init_np_table(NodeDistTable *tab, const uint64_t np[6],
+    const BiomeTree *bt, const BiomeTreeDims *bd)
+{
+    uint32_t i, j;
+    for (i = 0; i < 6; i++)
+    {
+        for (j = 0; j < bd->cnt[i]; j++)
+        {
+            int idx = bd->idx[i][j];
+            uint64_t a, b, d;
+            a = np[i] - bt->param[2*idx + 1];
+            b = bt->param[2*idx + 0] - np[i];
+            d = (int64_t)a > 0 ? a : (int64_t)b > 0 ? b : 0;
+            tab->d[i][idx] = d * d;
+        }
+    }
+}
+
+static inline uint64_t get_np_dist_tab(const NodeDistTable *tab,
+    const BiomeTree *bt, int idx)
+{
+    uint64_t node = bt->nodes[idx];
+    return  tab->d[0][(node >>  0) & 0xFF] +
+            tab->d[1][(node >>  8) & 0xFF] +
+            tab->d[2][(node >> 16) & 0xFF] +
+            tab->d[3][(node >> 24) & 0xFF] +
+            tab->d[4][(node >> 32) & 0xFF] +
+            tab->d[5][(node >> 40) & 0xFF];
+}
+
+static
+int get_resulting_node_tab(const NodeDistTable *tab, const BiomeTree *bt, int idx,
+    int alt, uint64_t ds, int depth)
+{
+    if (bt->steps[depth] == 0)
+        return idx;
+    uint32_t step;
+    do
+    {
+        step = bt->steps[depth];
+        depth++;
+    }
+    while (idx+step >= bt->len);
+
+    uint64_t node = bt->nodes[idx];
+    uint16_t inner = node >> 48;
+
+    int leaf = alt;
+    uint32_t i, n;
+
+    for (i = 0, n = bt->order; i < n; i++)
+    {
+        uint64_t ds_inner = get_np_dist_tab(tab, bt, inner);
+        if (ds_inner < ds)
+        {
+            int leaf2 = get_resulting_node_tab(tab, bt, inner, leaf, ds, depth);
+            uint64_t ds_leaf2;
+            if (inner == leaf2)
+                ds_leaf2 = ds_inner;
+            else
+                ds_leaf2 = get_np_dist_tab(tab, bt, leaf2);
+            if (ds_leaf2 < ds)
+            {
+                ds = ds_leaf2;
+                leaf = leaf2;
+            }
+        }
+
+        inner += step;
+        if (inner >= bt->len)
+            break;
+    }
+
+    return leaf;
+}
+
 static int is_21_5_pale_garden_point(const BiomeTree *bt, int idx)
 {
     // 1.21.5 changed ten existing negative-weirdness Dark Forest parameter
@@ -1534,7 +1669,24 @@ int climateToBiome(int mc, const uint64_t np[6], uint64_t *dat)
     else
         bt = &btree18;
 
-    if (dat)
+    const BiomeTreeDims *bd = get_tree_dims(bt);
+    if (bd)
+    {
+        NodeDistTable tab;
+        init_np_table(&tab, np, bt, bd);
+        if (dat)
+        {
+            int alt = (int) *dat;
+            uint64_t ds = get_np_dist_tab(&tab, bt, alt);
+            idx = get_resulting_node_tab(&tab, bt, 0, alt, ds, 0);
+            *dat = (uint64_t) idx;
+        }
+        else
+        {
+            idx = get_resulting_node_tab(&tab, bt, 0, 0, -1, 0);
+        }
+    }
+    else if (dat)
     {
         int alt = (int) *dat;
         uint64_t ds = get_np_dist(np, bt, alt);
