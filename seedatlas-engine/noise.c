@@ -3,6 +3,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 // grad()
 #if 0
@@ -76,21 +77,41 @@ void perlinInit(PerlinNoise *noise, uint64_t *seed)
     noise->t2 = d2*d2*d2 * (d2 * (d2*6.0-15.0) + 10.0);
 }
 
-void xPerlinInit(PerlinNoise *noise, Xoroshiro *xr)
+static const uint8_t g_perm_identity[256] = {
+#define PERM_I8(i)  (i),(i)+1,(i)+2,(i)+3,(i)+4,(i)+5,(i)+6,(i)+7
+#define PERM_I64(i) PERM_I8(i),PERM_I8((i)+8),PERM_I8((i)+16),PERM_I8((i)+24),\
+    PERM_I8((i)+32),PERM_I8((i)+40),PERM_I8((i)+48),PERM_I8((i)+56)
+    PERM_I64(0), PERM_I64(64), PERM_I64(128), PERM_I64(192)
+#undef PERM_I64
+#undef PERM_I8
+};
+
+static inline void xPerlinHead(PerlinNoise *noise, Xoroshiro *xr)
 {
-    int i = 0;
-    //memset(noise, 0, sizeof(*noise));
     noise->a = xNextDouble(xr) * 256.0;
     noise->b = xNextDouble(xr) * 256.0;
     noise->c = xNextDouble(xr) * 256.0;
     noise->amplitude = 1.0;
     noise->lacunarity = 1.0;
+    memcpy(noise->d, g_perm_identity, 256);
+}
 
+static inline void xPerlinTail(PerlinNoise *noise)
+{
     uint8_t *idx = noise->d;
-    for (i = 0; i < 256; i++)
-    {
-        idx[i] = i;
-    }
+    idx[256] = idx[0];
+    double i2 = floor(noise->b);
+    double d2 = noise->b - i2;
+    noise->h2 = (int) i2;
+    noise->d2 = d2;
+    noise->t2 = d2*d2*d2 * (d2 * (d2*6.0-15.0) + 10.0);
+}
+
+void xPerlinInit(PerlinNoise *noise, Xoroshiro *xr)
+{
+    int i = 0;
+    xPerlinHead(noise, xr);
+    uint8_t *idx = noise->d;
     for (i = 0; i < 256; i++)
     {
         int j = xNextInt(xr, 256 - i) + i;
@@ -98,12 +119,77 @@ void xPerlinInit(PerlinNoise *noise, Xoroshiro *xr)
         idx[i] = idx[j];
         idx[j] = n;
     }
-    idx[256] = idx[0];
-    double i2 = floor(noise->b);
-    double d2 = noise->b - i2;
-    noise->h2 = (int) i2;
-    noise->d2 = d2;
-    noise->t2 = d2*d2*d2 * (d2 * (d2*6.0-15.0) + 10.0);
+    xPerlinTail(noise);
+}
+
+// Shuffles four independent permutations in lockstep. Each lane performs
+// exactly the operations of xPerlinInit(), so the results are identical.
+static void xPerlinInit4(PerlinJob *jobs)
+{
+    Xoroshiro x0 = jobs[0].xr, x1 = jobs[1].xr, x2 = jobs[2].xr, x3 = jobs[3].xr;
+    xPerlinHead(jobs[0].noise, &x0);
+    xPerlinHead(jobs[1].noise, &x1);
+    xPerlinHead(jobs[2].noise, &x2);
+    xPerlinHead(jobs[3].noise, &x3);
+    uint8_t *d0 = jobs[0].noise->d, *d1 = jobs[1].noise->d;
+    uint8_t *d2 = jobs[2].noise->d, *d3 = jobs[3].noise->d;
+    int i;
+    for (i = 0; i < 256; i++)
+    {
+        uint32_t n = 256 - i;
+        int j0 = xNextInt(&x0, n) + i;
+        int j1 = xNextInt(&x1, n) + i;
+        int j2 = xNextInt(&x2, n) + i;
+        int j3 = xNextInt(&x3, n) + i;
+        uint8_t t0 = d0[i]; d0[i] = d0[j0]; d0[j0] = t0;
+        uint8_t t1 = d1[i]; d1[i] = d1[j1]; d1[j1] = t1;
+        uint8_t t2 = d2[i]; d2[i] = d2[j2]; d2[j2] = t2;
+        uint8_t t3 = d3[i]; d3[i] = d3[j3]; d3[j3] = t3;
+    }
+    xPerlinTail(jobs[0].noise);
+    xPerlinTail(jobs[1].noise);
+    xPerlinTail(jobs[2].noise);
+    xPerlinTail(jobs[3].noise);
+    jobs[0].xr = x0; jobs[1].xr = x1; jobs[2].xr = x2; jobs[3].xr = x3;
+}
+
+static void xPerlinInit2(PerlinJob *jobs)
+{
+    Xoroshiro x0 = jobs[0].xr, x1 = jobs[1].xr;
+    xPerlinHead(jobs[0].noise, &x0);
+    xPerlinHead(jobs[1].noise, &x1);
+    uint8_t *d0 = jobs[0].noise->d, *d1 = jobs[1].noise->d;
+    int i;
+    for (i = 0; i < 256; i++)
+    {
+        uint32_t n = 256 - i;
+        int j0 = xNextInt(&x0, n) + i;
+        int j1 = xNextInt(&x1, n) + i;
+        uint8_t t0 = d0[i]; d0[i] = d0[j0]; d0[j0] = t0;
+        uint8_t t1 = d1[i]; d1[i] = d1[j1]; d1[j1] = t1;
+    }
+    xPerlinTail(jobs[0].noise);
+    xPerlinTail(jobs[1].noise);
+    jobs[0].xr = x0; jobs[1].xr = x1;
+}
+
+void xPerlinInitJobs(PerlinJob *jobs, int n)
+{
+    int k = 0;
+    for (; k + 4 <= n; k += 4)
+        xPerlinInit4(jobs + k);
+    if (k + 2 <= n)
+    {
+        xPerlinInit2(jobs + k);
+        k += 2;
+    }
+    if (k < n)
+        xPerlinInit(jobs[k].noise, &jobs[k].xr);
+    for (k = 0; k < n; k++)
+    {
+        jobs[k].noise->amplitude = jobs[k].amplitude;
+        jobs[k].noise->lacunarity = jobs[k].lacunarity;
+    }
 }
 
 double samplePerlin(const PerlinNoise *noise, double d1, double d2, double d3,
@@ -388,8 +474,9 @@ void octaveInitBeta(OctaveNoise *noise, uint64_t *seed, PerlinNoise *octaves,
     noise->octcnt = octcnt;
 }
 
-int xOctaveInit(OctaveNoise *noise, Xoroshiro *xr, PerlinNoise *octaves,
-        const double *amplitudes, int omin, int len, int nmax)
+int xOctaveInitDeferred(OctaveNoise *noise, Xoroshiro *xr, PerlinNoise *octaves,
+        const double *amplitudes, int omin, int len, int nmax,
+        PerlinJob *jobs, int *njobs)
 {
     static const uint64_t md5_octave_n[][2] = {
         {0xb198de63a8012672, 0x7b84cad43ef7b5a8}, // md5 "octave_-12"
@@ -431,17 +518,28 @@ int xOctaveInit(OctaveNoise *noise, Xoroshiro *xr, PerlinNoise *octaves,
     {
         if (amplitudes[i] == 0)
             continue;
-        Xoroshiro pxr;
-        pxr.lo = xlo ^ md5_octave_n[12 + omin + i][0];
-        pxr.hi = xhi ^ md5_octave_n[12 + omin + i][1];
-        xPerlinInit(&octaves[n], &pxr);
-        octaves[n].amplitude = amplitudes[i] * persist;
-        octaves[n].lacunarity = lacuna;
+        PerlinJob *job = &jobs[(*njobs)++];
+        job->noise = &octaves[n];
+        job->xr.lo = xlo ^ md5_octave_n[12 + omin + i][0];
+        job->xr.hi = xhi ^ md5_octave_n[12 + omin + i][1];
+        job->amplitude = amplitudes[i] * persist;
+        job->lacunarity = lacuna;
         n++;
     }
 
     noise->octaves = octaves;
     noise->octcnt = n;
+    return n;
+}
+
+int xOctaveInit(OctaveNoise *noise, Xoroshiro *xr, PerlinNoise *octaves,
+        const double *amplitudes, int omin, int len, int nmax)
+{
+    PerlinJob jobs[16];
+    int njobs = 0;
+    int n = xOctaveInitDeferred(noise, xr, octaves, amplitudes, omin, len, nmax,
+        jobs, &njobs);
+    xPerlinInitJobs(jobs, njobs);
     return n;
 }
 
@@ -535,8 +633,9 @@ void doublePerlinInit(DoublePerlinNoise *noise, uint64_t *seed,
  * @nmax:       Number of octaves available in buffer (can be <=0 to ignore)
  * @return Number of octaves used (see octaves buffer size).
  */
-int xDoublePerlinInit(DoublePerlinNoise *noise, Xoroshiro *xr,
-        PerlinNoise *octaves, const double *amplitudes, int omin, int len, int nmax)
+int xDoublePerlinInitDeferred(DoublePerlinNoise *noise, Xoroshiro *xr,
+        PerlinNoise *octaves, const double *amplitudes, int omin, int len, int nmax,
+        PerlinJob *jobs, int *njobs)
 {
     int i, n = 0, na = -1, nb = -1;
     if (nmax > 0)
@@ -544,8 +643,10 @@ int xDoublePerlinInit(DoublePerlinNoise *noise, Xoroshiro *xr,
         na = (nmax + 1) >> 1;
         nb = nmax - na;
     }
-    n += xOctaveInit(&noise->octA, xr, octaves+n, amplitudes, omin, len, na);
-    n += xOctaveInit(&noise->octB, xr, octaves+n, amplitudes, omin, len, nb);
+    n += xOctaveInitDeferred(&noise->octA, xr, octaves+n, amplitudes, omin, len, na,
+        jobs, njobs);
+    n += xOctaveInitDeferred(&noise->octB, xr, octaves+n, amplitudes, omin, len, nb,
+        jobs, njobs);
 
     // trim amplitudes of zero
     for (i = len-1; i >= 0 && amplitudes[i] == 0.0; i--)
@@ -556,6 +657,17 @@ int xDoublePerlinInit(DoublePerlinNoise *noise, Xoroshiro *xr,
         0, 5./6, 10./9, 15./12, 20./15, 25./18, 30./21, 35./24, 40./27, 45./30,
     };
     noise->amplitude = amp_ini[len];
+    return n;
+}
+
+int xDoublePerlinInit(DoublePerlinNoise *noise, Xoroshiro *xr,
+        PerlinNoise *octaves, const double *amplitudes, int omin, int len, int nmax)
+{
+    PerlinJob jobs[32];
+    int njobs = 0;
+    int n = xDoublePerlinInitDeferred(noise, xr, octaves, amplitudes, omin, len, nmax,
+        jobs, &njobs);
+    xPerlinInitJobs(jobs, njobs);
     return n;
 }
 

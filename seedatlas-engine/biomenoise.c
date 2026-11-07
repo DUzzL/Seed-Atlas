@@ -843,7 +843,8 @@ int genEndScaled(const EndNoise *en, int *out, Range r, int mc, uint64_t sha)
 
 static int init_climate_seed(
     DoublePerlinNoise *dpn, PerlinNoise *oct,
-    uint64_t xlo, uint64_t xhi, int large, int nptype, int nmax
+    uint64_t xlo, uint64_t xhi, int large, int nptype, int nmax,
+    PerlinJob *jobs, int *njobs
     )
 {
     Xoroshiro pxr;
@@ -856,7 +857,8 @@ static int init_climate_seed(
         // md5 "minecraft:offset"
         pxr.lo = xlo ^ 0x080518cf6af25384;
         pxr.hi = xhi ^ 0x3f3dfb40a54febd5;
-        n += xDoublePerlinInit(dpn, &pxr, oct, amp, -3, 4, nmax);
+        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, -3, 4, nmax,
+            jobs, njobs);
         } break;
 
     case NP_TEMPERATURE: {
@@ -864,7 +866,8 @@ static int init_climate_seed(
         // md5 "minecraft:temperature" or "minecraft:temperature_large"
         pxr.lo = xlo ^ (large ? 0x944b0073edf549db : 0x5c7e6b29735f0d7f);
         pxr.hi = xhi ^ (large ? 0x4ff44347e9d22b96 : 0xf7d86f1bbc734988);
-        n += xDoublePerlinInit(dpn, &pxr, oct, amp, large ? -12 : -10, 6, nmax);
+        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, large ? -12 : -10, 6, nmax,
+            jobs, njobs);
         } break;
 
     case NP_HUMIDITY: {
@@ -872,7 +875,8 @@ static int init_climate_seed(
         // md5 "minecraft:vegetation" or "minecraft:vegetation_large"
         pxr.lo = xlo ^ (large ? 0x71b8ab943dbd5301 : 0x81bb4d22e8dc168e);
         pxr.hi = xhi ^ (large ? 0xbb63ddcf39ff7a2b : 0xf1c8b4bea16303cd);
-        n += xDoublePerlinInit(dpn, &pxr, oct, amp, large ? -10 : -8, 6, nmax);
+        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, large ? -10 : -8, 6, nmax,
+            jobs, njobs);
         } break;
 
     case NP_CONTINENTALNESS: {
@@ -880,7 +884,8 @@ static int init_climate_seed(
         // md5 "minecraft:continentalness" or "minecraft:continentalness_large"
         pxr.lo = xlo ^ (large ? 0x9a3f51a113fce8dc : 0x83886c9d0ae3a662);
         pxr.hi = xhi ^ (large ? 0xee2dbd157e5dcdad : 0xafa638a61b42e8ad);
-        n += xDoublePerlinInit(dpn, &pxr, oct, amp, large ? -11 : -9, 9, nmax);
+        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, large ? -11 : -9, 9, nmax,
+            jobs, njobs);
         } break;
 
     case NP_EROSION: {
@@ -888,7 +893,8 @@ static int init_climate_seed(
         // md5 "minecraft:erosion" or "minecraft:erosion_large"
         pxr.lo = xlo ^ (large ? 0x8c984b1f8702a951 : 0xd02491e6058f6fd8);
         pxr.hi = xhi ^ (large ? 0xead7b1f92bae535f : 0x4792512c94c17a80);
-        n += xDoublePerlinInit(dpn, &pxr, oct, amp, large ? -11 : -9, 5, nmax);
+        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, large ? -11 : -9, 5, nmax,
+            jobs, njobs);
         } break;
 
     case NP_WEIRDNESS: {
@@ -896,7 +902,8 @@ static int init_climate_seed(
         // md5 "minecraft:ridge"
         pxr.lo = xlo ^ 0xefc8ef4d36102b34;
         pxr.hi = xhi ^ 0x1beeeb324a0f24ea;
-        n += xDoublePerlinInit(dpn, &pxr, oct, amp, -7, 6, nmax);
+        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, -7, 6, nmax,
+            jobs, njobs);
         } break;
 
     default:
@@ -913,15 +920,20 @@ void setBiomeSeed(BiomeNoise *bn, uint64_t seed, int large)
     uint64_t xlo = xNextLong(&pxr);
     uint64_t xhi = xNextLong(&pxr);
 
+    // all octaves are collected first, so their initializations can interleave
+    PerlinJob jobs[sizeof(bn->oct) / sizeof(*bn->oct)];
+    int njobs = 0;
     int n = 0, i = 0;
     for (; i < NP_MAX; i++)
-        n += init_climate_seed(&bn->climate[i], bn->oct+n, xlo, xhi, large, i, -1);
+        n += init_climate_seed(&bn->climate[i], bn->oct+n, xlo, xhi, large, i, -1,
+            jobs, &njobs);
 
     if ((size_t)n > sizeof(bn->oct) / sizeof(*bn->oct))
     {
         printf("setBiomeSeed(): BiomeNoise is malformed, buffer too small\n");
         exit(1);
     }
+    xPerlinInitJobs(jobs, njobs);
     bn->nptype = -1;
 }
 
@@ -1583,20 +1595,24 @@ void setClimateParaSeed(BiomeNoise *bn, uint64_t seed, int large, int nptype, in
     xSetSeed(&pxr, seed);
     uint64_t xlo = xNextLong(&pxr);
     uint64_t xhi = xNextLong(&pxr);
+    PerlinJob jobs[sizeof(bn->oct) / sizeof(*bn->oct)];
+    int njobs = 0;
     if (nptype == NP_DEPTH)
     {
         int n = 0;
         n += init_climate_seed(bn->climate + NP_CONTINENTALNESS,
-            bn->oct + n, xlo, xhi, large,    NP_CONTINENTALNESS, nmax);
+            bn->oct + n, xlo, xhi, large,    NP_CONTINENTALNESS, nmax, jobs, &njobs);
         n += init_climate_seed(bn->climate + NP_EROSION,
-            bn->oct + n, xlo, xhi, large,    NP_EROSION, nmax);
+            bn->oct + n, xlo, xhi, large,    NP_EROSION, nmax, jobs, &njobs);
         n += init_climate_seed(bn->climate + NP_WEIRDNESS,
-            bn->oct + n, xlo, xhi, large,    NP_WEIRDNESS, nmax);
+            bn->oct + n, xlo, xhi, large,    NP_WEIRDNESS, nmax, jobs, &njobs);
     }
     else
     {
-        init_climate_seed(bn->climate + nptype, bn->oct, xlo, xhi, large, nptype, nmax);
+        init_climate_seed(bn->climate + nptype, bn->oct, xlo, xhi, large, nptype, nmax,
+            jobs, &njobs);
     }
+    xPerlinInitJobs(jobs, njobs);
     bn->nptype = nptype;
 }
 
