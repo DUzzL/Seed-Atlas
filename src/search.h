@@ -8,7 +8,9 @@
 #include <QVector>
 #include <QString>
 #include <QMap>
+#include <array>
 #include <atomic>
+#include <map>
 
 enum
 {
@@ -761,8 +763,23 @@ struct SearchThreadEnv
     // Is the climate parameter (as by sampleBiomeNoisePara()) at a noise
     // position within [lo, hi]? Initializes only as many octaves as needed.
     bool climateMayBeIn(int nptype, double px, double pz, int lo, int hi);
+    // Can the biome at a 1:4 position be one with these climate bounds?
+    // Only the parameters in paras are tested (see selectClimateParas()).
+    bool climateMayBeAt(const BiomeClimateBounds& cb, const int *paras, int npara,
+                        int x, int z);
+    // The same for a set of biomes (as for getBiomeClimateBounds())
+    bool biomesMayBeAt(const uint64_t biomes[4], int x, int z);
+
+    // climate bounds of the biome sets of biomesMayBeAt()
+    struct SetBounds { BiomeClimateBounds cb; int paras[NP_MAX]; int npara; };
+    std::map<std::array<uint64_t, 4>, SetBounds> setbounds;
     void prepareSurfaceNoise(int dim);
 };
+
+/* The climate parameters worth testing with a set of climate bounds, in the
+ * order of their noise costs; returns how many.
+ */
+int selectClimateParas(const BiomeClimateBounds& cb, int paras[NP_MAX]);
 
 /* Checks if a seed satisfies the conditions tree.
  * Returns the lowest condition fulfillment status.

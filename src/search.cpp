@@ -198,18 +198,22 @@ QString Condition::apply(int mc)
     {   // a sample counts if its biome is one of the included ones
         uint64_t set[4] = { biomeToFind, 0, biomeToFindM, 0 };
         if (getBiomeClimateBounds(&cb, mc, set))
-        {
-            // in the order of the noise costs; bounds that hardly exclude
-            // anything are not worth the extra samples
-            const int order[] = {
-                NP_TEMPERATURE, NP_HUMIDITY, NP_WEIRDNESS, NP_EROSION, NP_CONTINENTALNESS,
-            };
-            for (int p : order)
-                if (cb.lo[p] > -6000 || cb.hi[p] < 6000)
-                    cbpara[ncbpara++] = p;
-        }
+            ncbpara = selectClimateParas(cb, cbpara);
     }
     return "";
+}
+
+int selectClimateParas(const BiomeClimateBounds& cb, int paras[NP_MAX])
+{
+    // bounds that hardly exclude anything are not worth the extra samples
+    const int order[] = {
+        NP_TEMPERATURE, NP_HUMIDITY, NP_WEIRDNESS, NP_EROSION, NP_CONTINENTALNESS,
+    };
+    int n = 0;
+    for (int p : order)
+        if (cb.lo[p] > -6000 || cb.hi[p] < 6000)
+            paras[n++] = p;
+    return n;
 }
 
 QString Condition::toHex() const
@@ -327,6 +331,7 @@ QString SearchThreadEnv::init(int mc, bool large, const ConditionTree& condtree)
     this->climask = 0;
     this->climjobsok = false;
     this->climrestok = false;
+    this->setbounds.clear();
     this->noiseparam = -2;
     uint32_t flags = 0;
     if (large)
@@ -376,7 +381,29 @@ void SearchThreadEnv::init4Dim(int dim)
     uint64_t mask = (dim == DIM_OVERWORLD ? ~0ULL : MASK48);
     if (dim != g.dim || (seed & mask) != (g.seed & mask))
     {
-        if (dim == DIM_OVERWORLD && g.mc >= MC_1_18 && climask && climseed == seed)
+        if (dim == DIM_OVERWORLD && g.mc >= MC_1_18 && climseed == seed && climjobsok)
+        {   // complete the progressively initialized climate noises
+            PerlinJob run[sizeof(climjobs) / sizeof(*climjobs)];
+            int n = 0;
+            for (int p = 0; p < NP_MAX; p++)
+            {
+                if (climask & (1U << p))
+                    continue;
+                const DoublePerlinNoise *dp = &g.bn.climate[p];
+                int na = dp->octA.octcnt, nb = dp->octB.octcnt;
+                int k0 = na == nb ? climpairs[p] : 0;
+                for (int k = k0; k < na; k++)
+                    run[n++] = climjobs[climjob0[p] + k];
+                for (int k = k0; k < nb; k++)
+                    run[n++] = climjobs[climjob0[p] + na + k];
+            }
+            xPerlinInitJobs(run, n);
+            g.bn.nptype = -1;
+            g.dim = dim;
+            g.seed = seed;
+            g.sha = getVoronoiSHA(seed);
+        }
+        else if (dim == DIM_OVERWORLD && g.mc >= MC_1_18 && climask && climseed == seed)
         {   // complete the partially initialized climate noise
             setBiomeSeedParts(&g.bn, seed, large, ((1U << NP_MAX) - 1) & ~climask);
             g.dim = dim;
@@ -558,6 +585,38 @@ bool SearchThreadEnv::climateMayBeIn(int nptype, double px, double pz, int lo, i
     }
     int64_t v = sampleBiomeNoisePara(&g.bn, nptype, px, pz);
     return v >= lo && v <= hi;
+}
+
+bool SearchThreadEnv::climateMayBeAt(const BiomeClimateBounds& cb, const int *paras,
+                                     int npara, int x, int z)
+{
+    if (npara <= 0)
+        return true;
+    init4Climate(1U << NP_SHIFT);
+    double px, pz;
+    getBiomeNoisePos(&g.bn, x, z, 0, &px, &pz);
+    for (int i = 0; i < npara; i++)
+    {
+        int p = paras[i];
+        if (!climateMayBeIn(p, px, pz, cb.lo[p], cb.hi[p]))
+            return false;
+    }
+    return true;
+}
+
+bool SearchThreadEnv::biomesMayBeAt(const uint64_t biomes[4], int x, int z)
+{
+    std::array<uint64_t, 4> key = { biomes[0], biomes[1], biomes[2], biomes[3] };
+    auto it = setbounds.find(key);
+    if (it == setbounds.end())
+    {
+        SetBounds b = {};
+        if (getBiomeClimateBounds(&b.cb, mc, biomes))
+            b.npara = selectClimateParas(b.cb, b.paras);
+        it = setbounds.emplace(key, b).first;
+    }
+    const SetBounds& b = it->second;
+    return climateMayBeAt(b.cb, b.paras, b.npara, x, z);
 }
 
 void SearchThreadEnv::prepareSurfaceNoise(int dim)
@@ -1201,6 +1260,41 @@ static int f_track_minmax(void *data, int x, int z, double p)
 }
 
 
+// The structures that isViableStructurePos() accepts without a biome check.
+static bool structureViableAnywhere(int st, int mc, int dim)
+{
+    switch (st)
+    {
+    case Ruined_Portal:
+    case Ruined_Portal_N:
+        return mc > MC_1_15 && (dim == DIM_OVERWORLD || st == Ruined_Portal_N);
+    case Geode:
+        return mc > MC_1_16 && dim == DIM_OVERWORLD;
+    case Mineshaft:
+        return dim == DIM_OVERWORLD;
+    default:
+        return false;
+    }
+}
+
+// Can the biome checks of isViableStructurePos() pass? The climate bounds of
+// the biomes they need often rule that out with a few octaves of one or two
+// climate noises, which spares the initialization of the whole generator.
+static bool structureBiomesMayBe(SearchThreadEnv *env, int st, Pos pc)
+{
+    // villages and outposts accept too many climates for this to pay off
+    if (st == Village || st == Outpost)
+        return true;
+    StructureBiomeCheck checks[5];
+    int n = getStructureBiomeChecks(st, env->mc, env->seed, pc.x, pc.z, checks);
+    if (n <= 0)
+        return true;
+    for (int i = 0; i < n; i++)
+        if (env->biomesMayBeAt(checks[i].biomes, checks[i].x, checks[i].z))
+            return true;
+    return false;
+}
+
 struct sample_boime_t
 {
     const Condition *cond;
@@ -1221,17 +1315,7 @@ struct sample_boime_t
 static bool biomeMayBeIncluded(sample_boime_t *info, int x, int z)
 {
     const Condition *c = info->cond;
-    SearchThreadEnv *env = info->env;
-    env->init4Climate(1U << NP_SHIFT);
-    double px, pz;
-    getBiomeNoisePos(&env->g.bn, x, z, 0, &px, &pz);
-    for (int i = 0; i < c->ncbpara; i++)
-    {
-        int p = c->cbpara[i];
-        if (!env->climateMayBeIn(p, px, pz, c->cb.lo[p], c->cb.hi[p]))
-            return false;
-    }
-    return true;
+    return info->env->climateMayBeAt(c->cb, c->cbpara, c->ncbpara, x, z);
 }
 
 static int f_biome_sampler(Generator *g, int scale, int x, int y, int z, void *data)
@@ -1594,6 +1678,10 @@ L_qm_any:
                 {
                     if (*env->stop) return COND_FAILED;
 
+                    if (finfo.dim == DIM_OVERWORLD && env->mc >= MC_1_18 &&
+                        !structureBiomesMayBe(env, st, pc))
+                        continue; // its biome check fails for sure
+
                     if (st == Village && cond->varflags)
                     {   // we can test for abandoned villages before the
                         // biome checks by trying each suitable biome
@@ -1610,8 +1698,12 @@ L_qm_any:
                             continue;
                     }
 
-                    env->init4Dim(finfo.dim);
-                    int id = isViableStructurePos(st, &env->g, pc.x, pc.z, 0);
+                    // isViableStructurePos() accepts some structures
+                    // anywhere, which needs no generator
+                    bool anywhere = !cond->varflags && structureViableAnywhere(st, env->mc, finfo.dim);
+                    if (!anywhere)
+                        env->init4Dim(finfo.dim);
+                    int id = anywhere ? 1 : isViableStructurePos(st, &env->g, pc.x, pc.z, 0);
                     if (!id)
                         continue;
                     if (st == End_City)

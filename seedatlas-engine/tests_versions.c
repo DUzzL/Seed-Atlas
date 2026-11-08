@@ -88,6 +88,68 @@ static void testBiomeClimateBounds(void)
     assert(!getBiomeClimateBounds(&b, MC_1_17, mushroom));
 }
 
+// Every structure position that isViableStructurePos() accepts passes one of
+// the checks of getStructureBiomeChecks() with the climate bounds of its set.
+static void testStructureBiomeChecks(void)
+{
+    static const int mcs[] = { MC_1_18, MC_1_21_5, MC_26_3 };
+    int tested = 0;
+    static const int sts[] = {
+        Desert_Pyramid, Jungle_Pyramid, Swamp_Hut, Igloo, Village, Ocean_Ruin,
+        Shipwreck, Monument, Mansion, Outpost, Treasure, Desert_Well,
+        Trail_Ruins, Ancient_City, Trial_Chambers, Abandoned_Camp,
+    };
+    for (size_t v = 0; v < sizeof(mcs) / sizeof(mcs[0]); v++)
+    {
+        Generator g;
+        setupGenerator(&g, mcs[v], 0);
+        for (uint64_t seed = 1; seed <= 6; seed++)
+        {
+            applySeed(&g, DIM_OVERWORLD, seed * 0x9E3779B97F4A7C15ULL);
+            for (size_t t = 0; t < sizeof(sts) / sizeof(sts[0]); t++)
+            {
+                StructureConfig sc;
+                if (!getStructureConfig(sts[t], mcs[v], &sc))
+                    continue;
+                for (int r = -6; r < 6; r++)
+                {
+                    Pos p;
+                    if (!getStructurePos(sts[t], mcs[v], g.seed, r, r * 3 % 7, &p))
+                        continue;
+                    if (!isViableStructurePos(sts[t], &g, p.x, p.z, 0))
+                        continue;
+                    StructureBiomeCheck ck[5];
+                    int n = getStructureBiomeChecks(sts[t], mcs[v], g.seed, p.x, p.z, ck);
+                    int ok = n == 0;
+                    for (int i = 0; i < n && !ok; i++)
+                    {
+                        BiomeClimateBounds b;
+                        if (!getBiomeClimateBounds(&b, mcs[v], ck[i].biomes))
+                        {
+                            ok = 1;
+                            break;
+                        }
+                        double px, pz;
+                        getBiomeNoisePos(&g.bn, ck[i].x, ck[i].z, 0, &px, &pz);
+                        ok = 1;
+                        for (int k = 0; k < NP_MAX; k++)
+                        {
+                            if (k == NP_SHIFT)
+                                continue;
+                            int64_t c = sampleBiomeNoisePara(&g.bn, k, px, pz);
+                            if (c < b.lo[k] || c > b.hi[k])
+                                ok = 0;
+                        }
+                    }
+                    assert(ok);
+                    tested += n > 0;
+                }
+            }
+        }
+    }
+    assert(tested > 100); // 447 when written
+}
+
 int main(void)
 {
     static const char *versions[] = {
@@ -456,6 +518,7 @@ int main(void)
     assert(newSpawn.x == -760 && newSpawn.z == -920);
 
     testBiomeClimateBounds();
+    testStructureBiomeChecks();
 
     puts("version, biome, and structure tests passed");
     return 0;

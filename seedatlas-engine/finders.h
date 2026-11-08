@@ -358,6 +358,20 @@ static inline uint64_t getShadow(uint64_t seed)
  */
 int isViableStructurePos(int structType, Generator *g, int blockX, int blockZ, uint32_t flags);
 
+/* The biome checks of isViableStructurePos() in the 1.18+ overworld, for the
+ * structures where those come down to the biome at a 1:4 position (at some
+ * height) being in a set: the structure can only be viable if one of the
+ * returned checks holds. Returns the number of checks (village: one per
+ * variant), or 0 where there is no such check.
+ */
+STRUCT(StructureBiomeCheck)
+{
+    int x, z;               // position at scale 1:4
+    uint64_t biomes[4];     // bit (id & 63) of biomes[id >> 6]
+};
+int getStructureBiomeChecks(int structType, int mc, uint64_t seed, int blockX, int blockZ,
+        StructureBiomeCheck checks[5]);
+
 /* Checks if the specified structure type could generate in the given biome.
  */
 int isViableFeatureBiome(int mc, int structureType, int biomeID);

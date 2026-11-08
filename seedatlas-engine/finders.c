@@ -2075,6 +2075,128 @@ L_not_viable:
 }
 
 
+static void setViableBiomes(StructureBiomeCheck *c, int mc, int structureType)
+{
+    int id;
+    memset(c->biomes, 0, sizeof(c->biomes));
+    for (id = 0; id < 256; id++)
+        if (isViableFeatureBiome(mc, structureType, id))
+            c->biomes[id >> 6] |= 1ULL << (id & 63);
+}
+
+static void setBiome(StructureBiomeCheck *c, int id)
+{
+    c->biomes[id >> 6] |= 1ULL << (id & 63);
+}
+
+int getStructureBiomeChecks(int structureType, int mc, uint64_t seed, int x, int z,
+        StructureBiomeCheck checks[5])
+{
+    // the sample positions as in isViableStructurePos()
+    int64_t chunkX = x >> 4;
+    int64_t chunkZ = z >> 4;
+    StructureBiomeCheck *c = checks;
+    StructureVariant sv;
+
+    if (mc < MC_1_18)
+        return 0;
+
+    switch (structureType)
+    {
+    case Abandoned_Camp:
+        if (mc < MC_26_3)
+            return 0;
+        getAbandonedCampBiomePos(seed, (int) chunkX, (int) chunkZ, &c->x, &c->z);
+        c->x = floordiv(c->x, 4);
+        c->z = floordiv(c->z, 4);
+        setViableBiomes(c, mc, structureType);
+        return 1;
+    case Trail_Ruins:
+        if (mc <= MC_1_19)
+            return 0;
+        // fall through
+    case Ocean_Ruin:
+    case Shipwreck:
+    case Treasure:
+    case Igloo:
+    case Desert_Pyramid:
+    case Jungle_Pyramid:
+    case Swamp_Hut:
+    case Monument: // the deep ocean check at the center
+        c->x = chunkX * 4 + 2;
+        c->z = chunkZ * 4 + 2;
+        if (structureType == Monument)
+        {
+            int id;
+            memset(c->biomes, 0, sizeof(c->biomes));
+            for (id = 0; id < 256; id++)
+                if (isDeepOcean(id))
+                    setBiome(c, id);
+        }
+        else
+        {
+            setViableBiomes(c, mc, structureType);
+        }
+        return 1;
+    case Desert_Well:
+        c->x = x >> 2;
+        c->z = z >> 2;
+        setViableBiomes(c, mc, structureType);
+        return 1;
+    case Village:
+    {
+        const int vv[] = { plains, desert, savanna, taiga, snowy_tundra };
+        int i;
+        for (i = 0; i < 5; i++, c++)
+        {
+            getVariant(&sv, Village, mc, seed, x, z, vv[i]);
+            c->x = (chunkX*32 + 2*sv.x + sv.sx-1) / 2 >> 2;
+            c->z = (chunkZ*32 + 2*sv.z + sv.sz-1) / 2 >> 2;
+            memset(c->biomes, 0, sizeof(c->biomes));
+            setBiome(c, vv[i]);
+            if (vv[i] == plains)
+                setBiome(c, meadow);
+        }
+        return 5;
+    }
+    case Outpost:
+    {
+        uint64_t rng = chunkGenerateRnd(seed, chunkX, chunkZ);
+        int dx = 0, dz = 0;
+        switch (nextInt(&rng, 4)) {
+            case 0: dx = +15; dz = +15; break;
+            case 1: dx = -15; dz = +15; break;
+            case 2: dx = -15; dz = -15; break;
+            case 3: dx = +15; dz = -15; break;
+        }
+        c->x = (chunkX * 32 + dx) / 2 >> 2;
+        c->z = (chunkZ * 32 + dz) / 2 >> 2;
+        setViableBiomes(c, mc, structureType);
+        return 1;
+    }
+    case Mansion:
+        c->x = (chunkX * 16 + 7) >> 2;
+        c->z = (chunkZ * 16 + 7) >> 2;
+        setViableBiomes(c, mc, structureType);
+        return 1;
+    case Ancient_City:
+        if (mc <= MC_1_18)
+            return 0;
+        goto L_jigsaw;
+    case Trial_Chambers:
+        if (mc <= MC_1_20)
+            return 0;
+L_jigsaw:
+        getVariant(&sv, structureType, mc, seed, x, z, -1);
+        c->x = (chunkX*32 + 2*sv.x + sv.sx - 1) / 2 >> 2;
+        c->z = (chunkZ*32 + 2*sv.z + sv.sz - 1) / 2 >> 2;
+        setViableBiomes(c, mc, structureType);
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 int isViableStructureTerrain(int structType, Generator *g, int x, int z)
 {
     int sx, sz;
