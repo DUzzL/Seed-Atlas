@@ -1,4 +1,5 @@
 #include "config.h"
+#include "gpufilter.h"
 
 #include "seedtables.h"
 #include "util.h"
@@ -446,6 +447,7 @@ void Config::reset()
     mapCacheSize = 512;
     cpuUsagePercent = 80;
     mapThreads = threadCountForCpuUsage(cpuUsagePercent);
+    useGpu = true;
     biomeColorPath = "";
     separator = ";";
     quote = "";
@@ -479,6 +481,8 @@ void Config::load(QSettings& settings)
         settings.value("config/cpuUsagePercent", cpuUsagePercent).toInt(), 100);
     setConfiguredCpuUsagePercent(cpuUsagePercent);
     mapThreads = threadCountForCpuUsage(cpuUsagePercent);
+    useGpu = settings.value("config/useGpu", useGpu).toBool();
+    GpuClimateFilter::setAllowed(useGpu);
     settings.remove("config/toolbarSide");
     settings.remove("toolbar/area");
     settings.remove("config/lang");
@@ -514,6 +518,7 @@ void Config::save(QSettings& settings)
     settings.setValue("config/mapCacheSize", mapCacheSize);
     settings.setValue("config/cpuUsagePercent", cpuUsagePercent);
     settings.setValue("config/mapThreads", mapThreads);
+    settings.setValue("config/useGpu", useGpu);
     settings.remove("config/toolbarSide");
     settings.remove("toolbar/area");
     settings.remove("config/lang");

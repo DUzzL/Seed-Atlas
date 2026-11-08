@@ -19,6 +19,7 @@
 ConfigDialog::ConfigDialog(QWidget *parent, Config *config)
     : QDialog(parent)
     , ui(new Ui::ConfigDialog)
+    , checkGpu(nullptr)
 {
     ui->setupUi(this);
 
@@ -95,6 +96,11 @@ void ConfigDialog::setupCategories()
     ui->gridLayout_7->removeWidget(ui->spinThreads);
     performanceLayout->addRow(ui->label_7, ui->spinCacheSize);
     performanceLayout->addRow(ui->label_9, ui->spinThreads);
+    checkGpu = new QCheckBox(tr("Use the GPU for seed searches"), performance);
+    checkGpu->setToolTip(tr("Long searches with climate or biome sample conditions let the "
+        "graphics card rule out seeds first, where that is faster than the CPU. The results "
+        "are the same either way."));
+    performanceLayout->addRow(checkGpu);
 
     QGroupBox *mapVisuals = new QGroupBox(tr("Map appearance"), this);
     QVBoxLayout *mapVisualsLayout = new QVBoxLayout(mapVisuals);
@@ -178,6 +184,7 @@ void ConfigDialog::initConfig(Config *config)
     ui->comboGridMult->setCurrentText(config->gridMultiplier ? QString::number(config->gridMultiplier) : tr("None"));
     ui->spinCacheSize->setValue(config->mapCacheSize);
     ui->spinThreads->setValue(config->cpuUsagePercent);
+    checkGpu->setChecked(config->useGpu);
     ui->lineSep->setText(config->separator);
     int idx = config->quote == "\'" ? 1 : config->quote== "\"" ? 2 : 0;
     ui->comboQuote->setCurrentIndex(idx);
@@ -210,6 +217,7 @@ Config ConfigDialog::getConfig()
     conf.mapCacheSize = ui->spinCacheSize->value();
     conf.cpuUsagePercent = ui->spinThreads->value();
     conf.mapThreads = threadCountForCpuUsage(conf.cpuUsagePercent);
+    conf.useGpu = checkGpu->isChecked();
     conf.separator = ui->lineSep->text();
     int idx = ui->comboQuote->currentIndex();
     conf.quote = idx == 1 ? "\'" : idx == 2 ? "\"" : "";

@@ -1,6 +1,8 @@
 #ifndef CONFIGDIALOG_H
 #define CONFIGDIALOG_H
 
+#include <QCheckBox>
+
 #include <QDialog>
 #include <QAbstractButton>
 
@@ -41,6 +43,7 @@ private:
 
 private:
     Ui::ConfigDialog *ui;
+    QCheckBox *checkGpu;
     Config conf;
 };
 

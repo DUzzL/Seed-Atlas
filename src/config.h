@@ -196,6 +196,7 @@ struct Config
     int mapCacheSize;
     int cpuUsagePercent;
     int mapThreads;
+    bool useGpu; // searches may use the GPU where it is faster
     QString biomeColorPath;
     QString separator;
     QString quote;
