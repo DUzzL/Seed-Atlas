@@ -49,7 +49,11 @@ id<MTLComputePipelineState> getPipeline(id<MTLDevice> device, const GpuMslKernel
         return it->second;
     NSError *err = nil;
     MTLCompileOptions *opt = [MTLCompileOptions new];
-    opt.mathMode = MTLMathModeSafe;
+    // no fast math: the error margins assume IEEE single precision
+    if (@available(macOS 15.0, *))
+        opt.mathMode = MTLMathModeSafe;
+    else
+        opt.fastMathEnabled = NO;
     NSString *src = [NSString stringWithUTF8String:kernel->source];
     id<MTLLibrary> lib = [device newLibraryWithSource:src options:opt error:&err];
     id<MTLComputePipelineState> pso = nil;
