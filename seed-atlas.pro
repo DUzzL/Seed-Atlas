@@ -11,7 +11,14 @@ QT += core widgets
 #QMAKE_CXX = clang++
 
 CHARSET                 = -finput-charset=UTF-8 -fexec-charset=UTF-8
-QMAKE_CFLAGS            = $$CHARSET -fwrapv -DSTRUCT_CONFIG_OVERRIDE=1
+# -ffp-contract=off: no fused multiply-adds, so every platform rounds alike
+QMAKE_CFLAGS            = $$CHARSET -fwrapv -ffp-contract=off -DSTRUCT_CONFIG_OVERRIDE=1
+# x86-64 builds (Windows, Linux) require AVX2 (x86-64-v3: Intel Haswell, AMD
+# Excavator/Zen and newer); macOS builds both architectures in one pass and
+# keeps the compiler default
+!macx:contains(QT_ARCH, x86_64) {
+    QMAKE_CFLAGS += -march=x86-64-v3
+}
 QMAKE_CXXFLAGS          = $$QMAKE_CFLAGS
 QMAKE_CXXFLAGS_RELEASE  *= -O3 -g3
 

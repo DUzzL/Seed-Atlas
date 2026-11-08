@@ -63,19 +63,20 @@ static int evalSample(Generator *, int scale, int x, int, int z, void *data)
 
 static int checkSamples(uint32_t ncpu, uint32_t ngpu)
 {
-    struct Case { const char *name; int mc; uint64_t biomes; int r; double cov; int large; };
+    struct Case { const char *name; int mc; int biome; int r; double cov; int large; };
     const Case cases[] = {
-        { "mushroom 50%, r100",        MC_1_21_5, 1ULL << mushroom_fields, 100, 0.5, 0 },
-        { "mushroom 90%, r1000",       MC_1_21_5, 1ULL << mushroom_fields, 1000, 0.9, 0 },
-        { "jungle 30%, r200",          MC_1_21_5, 1ULL << jungle, 200, 0.3, 0 },
-        { "desert 40%, r100",          MC_1_21_5, 1ULL << desert, 100, 0.4, 0 },
-        { "ice spikes 40%, r300",      MC_1_21_5, 1ULL << ice_spikes, 300, 0.4, 0 },
-        { "mushroom 50%, r400, large", MC_1_21_5, 1ULL << mushroom_fields, 400, 0.5, 1 },
+        { "mushroom 50%, r100",        MC_1_21_5, mushroom_fields, 100, 0.5, 0 },
+        { "mushroom 90%, r1000",       MC_1_21_5, mushroom_fields, 1000, 0.9, 0 },
+        { "jungle 30%, r200",          MC_1_21_5, jungle, 200, 0.3, 0 },
+        { "desert 40%, r100",          MC_1_21_5, desert, 100, 0.4, 0 },
+        { "ice spikes 40%, r300",      MC_1_21_5, ice_spikes, 300, 0.4, 0 },
+        { "mushroom 50%, r400, large", MC_1_21_5, mushroom_fields, 400, 0.5, 1 },
     };
     int failures = 0;
     for (const Case& c : cases)
     {
-        uint64_t set[4] = { c.biomes, 0, 0, 0 };
+        uint64_t set[4] = { 0, 0, 0, 0 };
+        set[c.biome >= 128 ? 2 : 0] |= 1ULL << (c.biome & 63);
         BiomeClimateBounds cb;
         if (!getBiomeClimateBounds(&cb, c.mc, set))
         {
