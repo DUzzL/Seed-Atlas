@@ -9,6 +9,7 @@
 #include "seedatlas-engine/util.h"
 
 #include <QApplication>
+#include <memory>
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -613,6 +614,10 @@ void SearchMaster::startSearch()
     stop = false;
     preSearch();
 
+    gputests.clear();
+    if (searchtype == SEARCH_INC && slist.empty() && GpuClimateFilter::enabled())
+        gputests = GpuClimateFilter::analyze(condtree, mc);
+
     if (stop)
     {
         emit searchFinish(false);
@@ -819,6 +824,9 @@ bool SearchMaster::requestItem(SearchWorker *item)
 
     if (searchtype == SEARCH_BLOCKS && slist.empty())
         return requestBlockItem(item);
+
+    if (!gputests.empty())
+        itemsize = 0x10000; // GPU batches need large items
 
     item->prog      = prog;
     item->idx       = idx;
@@ -1094,6 +1102,9 @@ bool SearchWorker::reportResult(uint64_t seed)
 void SearchWorker::run()
 {
     Pos origin = {0,0};
+    std::unique_ptr<GpuClimateFilter> gpu;
+    std::vector<uint64_t> passed;
+    bool gpucalibrated = false;
     if (!env.init(master->mc, master->large, master->condtree).isEmpty())
     {
         *env.stop = true;
@@ -1158,6 +1169,12 @@ void SearchWorker::run()
         break;
 
     case SEARCH_INC:
+        if (!master->gputests.empty())
+        {
+            gpu.reset(new GpuClimateFilter);
+            if (!gpu->init(master->gputests, master->large))
+                gpu.reset();
+        }
         while (!*env.stop && getNextItem())
         {
             if (slist)
@@ -1183,6 +1200,79 @@ void SearchWorker::run()
                             break;
                         }
                     }
+                }
+            }
+            else if (gpu)
+            {   // seed++, with the GPU removing seeds that fail for sure
+                uint64_t rem = ~(uint64_t)0 - sstart;
+                uint32_t cnt = rem < (uint64_t)(scnt - 1) ? (uint32_t)(rem + 1) : (uint32_t)scnt;
+                uint64_t start = sstart;
+                QElapsedTimer timer;
+                double cpuns = 0;
+                if (!gpucalibrated && cnt > 4096)
+                {   // time some seeds on the CPU, to compare with the GPU
+                    uint32_t ncpu = 2048;
+                    timer.start();
+                    for (uint32_t i = 0; i < ncpu && !*env.stop; i++)
+                    {
+                        seed = start + i;
+                        env.setSeed(seed);
+                        if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
+                            reportResult(seed);
+                    }
+                    cpuns = (double) timer.nsecsElapsed() / ncpu;
+                    start += ncpu;
+                    cnt -= ncpu;
+                }
+                // while calibrating, the GPU gets a small batch first
+                uint32_t ngpu = cpuns > 0 ? std::min<uint32_t>(cnt, 8192) : cnt;
+                timer.start();
+                passed.clear();
+                if (gpu->filter(start, ngpu, passed))
+                {
+                    for (uint64_t s : passed)
+                    {
+                        seed = s;
+                        env.setSeed(seed);
+                        if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
+                            reportResult(seed);
+                        if (*env.stop)
+                            break;
+                    }
+                    start += ngpu;
+                    cnt -= ngpu;
+                    if (cpuns > 0)
+                    {   // keep the GPU only if it is faster
+                        double gpuns = (double) timer.nsecsElapsed() / ngpu;
+                        gpucalibrated = true;
+                        if (gpuns >= cpuns)
+                            gpu.reset();
+                    }
+                    if (cnt == 0 || *env.stop)
+                        continue;
+                    passed.clear();
+                    if (gpu && gpu->filter(start, cnt, passed))
+                    {
+                        for (uint64_t s : passed)
+                        {
+                            seed = s;
+                            env.setSeed(seed);
+                            if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
+                                reportResult(seed);
+                            if (*env.stop)
+                                break;
+                        }
+                        continue;
+                    }
+                }
+                gpu.reset(); // the GPU is off or failed: test the seeds on the CPU
+                seed = start;
+                for (uint32_t i = 0; i < cnt && !*env.stop; i++)
+                {
+                    seed = start + i;
+                    env.setSeed(seed);
+                    if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
+                        reportResult(seed);
                 }
             }
             else

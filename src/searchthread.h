@@ -3,6 +3,7 @@
 
 #include "search.h"
 #include "config.h"
+#include "gpufilter.h"
 
 #include <QThread>
 #include <QMutex>
@@ -103,6 +104,9 @@ public:
     // 48-bit family block search without a seed list: the workers scan
     // ranges of lower 48-bit seeds in parallel and hand their candidates
     // back; the master then splits each candidate into upper 16-bit items.
+    // climate tests for the GPU prefilter (incremental searches only)
+    std::vector<GpuClimateFilter::Test> gputests;
+
     std::map<uint64_t, uint32_t> bcand;     // candidate low -> next high
     uint64_t                    bscan;      // next low to scan
     uint64_t                    bfirst;     // low that starts at bhigh0

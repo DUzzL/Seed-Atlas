@@ -150,9 +150,20 @@ SOURCES += \
         src/main.cpp \
         src/util.cpp \
         src/widgets.cpp \
-        src/world.cpp
+        src/world.cpp \
+        src/gpufilter.cpp
+
+# Experimental GPU prefilter: Metal on macOS, a stub elsewhere
+macx {
+    OBJECTIVE_SOURCES += src/gpufilter_metal.mm
+    QMAKE_OBJECTIVE_CFLAGS += -fobjc-arc
+    LIBS += -framework Metal -framework Foundation
+} else {
+    SOURCES += src/gpufilter_stub.cpp
+}
 
 HEADERS += \
+        src/gpufilter.h \
         $$ENGINE_PATH/finders.h \
         $$ENGINE_PATH/generator.h \
         $$ENGINE_PATH/layers.h \
