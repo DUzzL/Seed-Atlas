@@ -275,6 +275,10 @@ SearchThreadEnv::SearchThreadEnv()
 , octaves()
 , climask()
 , climseed()
+, noiseparam(-2)
+, noiseoct()
+, noiseseed()
+, noisecnt()
 , searchpass(PASS_FAST_48)
 , stop()
 , l_states()
@@ -298,6 +302,7 @@ QString SearchThreadEnv::init(int mc, bool large, const ConditionTree& condtree)
     this->surfdim = DIM_UNDEF;
     this->octaves = 0;
     this->climask = 0;
+    this->noiseparam = -2;
     uint32_t flags = 0;
     if (large)
         flags |= LARGE_BIOMES;
@@ -358,6 +363,7 @@ void SearchThreadEnv::init4Dim(int dim)
             applySeed(&g, dim, seed);
         }
         climask = 0;
+        noiseparam = -2;
         this->surfdim = DIM_UNDEF;
     }
     else if (g.mc >= MC_1_15 && seed != g.seed)
@@ -374,9 +380,54 @@ void SearchThreadEnv::init4Noise(int nptype, int octaves)
         return; // already initialized for parameter
     if (seed == g.seed && g.bn.nptype == -1)
         return; // fully initialized biome noise
-    setClimateParaSeed(&g.bn, seed, large, nptype, octaves);
+
+    int paras[3], npara = 0;
+    if (nptype == NP_DEPTH)
+    {
+        paras[npara++] = NP_CONTINENTALNESS;
+        paras[npara++] = NP_EROSION;
+        paras[npara++] = NP_WEIRDNESS;
+    }
+    else
+    {
+        paras[npara++] = nptype;
+    }
+
+    // The octaves of a noise do not depend on how many of them are
+    // initialized, so a noise that has more octaves than requested only
+    // needs its octave counts limited to match setClimateParaSeed().
+    if (noiseparam != nptype || noiseseed != seed || g.bn.nptype != nptype ||
+        noiseoct < octaves)
+    {
+        setClimateParaSeed(&g.bn, seed, large, nptype, octaves == INT_MAX ? -1 : octaves);
+        noiseoct = octaves;
+        for (int i = 0; i < npara; i++)
+        {
+            noisecnt[paras[i]][0] = g.bn.climate[paras[i]].octA.octcnt;
+            noisecnt[paras[i]][1] = g.bn.climate[paras[i]].octB.octcnt;
+        }
+        noiseparam = nptype;
+        noiseseed = seed;
+        climask = 0; // the octave buffer layout differs
+        if (g.dim == DIM_OVERWORLD)
+            g.dim = DIM_UNDEF; // and the generator is no longer complete
+    }
+    for (int i = 0; i < npara; i++)
+    {   // as in xDoublePerlinInit() with nmax = octaves
+        DoublePerlinNoise *dpn = &g.bn.climate[paras[i]];
+        int na = noisecnt[paras[i]][0];
+        int nb = noisecnt[paras[i]][1];
+        if (octaves != INT_MAX)
+        {
+            int ma = (octaves + 1) >> 1;
+            int mb = octaves - ma;
+            if (ma < na) na = ma;
+            if (mb < nb) nb = mb;
+        }
+        dpn->octA.octcnt = na;
+        dpn->octB.octcnt = nb;
+    }
     this->octaves = octaves;
-    climask = 0; // the octave buffer layout differs
 }
 
 void SearchThreadEnv::init4Climate(uint32_t mask)
@@ -396,6 +447,7 @@ void SearchThreadEnv::init4Climate(uint32_t mask)
         g.dim = DIM_UNDEF;
     setBiomeSeedParts(&g.bn, seed, large, need);
     climask |= need;
+    noiseparam = -2;
 }
 
 void SearchThreadEnv::prepareSurfaceNoise(int dim)
@@ -2176,7 +2228,19 @@ L_qm_any:
                 };
                 // only this climate noise is needed (initialized on demand)
                 env->init4Climate(1U << i);
-                int err = getParaRange(&env->g.bn.climate[i], &pmin, &pmax, rx1, rz1, w, h, (void*)bounds, f_confine);
+                int err;
+                if (cond->limex[i][0] == INT_MIN && cond->limex[i][1] == INT_MAX)
+                {   // only the required range matters: the search can stop as
+                    // soon as the bounds are known to overlap it
+                    err = getParaRangeGoal(&env->g.bn.climate[i], &pmin, &pmax,
+                        rx1, rz1, w, h, (void*)bounds, f_confine,
+                        cond->limok[i][0], cond->limok[i][1]);
+                }
+                else
+                {
+                    err = getParaRange(&env->g.bn.climate[i], &pmin, &pmax,
+                        rx1, rz1, w, h, (void*)bounds, f_confine);
+                }
                 if (err)
                 {
                     valid = 0;

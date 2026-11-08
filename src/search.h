@@ -719,6 +719,13 @@ struct SearchThreadEnv
     // while the generator itself is not (yet) fully initialized
     uint32_t climask;
     uint64_t climseed;
+    // init4Noise() keeps noiseoct octaves of noiseparam for noiseseed and
+    // serves requests for fewer octaves by limiting the octave counts, which
+    // is equivalent to initializing fewer octaves
+    int noiseparam;
+    int noiseoct;
+    uint64_t noiseseed;
+    int noisecnt[NP_MAX][2];
 
     int searchpass;
     std::atomic_bool *stop;
