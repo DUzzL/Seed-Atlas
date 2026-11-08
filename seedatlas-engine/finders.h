@@ -734,6 +734,16 @@ int getParaRange(const DoublePerlinNoise *para, double *pmin, double *pmax,
     int x, int z, int w, int h, void *data, int (*func)(void*,int,int,double));
 
 /**
+ * Like getParaRange() (pmin and pmax are required), but stops as soon as the
+ * bounds overlap [goalmin, goalmax], that is pmin <= goalmax and pmax >=
+ * goalmin. Such a test on the bounds gives the same answer as it would with
+ * the bounds of getParaRange(), but the bounds themselves are incomplete.
+ */
+int getParaRangeGoal(const DoublePerlinNoise *para, double *pmin, double *pmax,
+    int x, int z, int w, int h, void *data, int (*func)(void*,int,int,double),
+    double goalmin, double goalmax);
+
+/**
  * Gets the min/max parameter values within which a biome change can occur.
  */
 const int *getBiomeParaExtremes(int mc);
