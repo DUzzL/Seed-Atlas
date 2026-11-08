@@ -144,6 +144,12 @@ STRUCT(BiomeFilter)
     uint64_t biomeToExcl, biomeToExclM;
     uint64_t biomeToFind, biomeToFindM;
     uint64_t biomeToPick, biomeToPickM;
+
+    // 1.18+: the climate bounds of all biomes that the filter requires, picks
+    // or excludes; the biome at a position outside of them does not matter
+    // (see setBiomeFilterClimateBounds())
+    BiomeClimateBounds cb;
+    int cbpara[NP_MAX], ncbpara;
 };
 
 
@@ -590,6 +596,14 @@ void setupBiomeFilter(
     const int *required, int requiredLen,
     const int *excluded, int excludedLen,
     const int *matchany, int matchanyLen);
+
+/* 1.18+: adds the climate bounds of the biomes that the filter requires,
+ * picks or excludes to the filter. checkForBiomes() then skips the positions
+ * whose biome cannot matter, without changing its result. Computing the
+ * bounds takes about half a millisecond, so this is for filters that are set
+ * up once and used often.
+ */
+void setBiomeFilterClimateBounds(BiomeFilter *bf, int mc);
 
 /* Starts to generate the specified range and checks if the biomes meet the
  * requirements of the biome filter, returning either:

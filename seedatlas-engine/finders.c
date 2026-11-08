@@ -3998,6 +3998,17 @@ void setupBiomeFilter(
 }
 
 
+void setBiomeFilterClimateBounds(BiomeFilter *bf, int mc)
+{
+    uint64_t set[4] = {
+        bf->biomeToFind | bf->biomeToPick | bf->biomeToExcl, 0,
+        bf->biomeToFindM | bf->biomeToPickM | bf->biomeToExclM, 0,
+    };
+    bf->ncbpara = 0;
+    if (getBiomeClimateBounds(&bf->cb, mc, set))
+        bf->ncbpara = getClimateBoundParas(&bf->cb, bf->cbpara);
+}
+
 typedef struct {
     Generator *g;
     int *ids;
@@ -4008,7 +4019,20 @@ typedef struct {
     uint64_t bexc, mexc;
     uint64_t bany, many;
     volatile char *stop;
+    const BiomeFilter *skipfilter; // skip positions outside of its bounds
 } gdt_info_t;
+
+// Can the biome at a position of a 1.18+ overworld range (scale 4 or more,
+// as genBiomeNoise3D() samples it) matter for the filter?
+static int biomeMayMatter(const Generator *g, const BiomeFilter *f, Range r,
+    int x, int z)
+{
+    int scale = r.scale > 4 ? r.scale / 4 : 1;
+    int mid = scale / 2;
+    uint32_t flags = r.scale > 4 ? SAMPLE_NO_SHIFT : 0;
+    return climateMayBeWithin(&g->bn, &f->cb, f->cbpara, f->ncbpara,
+        x*scale + mid, z*scale + mid, flags);
+}
 
 static int f_graddesc_test(void *data, int x, int z, double p)
 {
@@ -4019,6 +4043,11 @@ static int f_graddesc_test(void *data, int x, int z, double p)
     int idx = (z - info->r.z) * info->r.sx + (x - info->r.x);
     if (info->ids[idx] != -1)
         return 0;
+    if (info->skipfilter && !biomeMayMatter(info->g, info->skipfilter, info->r, x, z))
+    {
+        info->ids[idx] = -2; // a biome that does not matter
+        return 0;
+    }
     int id = getBiomeAt(info->g, info->r.scale, x, info->r.y, z);
     info->ids[idx] = id;
     if (id < 128) info->b |= (1ULL << id);
@@ -4121,6 +4150,11 @@ int checkForBiomes(
     info->bany = filter->biomeToPick;
     info->many = filter->biomeToPickM;
     info->stop = stop;
+    // positions whose biome cannot matter are skipped where no cache asks
+    // for the biomes (at 1:1 the Voronoi cell would decide the position)
+    info->skipfilter = NULL;
+    if (!cache && dim == DIM_OVERWORLD && r.scale >= 4 && filter->ncbpara)
+        info->skipfilter = filter;
 
     ret = 0;
     memset(ids, -1, r.sx * r.sz * sizeof(int));
@@ -4205,6 +4239,11 @@ int checkForBiomes(
             break;
         if (t.y == 0 && info->ids[t.i] != -1)
             continue;
+        if (info->skipfilter && !biomeMayMatter(g, filter, r, r.x+t.x, r.z+t.z))
+        {
+            info->ids[t.i] = -2; // a biome that does not matter
+            continue;
+        }
         id = getBiomeAt(g, r.scale, r.x+t.x, r.y+t.y, r.z+t.z);
         info->ids[t.i] = id;
         if (id < 128) info->b |= (1ULL << id);

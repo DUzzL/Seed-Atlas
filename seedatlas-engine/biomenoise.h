@@ -296,6 +296,15 @@ STRUCT(BiomeClimateBounds)
     int32_t lo[NP_MAX], hi[NP_MAX];
 };
 int getBiomeClimateBounds(BiomeClimateBounds *b, int mc, const uint64_t biomes[4]);
+/// The parameters worth testing with a set of climate bounds, in the order
+/// of their noise costs (bounds that hardly rule anything out are left out).
+/// Returns how many.
+int getClimateBoundParas(const BiomeClimateBounds *b, int paras[NP_MAX]);
+/// Can the biome at a 1:4 position, as sampleBiomeNoise() with the sample
+/// flags, be within the bounds? Tests only the given parameters; the noise
+/// has to be initialized for them and the shift.
+int climateMayBeWithin(const BiomeNoise *bn, const BiomeClimateBounds *b,
+    const int *paras, int npara, int x, int z, uint32_t sample_flags);
 int sampleBiomeNoiseBeta(const BiomeNoiseBeta *bnb, int64_t *np, double *nv,
     int x, int z);
 double approxSurfaceBeta(const BiomeNoiseBeta *bnb, const SurfaceNoiseBeta *snb,

@@ -192,6 +192,7 @@ QString Condition::apply(int mc)
         setupBiomeFilter(&bf, mc, bfflags, 0, 0, ex, exlen, in, inlen);
     else
         setupBiomeFilter(&bf, mc, bfflags, in, inlen, ex, exlen, 0, 0);
+    setBiomeFilterClimateBounds(&bf, mc);
 
     ncbpara = 0;
     if (type == F_BIOME_SAMPLE)

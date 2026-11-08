@@ -150,6 +150,52 @@ static void testStructureBiomeChecks(void)
     assert(tested > 100); // 447 when written
 }
 
+// checkForBiomes() gives the same results with the climate bounds of the
+// filter, which only let it skip positions whose biome does not matter.
+static void testBiomeFilterClimateBounds(void)
+{
+    static const int mcs[] = { MC_1_18, MC_1_21_5, MC_26_3 };
+    static const int req[][2] = {
+        { river, -1 }, { lukewarm_ocean, -1 }, { mushroom_fields, -1 },
+        { jungle, desert }, { ice_spikes, -1 }, { dark_forest, -1 },
+    };
+    uint64_t rng = 0x2545F4914F6CDD1DULL;
+    int differ = 0, skipping = 0;
+    for (size_t v = 0; v < sizeof(mcs) / sizeof(mcs[0]); v++)
+    {
+        Generator g;
+        setupGenerator(&g, mcs[v], 0);
+        for (size_t f = 0; f < sizeof(req) / sizeof(req[0]); f++)
+        {
+            // the biomes as required ones, then as excluded ones
+            int n = req[f][1] < 0 ? 1 : 2;
+            BiomeFilter plain, bounded, exclP, exclB;
+            setupBiomeFilter(&plain, mcs[v], 0, req[f], n, 0, 0, 0, 0);
+            bounded = plain;
+            setBiomeFilterClimateBounds(&bounded, mcs[v]);
+            setupBiomeFilter(&exclP, mcs[v], 0, 0, 0, req[f], n, 0, 0);
+            exclB = exclP;
+            setBiomeFilterClimateBounds(&exclB, mcs[v]);
+            skipping += bounded.ncbpara > 0;
+            for (int it = 0; it < 24; it++)
+            {
+                rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
+                uint64_t seed = rng;
+                int scale = (it & 3) == 3 ? 16 : 4;
+                int w = 1 + (int)(rng >> 58) % 12, h = 1 + (int)(rng >> 52) % 12;
+                Range r = { scale, (int)(rng >> 40) % 2000 - 1000, (int)(rng >> 30) % 2000 - 1000,
+                            w, h, 16, 1 };
+                differ += checkForBiomes(&g, NULL, r, DIM_OVERWORLD, seed, &plain, NULL) !=
+                          checkForBiomes(&g, NULL, r, DIM_OVERWORLD, seed, &bounded, NULL);
+                differ += checkForBiomes(&g, NULL, r, DIM_OVERWORLD, seed, &exclP, NULL) !=
+                          checkForBiomes(&g, NULL, r, DIM_OVERWORLD, seed, &exclB, NULL);
+            }
+        }
+    }
+    assert(differ == 0);
+    assert(skipping > 0);
+}
+
 int main(void)
 {
     static const char *versions[] = {
@@ -519,6 +565,7 @@ int main(void)
 
     testBiomeClimateBounds();
     testStructureBiomeChecks();
+    testBiomeFilterClimateBounds();
 
     puts("version, biome, and structure tests passed");
     return 0;

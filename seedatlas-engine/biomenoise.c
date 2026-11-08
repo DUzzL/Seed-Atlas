@@ -2366,6 +2366,36 @@ static int64_t dominationThreshold(const LeafBox *leaves, int nl, const LeafBox 
     return best;
 }
 
+int getClimateBoundParas(const BiomeClimateBounds *b, int paras[NP_MAX])
+{
+    static const int order[] = {
+        NP_TEMPERATURE, NP_HUMIDITY, NP_WEIRDNESS, NP_EROSION, NP_CONTINENTALNESS,
+    };
+    int i, n = 0;
+    for (i = 0; i < (int) (sizeof(order) / sizeof(order[0])); i++)
+    {
+        int p = order[i];
+        if (b->lo[p] > -6000 || b->hi[p] < 6000)
+            paras[n++] = p;
+    }
+    return n;
+}
+
+int climateMayBeWithin(const BiomeNoise *bn, const BiomeClimateBounds *b,
+    const int *paras, int npara, int x, int z, uint32_t sample_flags)
+{
+    double px, pz;
+    int i;
+    getBiomeNoisePos(bn, x, z, sample_flags, &px, &pz);
+    for (i = 0; i < npara; i++)
+    {
+        int64_t v = sampleBiomeNoisePara(bn, paras[i], px, pz);
+        if (v < b->lo[paras[i]] || v > b->hi[paras[i]])
+            return 0;
+    }
+    return 1;
+}
+
 int getBiomeClimateBounds(BiomeClimateBounds *b, int mc, const uint64_t biomes[4])
 {
     int i, k;
