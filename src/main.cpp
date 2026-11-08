@@ -42,6 +42,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <set>
 #include <tuple>
@@ -49,6 +51,28 @@
 
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__) && defined(__x86_64__) && defined(__AVX2__)
+// The x86-64 builds need x86-64-v3 (AVX2 and friends, see seed-atlas.pro).
+// On an older CPU, say so instead of crashing on an illegal instruction. This
+// runs before the other static initializers (which may already use those
+// instructions) and is itself compiled for plain x86-64.
+__attribute__((constructor(101), target("arch=x86-64")))
+static void requireCpuLevel()
+{
+    __builtin_cpu_init();
+    if (__builtin_cpu_supports("x86-64-v3"))
+        return;
+    const char *msg = "Seed Atlas needs a CPU with AVX2 (Intel Haswell, AMD Excavator "
+        "or newer). This processor does not support it.";
+#ifdef Q_OS_WIN
+    MessageBoxA(NULL, msg, "Seed Atlas", MB_OK | MB_ICONERROR);
+#endif
+    fputs(msg, stderr); // not fprintf(), which fortified headers inline
+    fputs("\n", stderr);
+    _Exit(1);
+}
 #endif
 
 extern "C"
