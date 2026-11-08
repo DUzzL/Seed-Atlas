@@ -33,3 +33,4 @@ Thumbs.db
 
 # aqt writes its log into the working directory
 /aqtinstall.log
+/seedatlas-sax/build/

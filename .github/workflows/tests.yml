@@ -23,6 +23,29 @@ jobs:
       - name: Run version tests with the app's engine flags
         run: ./seedatlas-engine/test-versions
 
+  sax-abi:
+    name: Mod ABI (seedatlas-sax) tests
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up MinGW (C11 VLA support)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc make
+      - name: Build and run the ABI tests (Unix)
+        if: runner.os != 'Windows'
+        run: make -C seedatlas-sax test
+      - name: Build and run the ABI tests (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: make -C seedatlas-sax test CC=gcc
+
   packaging-metadata:
     name: Packaging metadata regression tests
     runs-on: ubuntu-24.04
