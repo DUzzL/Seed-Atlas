@@ -1130,6 +1130,24 @@ void initBiomeNoise(BiomeNoise *bn, int mc)
 }
 
 
+void getBiomeNoisePos(const BiomeNoise *bn, int x, int z, uint32_t sample_flags,
+    double *px, double *pz)
+{
+    *px = x;
+    *pz = z;
+    if (!(sample_flags & SAMPLE_NO_SHIFT))
+    {
+        *px += sampleDoublePerlin(&bn->climate[NP_SHIFT], x, 0, z) * 4.0;
+        *pz += sampleDoublePerlin(&bn->climate[NP_SHIFT], z, x, 0) * 4.0;
+    }
+}
+
+int64_t sampleBiomeNoisePara(const BiomeNoise *bn, int nptype, double px, double pz)
+{
+    float v = sampleDoublePerlin(&bn->climate[nptype], px, 0, pz);
+    return (int64_t)(10000.0F*v);
+}
+
 /// Biome sampler for MC 1.18
 int sampleBiomeNoise(const BiomeNoise *bn, int64_t *np, int x, int y, int z,
     uint64_t *dat, uint32_t sample_flags)
@@ -1143,12 +1161,8 @@ int sampleBiomeNoise(const BiomeNoise *bn, int64_t *np, int x, int y, int z,
     }
 
     float t = 0, h = 0, c = 0, e = 0, d = 0, w = 0;
-    double px = x, pz = z;
-    if (!(sample_flags & SAMPLE_NO_SHIFT))
-    {
-        px += sampleDoublePerlin(&bn->climate[NP_SHIFT], x, 0, z) * 4.0;
-        pz += sampleDoublePerlin(&bn->climate[NP_SHIFT], z, x, 0) * 4.0;
-    }
+    double px, pz;
+    getBiomeNoisePos(bn, x, z, sample_flags, &px, &pz);
 
     c = sampleDoublePerlin(&bn->climate[NP_CONTINENTALNESS], px, 0, pz);
     e = sampleDoublePerlin(&bn->climate[NP_EROSION], px, 0, pz);
@@ -1558,6 +1572,41 @@ int get_resulting_node_tab(const NodeDistTable *tab, const BiomeTree *bt, int id
     return leaf;
 }
 
+static const BiomeTree g_btree18 = {
+    btree18_steps, &btree18_param[0][0], btree18_nodes, btree18_order,
+    sizeof(btree18_nodes) / sizeof(uint64_t)
+};
+static const BiomeTree g_btree192 = {
+    btree192_steps, &btree192_param[0][0], btree192_nodes, btree192_order,
+    sizeof(btree192_nodes) / sizeof(uint64_t)
+};
+static const BiomeTree g_btree19 = {
+    btree19_steps, &btree19_param[0][0], btree19_nodes, btree19_order,
+    sizeof(btree19_nodes) / sizeof(uint64_t)
+};
+static const BiomeTree g_btree20 = {
+    btree20_steps, &btree20_param[0][0], btree20_nodes, btree20_order,
+    sizeof(btree20_nodes) / sizeof(uint64_t)
+};
+static const BiomeTree g_btree21wd = {
+    btree21wd_steps, &btree21wd_param[0][0], btree21wd_nodes, btree21wd_order,
+    sizeof(btree21wd_nodes) / sizeof(uint64_t)
+};
+
+// The biome parameter tree of a version.
+static const BiomeTree *getBiomeTree(int mc)
+{
+    if (mc >= MC_1_21_4)
+        return &g_btree21wd;
+    if (mc >= MC_1_20_6)
+        return &g_btree20;
+    if (mc >= MC_1_19_4)
+        return &g_btree19;
+    if (mc >= MC_1_19_2)
+        return &g_btree192;
+    return &g_btree18;
+}
+
 static int is_21_5_pale_garden_point(const BiomeTree *bt, int idx)
 {
     // 1.21.5 changed ten existing negative-weirdness Dark Forest parameter
@@ -1612,43 +1661,27 @@ static int is_26_3_dappled_forest_point(const BiomeTree *bt, int idx)
            range[5][0] >= -500;
 }
 
+// The biome of a leaf of the parameter tree (before Sulfur Caves).
+static int getLeafBiome(int mc, const BiomeTree *bt, int idx)
+{
+    int biome = (bt->nodes[idx] >> 48) & 0xFF;
+
+    if (mc >= MC_1_21_5 && biome == dark_forest &&
+        is_21_5_pale_garden_point(bt, idx))
+        biome = pale_garden;
+
+    if (mc >= MC_26_3 && biome == plains &&
+        is_26_3_dappled_forest_point(bt, idx))
+        biome = dappled_forest;
+
+    return biome;
+}
+
 ATTR(hot, flatten)
 int climateToBiome(int mc, const uint64_t np[6], uint64_t *dat)
 {
-    static const BiomeTree btree18 = {
-        btree18_steps, &btree18_param[0][0], btree18_nodes, btree18_order,
-        sizeof(btree18_nodes) / sizeof(uint64_t)
-    };
-    static const BiomeTree btree192 = {
-        btree192_steps, &btree192_param[0][0], btree192_nodes, btree192_order,
-        sizeof(btree192_nodes) / sizeof(uint64_t)
-    };
-    static const BiomeTree btree19 = {
-        btree19_steps, &btree19_param[0][0], btree19_nodes, btree19_order,
-        sizeof(btree19_nodes) / sizeof(uint64_t)
-    };
-    static const BiomeTree btree20 = {
-        btree20_steps, &btree20_param[0][0], btree20_nodes, btree20_order,
-        sizeof(btree20_nodes) / sizeof(uint64_t)
-    };
-    static const BiomeTree btree21wd = {
-        btree21wd_steps, &btree21wd_param[0][0], btree21wd_nodes, btree21wd_order,
-        sizeof(btree21wd_nodes) / sizeof(uint64_t)
-    };
-
-    const BiomeTree *bt;
+    const BiomeTree *bt = getBiomeTree(mc);
     int idx;
-
-    if (mc >= MC_1_21_4)
-        bt = &btree21wd;
-    else if (mc >= MC_1_20_6)
-        bt = &btree20;
-    else if (mc >= MC_1_19_4)
-        bt = &btree19;
-    else if (mc >= MC_1_19_2)
-        bt = &btree192;
-    else
-        bt = &btree18;
 
     const BiomeTreeDims *bd = get_tree_dims(bt);
     if (bd)
@@ -1679,15 +1712,7 @@ int climateToBiome(int mc, const uint64_t np[6], uint64_t *dat)
         idx = get_resulting_node(np, bt, 0, 0, -1, 0);
     }
 
-    int biome = (bt->nodes[idx] >> 48) & 0xFF;
-
-    if (mc >= MC_1_21_5 && biome == dark_forest &&
-        is_21_5_pale_garden_point(bt, idx))
-        biome = pale_garden;
-
-    if (mc >= MC_26_3 && biome == plains &&
-        is_26_3_dappled_forest_point(bt, idx))
-        biome = dappled_forest;
+    int biome = getLeafBiome(mc, bt, idx);
 
     if (mc >= MC_26_2)
     {
@@ -2212,4 +2237,215 @@ Range getVoronoiSrcRange(Range r)
         s.sy = ((ty + r.sy) >> 2) - s.y + 2;
     }
     return s;
+}
+
+
+//==============================================================================
+// Climate Bounds of Biomes (1.18+)
+//==============================================================================
+
+// A leaf of the parameter tree: its intervals and biome.
+typedef struct { int32_t lo[6], hi[6]; int biome; } LeafBox;
+
+static int collectLeaves(const BiomeTree *bt, int idx, int depth, int *out, int n)
+{   // the same traversal as get_resulting_node()
+    if (bt->steps[depth] == 0)
+    {
+        out[n++] = idx;
+        return n;
+    }
+    uint32_t step;
+    do
+    {
+        step = bt->steps[depth];
+        depth++;
+    }
+    while (idx+step >= bt->len);
+    uint32_t inner = bt->nodes[idx] >> 48;
+    uint32_t i;
+    for (i = 0; i < bt->order && inner < bt->len; i++, inner += step)
+        n = collectLeaves(bt, inner, depth, out, n);
+    return n;
+}
+
+static int64_t floorHalf(int64_t a)
+{
+    return a >= 0 ? a / 2 : -((-a + 1) / 2);
+}
+
+typedef struct { int64_t t; int32_t lo, hi; } BoundCand;
+
+static int cmpBoundCandT(const void *a, const void *b)
+{
+    int64_t x = ((const BoundCand*)a)->t, y = ((const BoundCand*)b)->t;
+    return x < y ? -1 : x > y;
+}
+
+static int cmpBoundCandLo(const void *a, const void *b)
+{
+    int32_t x = ((const BoundCand*)a)->lo, y = ((const BoundCand*)b)->lo;
+    return x < y ? -1 : x > y;
+}
+
+// Does the union of the intervals c[0..n) cover all integers of [lo, hi]?
+static int coversInterval(const BoundCand *c, int n, int32_t lo, int32_t hi, BoundCand *tmp)
+{
+    memcpy(tmp, c, n * sizeof(*c));
+    qsort(tmp, n, sizeof(*tmp), cmpBoundCandLo);
+    int64_t next = lo; // the first integer not covered yet
+    int i;
+    for (i = 0; i < n && next <= hi; i++)
+    {
+        if (tmp[i].lo > next)
+            break; // a gap
+        if (tmp[i].hi >= next)
+            next = (int64_t) tmp[i].hi + 1;
+    }
+    return next > hi;
+}
+
+/* The smallest T such that leaf M loses to another leaf for every value v > T
+ * of parameter k (with sign sgn, -1 mirrors the parameter), whatever the
+ * other parameters are. A leaf L is strictly closer than M if its interval
+ * contains M's in every other parameter but one (j), is closer in k, and the
+ * leaves like L together cover M's interval in j: then the leaf covering the
+ * value in j is at most as far in each other parameter and closer in k.
+ * Returns INT64_MAX if there is no such T.
+ */
+static int64_t dominationThreshold(const LeafBox *leaves, int nl, const LeafBox *M,
+    const uint8_t *contains, int k, int sgn, BoundCand *buf, BoundCand *tmp)
+{
+    int64_t mhi = sgn > 0 ? M->hi[k] : -(int64_t)M->lo[k];
+    int64_t best = INT64_MAX;
+    int j, l;
+    for (j = 0; j < 6; j++)
+    {
+        if (j == k)
+            continue;
+        int n = 0;
+        for (l = 0; l < nl; l++)
+        {
+            const LeafBox *L = &leaves[l];
+            if ((contains[l] | (1 << k) | (1 << j)) != 0x3F)
+                continue;
+            int64_t llo = sgn > 0 ? L->lo[k] : -(int64_t)L->hi[k];
+            int64_t lhi = sgn > 0 ? L->hi[k] : -(int64_t)L->lo[k];
+            if (lhi <= mhi)
+                continue; // not closer for large v
+            // for v > mhi: |v - M| = v - mhi, |v - L| < it when 2v > llo + mhi
+            int64_t t = floorHalf(llo + mhi);
+            buf[n].t = t > mhi ? t : mhi;
+            buf[n].lo = L->lo[j];
+            buf[n].hi = L->hi[j];
+            n++;
+        }
+        // the candidates by threshold: the more of them, the more they
+        // cover, so the shortest covering prefix is found by bisection
+        qsort(buf, n, sizeof(*buf), cmpBoundCandT);
+        if (n == 0 || !coversInterval(buf, n, M->lo[j], M->hi[j], tmp))
+            continue;
+        int a = 0, z = n - 1; // the prefix up to z covers
+        while (a < z)
+        {
+            int mid = (a + z) / 2;
+            if (coversInterval(buf, mid + 1, M->lo[j], M->hi[j], tmp))
+                z = mid;
+            else
+                a = mid + 1;
+        }
+        if (buf[z].t < best)
+            best = buf[z].t;
+    }
+    return best;
+}
+
+int getBiomeClimateBounds(BiomeClimateBounds *b, int mc, const uint64_t biomes[4])
+{
+    int i, k;
+    for (i = 0; i < NP_MAX; i++)
+    {
+        b->lo[i] = INT32_MIN;
+        b->hi[i] = INT32_MAX;
+    }
+    if (mc < MC_1_18)
+        return 0;
+    // Sulfur Caves can replace the biome of any leaf (see climateToBiome())
+    if (mc >= MC_26_2 && (biomes[sulfur_caves >> 6] >> (sulfur_caves & 63) & 1))
+        return 0;
+
+    const BiomeTree *bt = getBiomeTree(mc);
+    int *idx = (int*) malloc(bt->len * sizeof(int));
+    LeafBox *leaves = (LeafBox*) malloc(bt->len * sizeof(LeafBox));
+    uint8_t *contains = (uint8_t*) malloc(bt->len);
+    BoundCand *buf = (BoundCand*) malloc(bt->len * sizeof(BoundCand));
+    BoundCand *tmp = (BoundCand*) malloc(bt->len * sizeof(BoundCand));
+    int nl = collectLeaves(bt, 0, 0, idx, 0);
+    for (i = 0; i < nl; i++)
+    {
+        uint64_t node = bt->nodes[idx[i]];
+        for (k = 0; k < 6; k++)
+        {
+            int p = (node >> 8*k) & 0xFF;
+            leaves[i].lo[k] = bt->param[2*p + 0];
+            leaves[i].hi[k] = bt->param[2*p + 1];
+        }
+        leaves[i].biome = getLeafBiome(mc, bt, idx[i]);
+    }
+
+    // the largest threshold over the leaves of the biomes, for each parameter
+    // and direction (the depth is not used: it depends on three noises)
+    int64_t thr[6][2];
+    for (k = 0; k < 6; k++)
+        thr[k][0] = thr[k][1] = INT64_MIN;
+    int found = 0;
+    for (i = 0; i < nl; i++)
+    {
+        const LeafBox *M = &leaves[i];
+        if (!(biomes[M->biome >> 6] >> (M->biome & 63) & 1))
+            continue;
+        found = 1;
+        int l;
+        for (l = 0; l < nl; l++)
+        {
+            contains[l] = 0;
+            for (k = 0; k < 6; k++)
+                if (leaves[l].lo[k] <= M->lo[k] && leaves[l].hi[k] >= M->hi[k])
+                    contains[l] |= 1 << k;
+        }
+        for (k = 0; k < 6; k++)
+        {
+            if (k == NP_DEPTH)
+                continue;
+            int d;
+            for (d = 0; d < 2; d++)
+            {
+                if (thr[k][d] == INT64_MAX)
+                    continue;
+                int64_t t = dominationThreshold(leaves, nl, M, contains, k, d ? -1 : +1, buf, tmp);
+                if (t > thr[k][d])
+                    thr[k][d] = t;
+            }
+        }
+    }
+    for (k = 0; k < 6; k++)
+    {
+        if (k == NP_DEPTH)
+            continue;
+        if (!found)
+        {   // none of the biomes generates: reject every value
+            b->lo[k] = 1;
+            b->hi[k] = 0;
+            continue;
+        }
+        if (thr[k][0] < INT32_MAX)
+            b->hi[k] = (int32_t) thr[k][0];
+        if (thr[k][1] < INT32_MAX)
+            b->lo[k] = (int32_t) -thr[k][1];
+    }
+    free(idx);
+    free(leaves);
+    free(contains);
+    free(buf);
+    free(tmp);
+    return 1;
 }

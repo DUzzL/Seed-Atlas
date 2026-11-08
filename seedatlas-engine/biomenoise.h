@@ -264,6 +264,29 @@ void setBiomeSeedParts(BiomeNoise *bn, uint64_t seed, int large, uint32_t mask);
 void setBetaBiomeSeed(BiomeNoiseBeta *bnb, uint64_t seed);
 int sampleBiomeNoise(const BiomeNoise *bn, int64_t *np, int x, int y, int z,
     uint64_t *dat, uint32_t sample_flags);
+/// The (shifted) position at which sampleBiomeNoise() samples the climate.
+void getBiomeNoisePos(const BiomeNoise *bn, int x, int z, uint32_t sample_flags,
+    double *px, double *pz);
+/// A climate parameter (not NP_DEPTH) at such a position, as it enters the
+/// biome lookup of sampleBiomeNoise(). Needs only that noise (and the shift
+/// for the position) to be initialized.
+int64_t sampleBiomeNoisePara(const BiomeNoise *bn, int nptype, double px, double pz);
+
+/**
+ * Bounds on the climate parameters at which a set of 1.18+ overworld biomes
+ * can generate: wherever a parameter is below lo[] or above hi[], the biome
+ * is not in the set (the depth is never bounded). They follow from the
+ * parameter tree, so they are exact; a set that never generates gets lo > hi.
+ * (Unlike getBiomeParaLimits(), the extent of a biome's parameter boxes: the
+ * nearest box decides, so a biome can occur outside of its boxes.)
+ * @biomes: set of biome IDs, bit (id & 63) of biomes[id >> 6]
+ * Returns 0 (and no bounds) for versions before 1.18.
+ */
+STRUCT(BiomeClimateBounds)
+{
+    int32_t lo[NP_MAX], hi[NP_MAX];
+};
+int getBiomeClimateBounds(BiomeClimateBounds *b, int mc, const uint64_t biomes[4]);
 int sampleBiomeNoiseBeta(const BiomeNoiseBeta *bnb, int64_t *np, double *nv,
     int x, int z);
 double approxSurfaceBeta(const BiomeNoiseBeta *bnb, const SurfaceNoiseBeta *snb,

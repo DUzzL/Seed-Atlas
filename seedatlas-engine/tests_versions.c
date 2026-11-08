@@ -40,6 +40,54 @@ static void assertStructurePos(int stype, int mc, uint64_t seed,
     assert(pos.x == x && pos.z == z);
 }
 
+/* getBiomeClimateBounds(): wherever a climate parameter is outside the bounds
+ * of a biome, climateToBiome() must not return it. Random climate points, and
+ * points just beyond each bound. */
+static void testBiomeClimateBounds(void)
+{
+    static const int mcs[] = { MC_1_18, MC_1_21_5, MC_26_3 };
+    uint64_t rng = 88172645463325252ULL;
+    for (size_t v = 0; v < sizeof(mcs) / sizeof(mcs[0]); v++)
+    {
+        for (int id = 0; id < 256; id++)
+        {
+            uint64_t set[4] = { 0 };
+            set[id >> 6] |= 1ULL << (id & 63);
+            BiomeClimateBounds b;
+            if (!getBiomeClimateBounds(&b, mcs[v], set))
+                continue;
+            for (int it = 0; it < 4000; it++)
+            {
+                int64_t np[6];
+                for (int k = 0; k < 6; k++)
+                {
+                    rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
+                    np[k] = (int64_t)(rng % 50001) - 25000;
+                }
+                int k = it % 6;
+                if (k != NP_DEPTH && (it & 1))
+                {
+                    int64_t d = 1 + (int64_t)(rng >> 40) % 40;
+                    if ((it & 2) && b.hi[k] != INT32_MAX)
+                        np[k] = (int64_t) b.hi[k] + d;
+                    else if (b.lo[k] != INT32_MIN)
+                        np[k] = (int64_t) b.lo[k] - d;
+                }
+                if (climateToBiome(mcs[v], (const uint64_t*) np, NULL) != id)
+                    continue;
+                for (k = 0; k < 6; k++)
+                    assert(k == NP_DEPTH || (np[k] >= b.lo[k] && np[k] <= b.hi[k]));
+            }
+        }
+    }
+    // the example from the parameter tree: Mushroom Fields only below -1.05
+    uint64_t mushroom[4] = { 1ULL << mushroom_fields, 0, 0, 0 };
+    BiomeClimateBounds b;
+    assert(getBiomeClimateBounds(&b, MC_26_3, mushroom));
+    assert(b.hi[NP_CONTINENTALNESS] == -10500);
+    assert(!getBiomeClimateBounds(&b, MC_1_17, mushroom));
+}
+
 int main(void)
 {
     static const char *versions[] = {
@@ -406,6 +454,8 @@ int main(void)
     Pos newSpawn = estimateSpawn(&spawnNew, NULL);
     assert(oldSpawn.x == -136 && oldSpawn.z == 584);
     assert(newSpawn.x == -760 && newSpawn.z == -920);
+
+    testBiomeClimateBounds();
 
     puts("version, biome, and structure tests passed");
     return 0;
