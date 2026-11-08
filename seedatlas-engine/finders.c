@@ -5563,23 +5563,30 @@ typedef struct { int32_t x, z; uint32_t gen; double v; } ParaMemoEntry;
 static PARA_THREAD_LOCAL ParaMemoEntry g_para_memo[1 << PARA_MEMO_BITS];
 static PARA_THREAD_LOCAL uint32_t g_para_memo_gen;
 
-static uint32_t paraMemoBegin(void)
+// The memo of a getParaRange() call: the table of the thread, which is
+// looked up once per call (thread locals can be slow to reach, e.g. emulated
+// with MinGW), and the generation that marks its valid entries.
+typedef struct { ParaMemoEntry *tab; uint32_t gen; } ParaMemo;
+
+static ParaMemo paraMemoBegin(void)
 {
-    if (++g_para_memo_gen == 0)
+    ParaMemo memo = { g_para_memo, ++g_para_memo_gen };
+    if (memo.gen == 0)
     {   // the generation counter wrapped around
-        memset(g_para_memo, 0, sizeof(g_para_memo));
-        g_para_memo_gen = 1;
+        memset(memo.tab, 0, sizeof(g_para_memo));
+        memo.gen = g_para_memo_gen = 1;
     }
-    return g_para_memo_gen;
+    return memo;
 }
 
 static inline double paraSample(const DoublePerlinNoise *para, int x, int z,
-    uint32_t gen)
+    const ParaMemo *memo)
 {
-    if (!gen)
+    if (!memo)
         return sampleDoublePerlinCoherent(para, x, 0, z);
+    uint32_t gen = memo->gen;
     uint32_t h = ((uint32_t)x * 0x9E3779B1u) ^ ((uint32_t)z * 0x85EBCA77u);
-    ParaMemoEntry *e = &g_para_memo[h >> (32 - PARA_MEMO_BITS)];
+    ParaMemoEntry *e = &memo->tab[h >> (32 - PARA_MEMO_BITS)];
     if (e->gen == gen && e->x == x && e->z == z)
         return e->v;
     double v = sampleDoublePerlinCoherent(para, x, 0, z);
@@ -5593,20 +5600,20 @@ static inline double paraSample(const DoublePerlinNoise *para, int x, int z,
 static double getParaDescentMemo(const DoublePerlinNoise *para, double factor,
     int x, int z, int w, int h, int i0, int j0, int maxrad,
     int maxiter, double alpha, void *data, int (*func)(void*,int,int,double),
-    uint32_t gen);
+    const ParaMemo *memo);
 
 double getParaDescent(const DoublePerlinNoise *para, double factor,
     int x, int z, int w, int h, int i0, int j0, int maxrad,
     int maxiter, double alpha, void *data, int (*func)(void*,int,int,double))
 {
     return getParaDescentMemo(para, factor, x, z, w, h, i0, j0, maxrad,
-        maxiter, alpha, data, func, 0);
+        maxiter, alpha, data, func, NULL);
 }
 
 static double getParaDescentMemo(const DoublePerlinNoise *para, double factor,
     int x, int z, int w, int h, int i0, int j0, int maxrad,
     int maxiter, double alpha, void *data, int (*func)(void*,int,int,double),
-    uint32_t gen)
+    const ParaMemo *memo)
 {
     /// Do a gradient descent on a grid...
     /// To start with, we will just consider a step size of 1 in one axis:
@@ -5628,7 +5635,7 @@ static double getParaDescentMemo(const DoublePerlinNoise *para, double factor,
     int dirx = 0, dirz = 0, dira;
     int k, i, j;
     double v, vd, va;
-    v = factor * paraSample(para, x+i0, z+j0, gen);
+    v = factor * paraSample(para, x+i0, z+j0, memo);
     if (func)
     {
         if (func(data, x+i0, z+j0, factor < 0 ? -v : v))
@@ -5640,13 +5647,13 @@ static double getParaDescentMemo(const DoublePerlinNoise *para, double factor,
     {
         if (dirx == 0) dirx = +1;
         if (i+dirx >= 0 && i+dirx < w)
-            vd = factor * paraSample(para, x+i+dirx, z+j, gen);
+            vd = factor * paraSample(para, x+i+dirx, z+j, memo);
         else vd = v;
         if (vd >= v)
         {
             dirx *= -1;
             if (i+dirx >= 0 && i+dirx < w)
-                vd = factor * paraSample(para, x+i+dirx, z+j, gen);
+                vd = factor * paraSample(para, x+i+dirx, z+j, memo);
             else vd = v;
             if (vd >= v)
                 dirx = 0;
@@ -5656,7 +5663,7 @@ static double getParaDescentMemo(const DoublePerlinNoise *para, double factor,
             dira = (int)(dirx * alpha * (v - vd));
             if (abs(dira) > 2 && i+dira >= 0 && i+dira < w)
             {   // try jumping by more than 1
-                va = factor * paraSample(para, x+i+dira, z+j, gen);
+                va = factor * paraSample(para, x+i+dira, z+j, memo);
                 if (va < vd)
                 {
                     i += dira;
@@ -5676,13 +5683,13 @@ static double getParaDescentMemo(const DoublePerlinNoise *para, double factor,
 
         if (dirz == 0) dirz = +1;
         if (j+dirz >= 0 && j+dirz < h)
-            vd = factor * paraSample(para, x+i, z+j+dirz, gen);
+            vd = factor * paraSample(para, x+i, z+j+dirz, memo);
         else vd = v;
         if (vd >= v)
         {
             dirz *= -1;
             if (j+dirz >= 0 && j+dirz < h)
-                vd = factor * paraSample(para, x+i, z+j+dirz, gen);
+                vd = factor * paraSample(para, x+i, z+j+dirz, memo);
             else vd = v;
             if (vd >= v)
                 dirz = 0;
@@ -5692,7 +5699,7 @@ static double getParaDescentMemo(const DoublePerlinNoise *para, double factor,
             dira = (int)(dirz * alpha * (v - vd));
             if (abs(dira) > 2 && j+dira >= 0 && j+dira < h)
             {   // try jumping by more than 1
-                va = factor * paraSample(para, x+i, z+j+dira, gen);
+                va = factor * paraSample(para, x+i, z+j+dira, memo);
                 if (va < vd)
                 {
                     j += dira;
@@ -5719,7 +5726,7 @@ static double getParaDescentMemo(const DoublePerlinNoise *para, double factor,
                 dirz = (c & 2) ? -1 : +1;
                 if (i+dirx < 0 || i+dirx >= w || j+dirz < 0 || j+dirz >= h)
                     continue;
-                vd = factor * paraSample(para, x+i+dirx, z+j+dirz, gen);
+                vd = factor * paraSample(para, x+i+dirx, z+j+dirz, memo);
                 if (vd < v)
                 {
                     v = vd;
@@ -5756,7 +5763,8 @@ static int getParaRangeImpl(const DoublePerlinNoise *para, double *pmin, double 
     int i, j, step, ii, jj, ww, hh, skipsiz;
     int maxrad, maxiter;
     int err = 1;
-    uint32_t gen = 0;
+    ParaMemo memo;
+    const ParaMemo *pm = NULL; // no memo for small areas
 
     if (pmin) *pmin = DBL_MAX;
     if (pmax) *pmax = -DBL_MAX;
@@ -5778,7 +5786,7 @@ static int getParaRangeImpl(const DoublePerlinNoise *para, double *pmin, double 
         {
             for (i = 0; i < w; i++)
             {
-                v = factor * paraSample(para, x+i, z+j, gen);
+                v = factor * paraSample(para, x+i, z+j, pm);
                 if (func)
                 {
                     err = func(data, x+i, z+j, v);
@@ -5794,7 +5802,8 @@ static int getParaRangeImpl(const DoublePerlinNoise *para, double *pmin, double 
         return 0;
     }
 
-    gen = paraMemoBegin();
+    memo = paraMemoBegin();
+    pm = &memo;
 
     // Start with the largest noise period to get some bounds for pmin, pmax
     step = (int) (0.5 / lmin - FLT_EPSILON) + 1;
@@ -5807,14 +5816,14 @@ static int getParaRangeImpl(const DoublePerlinNoise *para, double *pmin, double 
             if (pmin)
             {
                 v = getParaDescentMemo(para, +factor, x, z, w, h, i, j,
-                    step, step, dr, data, func, gen);
+                    step, step, dr, data, func, pm);
                 if (v != v) goto L_end;
                 if (v < *pmin) *pmin = v;
             }
             if (pmax)
             {
                 v = -getParaDescentMemo(para, -factor, x, z, w, h, i, j,
-                    step, step, dr, data, func, gen);
+                    step, step, dr, data, func, pm);
                 if (v != v) goto L_end;
                 if (v > *pmax) *pmax = v;
             }
@@ -5872,7 +5881,7 @@ static int getParaRangeImpl(const DoublePerlinNoise *para, double *pmin, double 
                 i = ii * step; if (i >= w) i = w-1;
                 if (skip[jj*ww+ii]) continue;
 
-                v = factor * paraSample(para, x+i, z+j, gen);
+                v = factor * paraSample(para, x+i, z+j, pm);
                 if (func)
                 {
                     int e = func(data, x+i, z+j, v);
@@ -5906,7 +5915,7 @@ static int getParaRangeImpl(const DoublePerlinNoise *para, double *pmin, double 
                     continue;
                 }
                 v = getParaDescentMemo(para, +factor, x, z, w, h, i, j,
-                    maxrad, maxiter, dr, data, func, gen);
+                    maxrad, maxiter, dr, data, func, pm);
                 if (v != v) goto L_end;
                 if (v < *pmin) *pmin = v;
                 if (PARA_GOAL_REACHED())
@@ -5930,7 +5939,7 @@ static int getParaRangeImpl(const DoublePerlinNoise *para, double *pmin, double 
                 i = ii * step; if (i >= w) i = w-1;
                 if (skip[jj*ww+ii]) continue;
 
-                v = -factor * paraSample(para, x+i, z+j, gen);
+                v = -factor * paraSample(para, x+i, z+j, pm);
                 if (func)
                 {
                     int e = func(data, x+i, z+j, -v);
@@ -5957,7 +5966,7 @@ static int getParaRangeImpl(const DoublePerlinNoise *para, double *pmin, double 
                     continue;
                 }
                 v = -getParaDescentMemo(para, -factor, x, z, w, h, i, j,
-                    maxrad, maxiter, dr, data, func, gen);
+                    maxrad, maxiter, dr, data, func, pm);
                 if (v != v) goto L_end;
                 if (v > *pmax) *pmax = v;
                 if (PARA_GOAL_REACHED())
