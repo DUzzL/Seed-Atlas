@@ -1,34 +1,49 @@
-// GPU prefilter for 1.18+ climate parameter conditions (see gpufilter.h).
+// GPU prefilter for 1.18+ climate parameter and biome sample conditions (see
+// gpufilter.h).
 //
 // This is the only source of the kernel. tools/gen-gpu-kernels.sh compiles
 // a variant for each value of NOCT to SPIR-V for Vulkan (gpufilter_spirv.inc)
 // and translates those to Metal (gpufilter_msl.inc); both generated files
 // are part of the repository.
 //
-// The permutations are built exactly as on the CPU (integer arithmetic). The
-// noise is sampled in single precision on a grid; with a bound on the noise
-// gradient, every seed rejected here also fails the exact test on the CPU.
+// The permutations are built exactly as on the CPU (integer arithmetic) and
+// the noise is sampled in single precision. A climate test samples the noise
+// on a grid; with a bound on the noise gradient, every seed rejected here
+// also fails the exact test on the CPU. A sample test draws the positions of
+// the CPU exactly and evaluates their climate one octave pair at a time,
+// with a bound on what the remaining octaves can add.
 #version 450
 #extension GL_ARB_gpu_shader_int64 : require
 
-// NOCT: the most octaves per octave noise that the kernel supports. The
-// generator compiles a variant for each value in GPU_KERNEL_OCTAVES. The
-// permutations take 2 * NOCT * 260 bytes per thread of 32 KiB shared memory.
+// NOCT: the most octaves per octave noise of the climate tests that the
+// kernel supports, 0 for sample tests alone; tools/gen-gpu-kernels.sh
+// compiles a variant for each value of VARIANTS. The permutations take
+// PERMS * 260 bytes per thread of 32 KiB shared memory: 2 * NOCT for the
+// climate tests, of which the sample tests use the first.
 #ifndef NOCT
 #define NOCT 9
 #endif
-#define TG (32768 / (2 * NOCT * 260))
+#if NOCT > 0
+#define PERMS (2 * NOCT)
+#else
+#define PERMS 1
+#endif
+#define TG (32768 / (PERMS * 260))
 layout(local_size_x = TG) in;
 
 // The tests and octaves are uniform buffers (std140, read through the
 // constant cache); the C structs in gpufilter_backend.h have the same layout.
 const uint MAX_TESTS = 8;
-const uint MAX_OCTS = MAX_TESTS * 9;
+const uint MAX_SAMPLE_TESTS = 2;
+const uint MAX_OCTS = 128;
+const uint MAX_POSITIONS = 16;
+const uint MAX_NOISES = 6;
 
 struct Oct {
     uint64_t mlo, mhi;  // md5 salt of the octave
     float amp, lac;     // amplitude and lacunarity
-    float pad0, pad1;
+    float rest;         // bound on what the later octave pairs add (x 10000)
+    float pad;
 };
 
 struct Test {
@@ -44,8 +59,30 @@ struct Test {
     uint pad;
 };
 
-layout(std140, binding = 0) uniform ParamBuf { uint64_t seed0; uint count; uint ntests; } P;
-layout(std140, binding = 1) uniform TestBuf { Test tests[MAX_TESTS]; };
+struct Noise {
+    uint64_t clo, chi;  // md5 salt of the climate parameter
+    uint noct, oct0;    // octaves per octave noise, first in the octave buffer
+    float dpamp;        // amplitude of the double Perlin noise
+    float margin;       // rounding error margin (x 10000)
+    float lo, hi;       // bounds of the parameter (x 10000)
+    uint pad0, pad1;
+};
+
+struct Sample {
+    int x, z, w, h;     // sampled area in quart coordinates
+    uint64_t rmaxsq;    // squared radius in blocks (0: none)
+    uint npos, nnoise;  // positions drawn, noises (the shift noise first)
+    ivec4 fail[MAX_POSITIONS / 4]; // most successes in m samples that fail
+    ivec4 pass[MAX_POSITIONS / 4]; // fewest successes with which it may pass
+    Noise noise[MAX_NOISES];
+};
+
+layout(std140, binding = 0) uniform ParamBuf { uint64_t seed0; uint count; } P;
+layout(std140, binding = 1) uniform TestBuf {
+    uint ntests, nsamples;
+    Test tests[MAX_TESTS];
+    Sample samples[MAX_SAMPLE_TESTS];
+};
 layout(std140, binding = 2) uniform OctBuf { Oct octs[MAX_OCTS]; };
 layout(std430, binding = 3) buffer CountBuf { uint npass; };
 layout(std430, binding = 4) writeonly buffer PassBuf { uint64_t passed[]; };
@@ -56,11 +93,11 @@ layout(std430, binding = 4) writeonly buffer PassBuf { uint64_t passed[]; };
 const uint PERM_WORDS = 65;
 #ifdef PERM_BYTES
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
-shared uint8_t perm[TG * 2 * NOCT * PERM_WORDS * 4];
+shared uint8_t perm[TG * PERMS * PERM_WORDS * 4];
 uint pget(uint base, uint i) { return uint(perm[4u * base + i]); }
 void pset(uint base, uint i, uint v) { perm[4u * base + i] = uint8_t(v); }
 #else
-shared uint perm[TG * 2 * NOCT * PERM_WORDS];
+shared uint perm[TG * PERMS * PERM_WORDS];
 uint pget(uint base, uint i)
 {
     return (perm[base + (i >> 2)] >> ((i & 3u) * 8u)) & 0xFFu;
@@ -145,6 +182,19 @@ float sampleP(Perlin p, float x, float z)
     return lerpf(t3, l1, l5);
 }
 
+// samplePerlin() at any y
+float sampleP3(Perlin p, float x, float y, float z)
+{
+    if (y == 0.0)
+        return sampleP(p, x, z);
+    float d2 = y + p.b;
+    float i2 = floor(d2);
+    p.d2 = d2 - i2;
+    p.h2 = uint(int(i2)) & 255u;
+    p.t2 = fade(p.d2);
+    return sampleP(p, x, z);
+}
+
 // xPerlinInit()
 Perlin initPerlin(uint base, uint64_t lo, uint64_t hi)
 {
@@ -170,6 +220,7 @@ Perlin initPerlin(uint base, uint64_t lo, uint64_t hi)
     return p;
 }
 
+#if NOCT > 0
 // sampleDoublePerlin() at (x, 0, z), times 10000
 float sampleClimate(Test T, Perlin pn[2*NOCT], float x, float z)
 {
@@ -220,13 +271,138 @@ bool mayPass(Test T, Perlin pn[2*NOCT])
     return true;
 }
 
+#endif // NOCT > 0
+
+// Java Random as in rng.h
+int jnext(inout uint64_t s, uint bits)
+{
+    s = (s * 0x5deece66dul + 0xbul) & 0xFFFFFFFFFFFFul;
+    return int(s >> (48u - bits));
+}
+
+int jnextint(inout uint64_t s, int n)
+{
+    int m = n - 1;
+    if ((m & n) == 0)
+        return int((uint64_t(n) * uint64_t(jnext(s, 31u))) >> 31);
+    int bits, val;
+    do {
+        bits = jnext(s, 31u);
+        val = bits % n;
+    } while (int(uint(bits) - uint(val) + uint(m)) < 0);
+    return val;
+}
+
+// Does the stopping rule of monteCarloBiomes() fail the test for sure, when
+// the samples in "may" are the only ones that can succeed?
+bool mcFails(Sample S, uint inside, uint may)
+{
+    int m = 0, x = 0;
+    for (uint j = 0u; j < S.npos; j++)
+    {
+        if ((inside & (1u << j)) == 0u)
+            continue; // outside the radius, not counted
+        x += int((may >> j) & 1u);
+        int f = S.fail[m >> 2][m & 3], q = S.pass[m >> 2][m & 3];
+        m++;
+        if (x >= q)
+            return false; // the CPU might succeed here
+        if (x <= f)
+            return true;
+    }
+    return false; // undecided within the drawn positions
+}
+
+// Can the biome sample test pass? The climate of each position is evaluated
+// one octave pair at a time; a position can only succeed while its value,
+// widened by the bound of the remaining octaves, overlaps the bounds.
+bool sampleMayPass(Sample S, uint base, uint64_t seed, uint64_t xlo, uint64_t xhi)
+{
+    const float f = 337.0 / 331.0;
+    float qx[MAX_POSITIONS], qz[MAX_POSITIONS];
+    float px[MAX_POSITIONS], pz[MAX_POSITIONS], v[MAX_POSITIONS];
+
+    // the positions, as drawn by monteCarloBiomes() (x, y, z)
+    uint64_t rng = (seed ^ 0x5deece66dul) & 0xFFFFFFFFFFFFul;
+    uint inside = 0u;
+    for (uint j = 0u; j < S.npos; j++)
+    {
+        int x = S.x + jnextint(rng, S.w);
+        jnextint(rng, 1);
+        int z = S.z + jnextint(rng, S.h);
+        int64_t bx = int64_t(x * 4), bz = int64_t(z * 4);
+        if (S.rmaxsq == 0ul || uint64_t(bx * bx + bz * bz) < S.rmaxsq)
+            inside |= 1u << j;
+        qx[j] = float(x);
+        qz[j] = float(z);
+        px[j] = 0.0;
+        pz[j] = 0.0;
+    }
+    uint may = inside;
+
+    for (uint k = 0u; k < S.nnoise; k++)
+    {
+        Noise N = S.noise[k];
+        // xDoublePerlinInit(): octave noise A, then B
+        uint64_t plo = xlo ^ N.clo, phi = xhi ^ N.chi;
+        uint64_t alo = xnext(plo, phi), ahi = xnext(plo, phi);
+        uint64_t blo = xnext(plo, phi), bhi = xnext(plo, phi);
+        for (uint j = 0u; j < S.npos; j++)
+            v[j] = 0.0;
+        for (uint o = 0u; o < N.noct; o++)
+        {
+            Oct oc = octs[N.oct0 + o];
+            for (uint b = 0u; b < 2u; b++)
+            {
+                uint64_t slo = b == 0u ? alo : blo, shi = b == 0u ? ahi : bhi;
+                Perlin p = initPerlin(base, slo ^ oc.mlo, shi ^ oc.mhi);
+                float lac = b == 0u ? oc.lac : f * oc.lac;
+                for (uint j = 0u; j < S.npos; j++)
+                {
+                    if ((may & (1u << j)) == 0u)
+                        continue;
+                    if (k == 0u)
+                    {   // getBiomeNoisePos(): shift(x, 0, z) and shift(z, x, 0)
+                        px[j] += oc.amp * sampleP(p, qx[j] * lac, qz[j] * lac);
+                        pz[j] += oc.amp * sampleP3(p, qz[j] * lac, qx[j] * lac, 0.0);
+                    }
+                    else
+                    {
+                        v[j] += oc.amp * sampleP(p, px[j] * lac, pz[j] * lac);
+                    }
+                }
+            }
+            if (k == 0u)
+                continue;
+            float r = oc.rest + N.margin;
+            for (uint j = 0u; j < S.npos; j++)
+            {
+                float c = v[j] * 10000.0 * N.dpamp;
+                if (c - r > N.hi || c + r < N.lo)
+                    may &= ~(1u << j);
+            }
+            if (mcFails(S, inside, may))
+                return false; // the CPU test fails as well
+        }
+        if (k == 0u)
+        {
+            for (uint j = 0u; j < S.npos; j++)
+            {
+                px[j] = qx[j] + px[j] * N.dpamp * 4.0;
+                pz[j] = qz[j] + pz[j] * N.dpamp * 4.0;
+            }
+        }
+    }
+    return true;
+}
+
 void main()
 {
     uint gid = gl_GlobalInvocationID.x;
     if (gid >= P.count)
         return;
     uint64_t seed = P.seed0 + uint64_t(gid);
-    uint base0 = gl_LocalInvocationID.x * 2u * NOCT * PERM_WORDS;
+    uint base0 = gl_LocalInvocationID.x * PERMS * PERM_WORDS;
 
     // xSetSeed()
     uint64_t l = seed ^ 0x6a09e667f3bcc909ul;
@@ -239,7 +415,8 @@ void main()
     h = h ^ (h >> 31);
     uint64_t xlo = xnext(l, h), xhi = xnext(l, h);
 
-    for (uint t = 0u; t < P.ntests; t++)
+#if NOCT > 0
+    for (uint t = 0u; t < ntests; t++)
     {
         Test T = tests[t];
         uint n = T.noct;
@@ -257,6 +434,12 @@ void main()
         }
         if (!mayPass(T, pn))
             return; // the seed fails this test on the CPU as well
+    }
+#endif
+    for (uint t = 0u; t < nsamples; t++)
+    {
+        if (!sampleMayPass(samples[t], base0, seed, xlo, xhi))
+            return;
     }
     uint k = atomicAdd(npass, 1u);
     passed[k] = seed;

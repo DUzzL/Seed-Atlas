@@ -2,8 +2,11 @@
 #include "gpufilter_backend.h"
 
 #include "seedatlas-engine/biomenoise.h"
+#include "seedatlas-engine/finders.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -44,10 +47,19 @@ static bool debugEnabled()
     return getenv("SEED_ATLAS_GPU_DEBUG") != nullptr;
 }
 
+static std::atomic_bool g_allowed(true);
+
+void GpuClimateFilter::setAllowed(bool allowed)
+{
+    g_allowed = allowed;
+}
+
 bool GpuClimateFilter::enabled()
 {
     const char *env = getenv("SEED_ATLAS_GPU");
-    if (!env || (strcmp(env, "1") != 0 && strcmp(env, "force") != 0))
+    if (env && strcmp(env, "0") == 0)
+        return false;
+    if (!g_allowed && !forced())
         return false;
     return gpuBackendAvailable();
 }
@@ -61,30 +73,38 @@ bool GpuClimateFilter::forced()
 GpuClimateFilter::GpuClimateFilter() {}
 GpuClimateFilter::~GpuClimateFilter() {}
 
-// The octaves of the climate noise of a test: their seed salts, amplitudes
-// and frequencies. Returns the sum of amplitude * frequency over the octaves
-// of both octave noises (for the gradient bound), or a negative value.
-static double addOctaves(const GpuClimateFilter::Test& t, bool large, GpuTest& g,
-                         std::vector<GpuOct>& octs)
+// A climate noise in the octave buffer.
+struct NoiseInfo
 {
-    const ClimateNoiseSpec *spec = getClimateNoiseSpec(t.para);
+    uint64_t clo, chi;      // md5 salt of the noise
+    uint32_t noct, oct0;    // octaves per octave noise, first octave
+    double dpamp;           // double Perlin amplitude
+    double gradsum;         // amplitude * frequency over all octaves (A and B)
+};
+
+// Adds the octaves of a climate noise: their seed salts, amplitudes,
+// frequencies and the bound on what the octave pairs after each one add.
+static bool addNoise(int para, bool large, std::vector<GpuOct>& octs, NoiseInfo& info)
+{
+    const ClimateNoiseSpec *spec = getClimateNoiseSpec(para);
     if (!spec)
-        return -1;
+        return false;
     // the amplitudes and frequencies do not depend on the seed
+    // (setClimateParaSeed() would take NP_SHIFT for NP_DEPTH)
     BiomeNoise bn;
-    setClimateParaSeed(&bn, 0, large, t.para, -1);
-    const DoublePerlinNoise *dp = &bn.climate[t.para];
+    setBiomeSeedParts(&bn, 0, large, 1U << para);
+    const DoublePerlinNoise *dp = &bn.climate[para];
     if (dp->octA.octcnt != dp->octB.octcnt)
-        return -1;
+        return false;
 
     int li = large ? 1 : 0;
-    g.clo = spec->md5[li][0];
-    g.chi = spec->md5[li][1];
-    g.noct = dp->octA.octcnt;
-    g.oct0 = octs.size();
-    g.dpamp = dp->amplitude;
+    info.clo = spec->md5[li][0];
+    info.chi = spec->md5[li][1];
+    info.noct = dp->octA.octcnt;
+    info.oct0 = octs.size();
+    info.dpamp = dp->amplitude;
+    info.gradsum = 0;
 
-    double gradsum = 0;
     int n = 0;
     for (int i = 0; i < spec->len; i++)
     {
@@ -98,9 +118,18 @@ static double addOctaves(const GpuClimateFilter::Test& t, bool large, GpuTest& g
         o.lac = (float) p->lacunarity;
         octs.push_back(o);
         // octave B samples at 337/331 times the frequency
-        gradsum += p->amplitude * p->lacunarity * (1.0 + 337.0 / 331.0);
+        info.gradsum += p->amplitude * p->lacunarity * (1.0 + 337.0 / 331.0);
     }
-    return n == (int) g.noct ? gradsum : -1;
+    if (n != (int) info.noct)
+        return false;
+    // octave A and B of a pair have the same amplitude
+    double rest = 0;
+    for (int i = n - 1; i >= 0; i--)
+    {
+        octs[info.oct0 + i].rest = (float) (10000.0 * info.dpamp * PERLIN_VALUE_BOUND * rest);
+        rest += 2 * std::fabs(dp->octA.octaves[i].amplitude);
+    }
+    return true;
 }
 
 // Grid levels from coarse to fine (steps divided by 4). The CPU samples
@@ -136,52 +165,175 @@ static void setGridLevels(GpuTest& g, double grad, double margin)
     g.margin = (float) margin;
 }
 
-bool GpuClimateFilter::init(const std::vector<Test>& tests, bool large)
+// The largest distance of an area from the origin (quart coordinates).
+static double farthest(int x, int z, int w, int h)
+{
+    return std::max({std::abs((double) x), std::abs((double) x + w),
+                     std::abs((double) z), std::abs((double) z + h)});
+}
+
+static bool initClimateTest(const GpuClimateFilter::Test& t, bool large,
+                            std::vector<GpuOct>& octs, GpuTest& g)
+{
+    NoiseInfo info;
+    if (!addNoise(t.para, large, octs, info))
+        return false;
+    double far = farthest(t.x, t.z, t.w, t.h);
+    if (far > MAX_DISTANCE)
+        return false;
+    double grad = 10000.0 * info.dpamp * PERLIN_GRADIENT_BOUND * info.gradsum;
+    double margin = FLOAT_MARGIN + grad * far * FLOAT_POS_ERROR;
+
+    g.clo = info.clo;
+    g.chi = info.chi;
+    g.noct = info.noct;
+    g.oct0 = info.oct0;
+    g.dpamp = (float) info.dpamp;
+    g.lmin = (float) t.lmin;
+    g.lmax = (float) t.lmax;
+    g.x = t.x;
+    g.z = t.z;
+    g.w = t.w;
+    g.h = t.h;
+    setGridLevels(g, grad, margin);
+    if (debugEnabled())
+        fprintf(stderr, "gpu climate test: para=%d area=(%d,%d %dx%d) range=[%g,%g] "
+            "octaves=%u levels=%u fine=%d margin=%g\n", t.para, t.x, t.z, t.w, t.h,
+            t.lmin, t.lmax, g.noct, g.nlevels, g.step[g.nlevels-1], margin);
+    return true;
+}
+
+static bool initSampleTest(const GpuClimateFilter::SampleTest& t, bool large,
+                           std::vector<GpuOct>& octs, GpuSampleTest& g)
+{
+    if (t.paras.empty() || t.paras.size() >= GPU_MAX_NOISES || t.w <= 0 || t.h <= 0)
+        return false;
+    Range r = {4, t.x, t.z, t.w, t.h, 0, 1};
+    MonteCarloRule rule;
+    initMonteCarloRule(&rule, r, t.coverage, t.confidence);
+    if (rule.shuffle)
+        return false; // the positions come from a shuffled buffer
+
+    // The decisions of the stopping rule after m samples. The GPU counts a
+    // superset of the CPU's successes, so it can reject a seed only where
+    // every count up to its own fails (and none of them can pass before).
+    int first = 0; // the fewest samples that can fail
+    for (int m = 1; m <= (int) GPU_MAX_POSITIONS; m++)
+    {
+        int fail = -1, pass = m + 1;
+        for (int x = m; x >= 0; x--)
+            if (monteCarloDecide(&rule, m, x) == 1)
+                pass = x;
+        for (int x = 0; x <= m && monteCarloDecide(&rule, m, x) == 0; x++)
+            fail = x;
+        g.fail[m-1] = fail;
+        g.pass[m-1] = pass;
+        if (!first && fail >= 0)
+            first = m;
+    }
+    if (!first)
+        return false;
+    // enough positions for a few more samples (inside the radius) than that
+    double inside = 1;
+    if (t.rmaxsq)
+        inside = std::min(1.0, 3.14159 * t.rmaxsq / (16.0 * t.w * t.h));
+    double npos = std::ceil((first + 2) / inside) + 1;
+    g.npos = (uint32_t) std::min<double>(npos, GPU_MAX_POSITIONS);
+    if ((double) t.w * t.h <= g.npos)
+        return false;
+    g.x = t.x;
+    g.z = t.z;
+    g.w = t.w;
+    g.h = t.h;
+    g.rmaxsq = t.rmaxsq;
+
+    // The rounding errors: of the shift noise, which moves the positions,
+    // and of each parameter, including that position error.
+    double far = farthest(t.x, t.z, t.w, t.h) + 16;
+    if (far > MAX_DISTANCE)
+        return false;
+    NoiseInfo shift;
+    if (!addNoise(NP_SHIFT, large, octs, shift))
+        return false;
+    double sgrad = 10000.0 * shift.dpamp * PERLIN_GRADIENT_BOUND * shift.gradsum;
+    double serr = (FLOAT_MARGIN + sgrad * far * FLOAT_POS_ERROR) / 10000.0;
+    double poserr = far * FLOAT_POS_ERROR + 4.0 * serr;
+    GpuNoise& sn = g.noise[0];
+    sn = GpuNoise();
+    sn.clo = shift.clo;
+    sn.chi = shift.chi;
+    sn.noct = shift.noct;
+    sn.oct0 = shift.oct0;
+    sn.dpamp = (float) shift.dpamp;
+    g.nnoise = 1;
+    for (size_t i = 0; i < t.paras.size(); i++)
+    {
+        NoiseInfo info;
+        if (!addNoise(t.paras[i], large, octs, info))
+            return false;
+        double grad = 10000.0 * info.dpamp * PERLIN_GRADIENT_BOUND * info.gradsum;
+        GpuNoise& n = g.noise[g.nnoise++];
+        n = GpuNoise();
+        n.clo = info.clo;
+        n.chi = info.chi;
+        n.noct = info.noct;
+        n.oct0 = info.oct0;
+        n.dpamp = (float) info.dpamp;
+        // the CPU truncates the scaled value to an integer
+        n.margin = (float) (FLOAT_MARGIN + grad * (far * FLOAT_POS_ERROR + poserr) + 2);
+        n.lo = (float) t.lo[i];
+        n.hi = (float) t.hi[i];
+        if (debugEnabled())
+            fprintf(stderr, "gpu sample test: para=%d area=(%d,%d %dx%d) bounds=[%d,%d] "
+                "positions=%u margin=%g\n", t.paras[i], t.x, t.z, t.w, t.h,
+                t.lo[i], t.hi[i], g.npos, n.margin);
+    }
+    return true;
+}
+
+bool GpuClimateFilter::init(const Tests& tests, bool large)
 {
     backend.reset();
     if (tests.empty())
         return false;
 
-    std::vector<GpuTest> gtests;
+    // leaving out tests only lets more seeds pass
+    GpuTestBuf buf = {};
     std::vector<GpuOct> octs;
-    uint32_t maxoct = 1;
-    for (const Test& t : tests)
+    uint32_t maxoct = 0;
+    for (const Test& t : tests.climate)
     {
-        if (gtests.size() == GPU_MAX_TESTS)
-            break; // leaving out tests only lets more seeds pass
-        GpuTest g = {};
-        double gradsum = addOctaves(t, large, g, octs);
-        if (gradsum < 0)
+        if (buf.ntests == GPU_MAX_TESTS)
+            break;
+        GpuTest& g = buf.tests[buf.ntests];
+        if (!initClimateTest(t, large, octs, g))
             return false;
         maxoct = std::max(maxoct, g.noct);
-
-        double far = std::max({std::abs((double) t.x), std::abs((double) t.x + t.w),
-                               std::abs((double) t.z), std::abs((double) t.z + t.h)});
-        if (far > MAX_DISTANCE)
-            return false;
-        double grad = 10000.0 * g.dpamp * PERLIN_GRADIENT_BOUND * gradsum;
-        double margin = FLOAT_MARGIN + grad * far * FLOAT_POS_ERROR;
-
-        g.lmin = (float) t.lmin;
-        g.lmax = (float) t.lmax;
-        g.x = t.x;
-        g.z = t.z;
-        g.w = t.w;
-        g.h = t.h;
-        setGridLevels(g, grad, margin);
-        if (debugEnabled())
-            fprintf(stderr, "gpu test: para=%d area=(%d,%d %dx%d) range=[%g,%g] "
-                "octaves=%u levels=%u fine=%d margin=%g\n", t.para, t.x, t.z, t.w, t.h,
-                t.lmin, t.lmax, g.noct, g.nlevels, g.step[g.nlevels-1], margin);
-        gtests.push_back(g);
+        buf.ntests++;
     }
+    for (const SampleTest& t : tests.samples)
+    {
+        if (buf.nsamples == GPU_MAX_SAMPLE_TESTS)
+            break;
+        size_t n = octs.size();
+        if (initSampleTest(t, large, octs, buf.samples[buf.nsamples]))
+            buf.nsamples++;
+        else
+            octs.resize(n);
+    }
+    if (buf.ntests + buf.nsamples == 0 || octs.size() > GPU_MAX_OCTS)
+        return false;
 
+    auto t0 = std::chrono::steady_clock::now();
     backend.reset(gpuBackendCreate());
-    if (!backend || !backend->init(gtests, octs, maxoct))
+    if (!backend || !backend->init(buf, octs, maxoct))
     {
         backend.reset();
         return false;
     }
+    if (debugEnabled())
+        fprintf(stderr, "gpu init: %.1f ms\n", std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0).count());
     return true;
 }
 

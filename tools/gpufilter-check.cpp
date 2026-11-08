@@ -1,5 +1,6 @@
-/* Checks the GPU prefilter against the exact CPU test: every seed that passes
- * a climate test on the CPU must also pass on the GPU. Also prints the speed.
+/* Checks the GPU prefilter against the exact CPU tests: every seed that passes
+ * a climate or sample test on the CPU must also pass on the GPU. Also prints
+ * the speed.
  * Build the engine first: make -C seedatlas-engine release CFLAGS=-DSTRUCT_CONFIG_OVERRIDE=1
  *
  * macOS (Metal):
@@ -35,6 +36,114 @@ static double now()
     return duration<double>(steady_clock::now().time_since_epoch()).count();
 }
 
+// The CPU side of a sample test: the stopping rule of monteCarloBiomes(), with
+// the positions whose climate is within the bounds as the successes (as
+// biomeMayBeIncluded() in search.cpp; the real biomes succeed at most there).
+struct SampleEval { const GpuClimateFilter::SampleTest *t; BiomeNoise *bn; };
+
+static int evalSample(Generator *, int scale, int x, int, int z, void *data)
+{
+    const SampleEval *e = (const SampleEval*) data;
+    if (e->t->rmaxsq)
+    {
+        int64_t dx = x * scale, dz = z * scale;
+        if (dx*dx + dz*dz >= e->t->rmaxsq)
+            return -1;
+    }
+    double px, pz;
+    getBiomeNoisePos(e->bn, x, z, 0, &px, &pz);
+    for (size_t i = 0; i < e->t->paras.size(); i++)
+    {
+        int64_t v = sampleBiomeNoisePara(e->bn, e->t->paras[i], px, pz);
+        if (v < e->t->lo[i] || v > e->t->hi[i])
+            return 0;
+    }
+    return 1;
+}
+
+static int checkSamples(uint32_t ncpu, uint32_t ngpu)
+{
+    struct Case { const char *name; int mc; uint64_t biomes; int r; double cov; int large; };
+    const Case cases[] = {
+        { "mushroom 50%, r100",        MC_1_21_5, 1ULL << mushroom_fields, 100, 0.5, 0 },
+        { "mushroom 90%, r1000",       MC_1_21_5, 1ULL << mushroom_fields, 1000, 0.9, 0 },
+        { "jungle 30%, r200",          MC_1_21_5, 1ULL << jungle, 200, 0.3, 0 },
+        { "desert 40%, r100",          MC_1_21_5, 1ULL << desert, 100, 0.4, 0 },
+        { "ice spikes 40%, r300",      MC_1_21_5, 1ULL << ice_spikes, 300, 0.4, 0 },
+        { "mushroom 50%, r400, large", MC_1_21_5, 1ULL << mushroom_fields, 400, 0.5, 1 },
+    };
+    int failures = 0;
+    for (const Case& c : cases)
+    {
+        uint64_t set[4] = { c.biomes, 0, 0, 0 };
+        BiomeClimateBounds cb;
+        if (!getBiomeClimateBounds(&cb, c.mc, set))
+        {
+            printf("%-34s no climate bounds\n", c.name);
+            failures++;
+            continue;
+        }
+        GpuClimateFilter::SampleTest t;
+        int r = c.r - 1;
+        t.x = t.z = -r >> 2;
+        t.w = t.h = (r >> 2) - t.x + 1;
+        t.rmaxsq = (int64_t) r * r + 1;
+        t.coverage = c.cov;
+        t.confidence = 0.95f;
+        for (int p = 0; p < NP_MAX; p++)
+        {
+            if (p == NP_SHIFT || (cb.lo[p] <= -6000 && cb.hi[p] >= 6000))
+                continue;
+            t.paras.push_back(p);
+            t.lo.push_back(cb.lo[p]);
+            t.hi.push_back(cb.hi[p]);
+        }
+        GpuClimateFilter filter;
+        GpuClimateFilter::Tests tests;
+        tests.samples.push_back(t);
+        if (t.paras.empty() || !filter.init(tests, c.large))
+        {
+            printf("%-34s init failed\n", c.name);
+            failures++;
+            continue;
+        }
+        const uint64_t seed0 = 123456789;
+        std::vector<uint64_t> passed;
+        double t0 = now();
+        if (!filter.filter(seed0, ngpu, passed))
+        {
+            printf("%-34s filter failed\n", c.name);
+            failures++;
+            continue;
+        }
+        double tgpu = now() - t0;
+        std::set<uint64_t> kept(passed.begin(), passed.end());
+
+        BiomeNoise bn;
+        SampleEval e = { &t, &bn };
+        Range rg = {4, t.x, t.z, t.w, t.h, 0, 1};
+        uint32_t cpupass = 0, missed = 0;
+        t0 = now();
+        for (uint32_t i = 0; i < ncpu && i < ngpu; i++)
+        {
+            uint64_t s = seed0 + i;
+            setBiomeSeed(&bn, s, c.large);
+            uint64_t rng;
+            setSeed(&rng, s);
+            bool ok = monteCarloBiomes(NULL, rg, &rng, t.coverage, t.confidence, evalSample, &e) == 1;
+            cpupass += ok;
+            if (ok && !kept.count(s))
+                missed++;
+        }
+        double tcpu = now() - t0;
+        failures += missed != 0;
+        printf("%-34s GPU %6.2f M/s, passes %5.1f%% | CPU %6.3f M/s per thread, passes %5.1f%% | missed %u\n",
+            c.name, ngpu / tgpu / 1e6, 100.0 * passed.size() / ngpu,
+            ncpu / tcpu / 1e6, 100.0 * cpupass / ncpu, missed);
+    }
+    return failures;
+}
+
 int main(int argc, char **argv)
 {
     uint32_t ncpu = argc > 1 ? atoi(argv[1]) : 5000;   // seeds checked on the CPU
@@ -67,7 +176,9 @@ int main(int argc, char **argv)
     for (const Case& c : cases)
     {
         GpuClimateFilter filter;
-        if (!filter.init({ c.t }, c.large))
+        GpuClimateFilter::Tests tests;
+        tests.climate.push_back(c.t);
+        if (!filter.init(tests, c.large))
         {
             printf("%-34s init failed\n", c.name);
             failures++;
@@ -106,6 +217,7 @@ int main(int argc, char **argv)
             c.name, ngpu / tgpu / 1e6, 100.0 * passed.size() / ngpu,
             ncpu / tcpu / 1e6, 100.0 * cpupass / ncpu, missed);
     }
+    failures += checkSamples(ncpu, ngpu);
     printf(failures ? "FAILED\n" : "OK: no seed that passes on the CPU was removed\n");
     return failures ? 1 : 0;
 }

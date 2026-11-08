@@ -326,7 +326,7 @@ public:
             s.f.DestroyFence(s.device, fence, nullptr);
     }
 
-    bool init(const std::vector<GpuTest>& tests, const std::vector<GpuOct>& octs,
+    bool init(const GpuTestBuf& tests, const std::vector<GpuOct>& octs,
               uint32_t maxoct) override
     {
         VulkanShared& s = shared();
@@ -334,17 +334,16 @@ public:
         if (!kernel || !s.ok || !(pipeline = s.getPipeline(kernel)))
             return false;
         tg = gpuKernelThreads(kernel->noct); // the workgroup size of the kernel
-        ntests = tests.size();
-        // the kernel declares buffers of GPU_MAX_TESTS tests and GPU_MAX_OCTS octaves
-        if (tests.size() > GPU_MAX_TESTS || octs.size() > GPU_MAX_OCTS)
+        // the kernel declares a buffer of GPU_MAX_OCTS octaves
+        if (octs.size() > GPU_MAX_OCTS)
             return false;
         if (!s.createBuffer(params, sizeof(GpuParams), bufferUsage(0)) ||
-            !s.createBuffer(testbuf, GPU_MAX_TESTS * sizeof(GpuTest), bufferUsage(1)) ||
+            !s.createBuffer(testbuf, sizeof(GpuTestBuf), bufferUsage(1)) ||
             !s.createBuffer(octbuf, GPU_MAX_OCTS * sizeof(GpuOct), bufferUsage(2)) ||
             !s.createBuffer(npass, sizeof(uint32_t), bufferUsage(3)) ||
             !s.createBuffer(out, 0x10000 * sizeof(uint64_t), bufferUsage(4)))
             return false;
-        memcpy(testbuf.data, tests.data(), tests.size() * sizeof(GpuTest));
+        memcpy(testbuf.data, &tests, sizeof(GpuTestBuf));
         memcpy(octbuf.data, octs.data(), octs.size() * sizeof(GpuOct));
 
         vk::DescriptorPoolSize ps[2] = {
@@ -395,7 +394,6 @@ public:
         GpuParams *p = (GpuParams*) params.data;
         p->seed0 = start;
         p->count = count;
-        p->ntests = ntests;
         *(uint32_t*) npass.data = 0;
 
         vk::CommandBufferBeginInfo bi = {};
@@ -462,7 +460,6 @@ private:
     vk::CommandBuffer cmd = nullptr;
     vk::Fence fence = 0;
     uint32_t tg = 1;
-    uint32_t ntests = 0;
 };
 
 } // namespace

@@ -609,10 +609,29 @@ void SearchMaster::preSearch()
     }
 }
 
-// The climate tests that can serve as a GPU prefilter for a condition tree.
-static std::vector<GpuClimateFilter::Test> gpuTestsFor(const ConditionTree& tree, int mc)
+// The area of a condition as in testCondAt() at the origin, in quart
+// coordinates, and the squared radius in blocks as testCondAt() derives it.
+static void conditionArea(const Condition& c, int& x, int& z, int& w, int& h, int64_t& rmaxsq)
 {
-    std::vector<GpuClimateFilter::Test> tests;
+    int x1 = c.x1, z1 = c.z1, x2 = c.x2, z2 = c.z2;
+    rmaxsq = 0;
+    if (c.rmax > 0)
+    {
+        int64_t r = c.rmax - 1;
+        x1 = z1 = -(int)r;
+        x2 = z2 = (int)r;
+        rmaxsq = r * r + 1;
+    }
+    x = x1 >> 2;
+    z = z1 >> 2;
+    w = (x2 >> 2) - x + 1;
+    h = (z2 >> 2) - z + 1;
+}
+
+// The tests that can serve as a GPU prefilter for a condition tree.
+static GpuClimateFilter::Tests gpuTestsFor(const ConditionTree& tree, int mc)
+{
+    GpuClimateFilter::Tests tests;
     if (mc < MC_1_18 || tree.condvec.empty() || tree.references.empty())
         return tests;
     // The direct children of the root condition are combined with AND and
@@ -620,35 +639,52 @@ static std::vector<GpuClimateFilter::Test> gpuTestsFor(const ConditionTree& tree
     for (char b : tree.references[0])
     {
         const Condition& c = tree.condvec[(int)b];
-        if (c.type != F_CLIMATE_NOISE)
+        int x, z, w, h;
+        int64_t rmaxsq;
+        conditionArea(c, x, z, w, h, rmaxsq);
+        if (w <= 0 || h <= 0)
             continue;
-        // the area as in testCondAt() at the origin
-        int x1 = c.x1, z1 = c.z1, x2 = c.x2, z2 = c.z2;
-        if (c.rmax > 0)
+        if (c.type == F_CLIMATE_NOISE)
         {
-            x1 = z1 = -(c.rmax - 1);
-            x2 = z2 = c.rmax - 1;
+            // the order of the CPU test, which puts the cheap noises first
+            const int order[] = {
+                NP_TEMPERATURE, NP_HUMIDITY, NP_WEIRDNESS, NP_EROSION, NP_CONTINENTALNESS,
+            };
+            for (int i : order)
+            {
+                if (c.limok[i][0] == INT_MIN && c.limok[i][1] == INT_MAX)
+                    continue;
+                GpuClimateFilter::Test t;
+                t.para = i;
+                t.x = x;
+                t.z = z;
+                t.w = w;
+                t.h = h;
+                t.lmin = c.limok[i][0];
+                t.lmax = c.limok[i][1];
+                tests.climate.push_back(t);
+            }
         }
-        int rx1 = x1 >> 2, rz1 = z1 >> 2;
-        int rx2 = x2 >> 2, rz2 = z2 >> 2;
-        // the order of the CPU test, which puts the cheap noises first
-        const int order[] = {
-            NP_TEMPERATURE, NP_HUMIDITY, NP_WEIRDNESS, NP_EROSION, NP_CONTINENTALNESS,
-        };
-        for (int i : order)
-        {
-            if (c.limok[i][0] == INT_MIN && c.limok[i][1] == INT_MAX)
-                continue;
-            GpuClimateFilter::Test t;
-            t.para = i;
-            t.x = rx1;
-            t.z = rz1;
-            t.w = rx2 - rx1 + 1;
-            t.h = rz2 - rz1 + 1;
-            t.lmin = c.limok[i][0];
-            t.lmax = c.limok[i][1];
-            if (t.w > 0 && t.h > 0)
-                tests.push_back(t);
+        else if (c.type == F_BIOME_SAMPLE && c.ncbpara > 0 &&
+                 c.confidence > 0 && c.confidence < 1 &&
+                 c.converage > 0 && c.converage <= 1)
+        {   // the climate bounds of the included biomes (see testCondAt())
+            GpuClimateFilter::SampleTest t;
+            t.x = x;
+            t.z = z;
+            t.w = w;
+            t.h = h;
+            t.rmaxsq = rmaxsq;
+            t.coverage = c.converage;
+            t.confidence = c.confidence;
+            for (int i = 0; i < c.ncbpara; i++)
+            {
+                int p = c.cbpara[i];
+                t.paras.push_back(p);
+                t.lo.push_back(c.cb.lo[p]);
+                t.hi.push_back(c.cb.hi[p]);
+            }
+            tests.samples.push_back(t);
         }
     }
     return tests;
@@ -660,8 +696,12 @@ void SearchMaster::startSearch()
     stop = false;
     preSearch();
 
-    gputests.clear();
-    if (searchtype == SEARCH_INC && slist.empty() && GpuClimateFilter::enabled())
+    // The GPU works on large items, so a search needs a few of them for
+    // every worker; shorter searches are fast on the CPU anyway.
+    gputests = GpuClimateFilter::Tests();
+    uint64_t gpumin = (uint64_t) 2 * 0x10000 * std::max(threadcnt, 1);
+    if (searchtype == SEARCH_INC && slist.empty() && scnt >= gpumin &&
+        GpuClimateFilter::enabled())
         gputests = gpuTestsFor(condtree, mc);
 
     if (stop)

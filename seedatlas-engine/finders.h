@@ -521,6 +521,21 @@ static inline int idSetTest(uint64_t mL, uint64_t mM, int id)
     return 0;
 }
 
+/* The stopping rule of monteCarloBiomes(): after m evaluated samples with x
+ * successes, monteCarloDecide() returns 1 (success), 0 (failure) or -1 (go
+ * on sampling). With shuffle set, monteCarloBiomes() draws the positions
+ * from a shuffled buffer of the range, otherwise independently with three
+ * nextInt() calls per position (x, y, z).
+ */
+STRUCT(MonteCarloRule)
+{
+    double coverage, zscore, width;
+    int shuffle;
+};
+void initMonteCarloRule(MonteCarloRule *rule, Range r, double coverage,
+        double confidence);
+int monteCarloDecide(const MonteCarloRule *rule, double m, double x);
+
 /* Samples biomes within the specified range and checks that at least a given
  * proportion of the biomes in that area evaluate as successes.
  *

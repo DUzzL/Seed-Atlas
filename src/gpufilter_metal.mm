@@ -63,7 +63,7 @@ id<MTLComputePipelineState> getPipeline(id<MTLDevice> device, const GpuMslKernel
 class MetalBackend : public GpuBackend
 {
 public:
-    bool init(const std::vector<GpuTest>& tests, const std::vector<GpuOct>& octs,
+    bool init(const GpuTestBuf& tests, const std::vector<GpuOct>& octs,
               uint32_t maxoct) override
     {
         @autoreleasepool
@@ -77,16 +77,15 @@ public:
             if (tg > pso.maxTotalThreadsPerThreadgroup)
                 return false;
             queue = [device newCommandQueue];
-            // the kernel declares buffers of GPU_MAX_TESTS tests and GPU_MAX_OCTS octaves
-            testbuf = [device newBufferWithLength:GPU_MAX_TESTS * sizeof(GpuTest) options:MTLResourceStorageModeShared];
+            // the kernel declares a buffer of GPU_MAX_OCTS octaves
+            testbuf = [device newBufferWithLength:sizeof(GpuTestBuf) options:MTLResourceStorageModeShared];
             octbuf = [device newBufferWithLength:GPU_MAX_OCTS * sizeof(GpuOct) options:MTLResourceStorageModeShared];
-            if (!testbuf || !octbuf || tests.size() > GPU_MAX_TESTS || octs.size() > GPU_MAX_OCTS)
+            if (!testbuf || !octbuf || octs.size() > GPU_MAX_OCTS)
                 return false;
-            memcpy(testbuf.contents, tests.data(), tests.size() * sizeof(GpuTest));
+            memcpy(testbuf.contents, &tests, sizeof(GpuTestBuf));
             memcpy(octbuf.contents, octs.data(), octs.size() * sizeof(GpuOct));
             params = [device newBufferWithLength:sizeof(GpuParams) options:MTLResourceStorageModeShared];
             npass = [device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
-            ntests = tests.size();
             return queue && testbuf && octbuf && params && npass;
         }
     }
@@ -106,7 +105,6 @@ public:
             GpuParams *p = (GpuParams*) params.contents;
             p->seed0 = start;
             p->count = count;
-            p->ntests = ntests;
             *(uint32_t*) npass.contents = 0;
 
             id<MTLCommandBuffer> cb = [queue commandBuffer];
@@ -139,7 +137,6 @@ private:
     id<MTLCommandQueue> queue = nil;
     id<MTLBuffer> testbuf = nil, octbuf = nil, params = nil, npass = nil, out = nil;
     NSUInteger tg = 1;
-    uint32_t ntests = 0;
     uint32_t capacity = 0;
 };
 

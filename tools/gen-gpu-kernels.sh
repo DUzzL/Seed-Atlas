@@ -1,11 +1,11 @@
 #!/bin/sh
 # Regenerates the GPU kernels from src/gpufilter.comp, one variant for each
-# value of NOCT (the most octaves per octave noise of a test set):
+# value of NOCT (the most octaves per octave noise of the climate tests):
 #   src/gpufilter_spirv.inc  SPIR-V for Vulkan (Windows, Linux)
 #   src/gpufilter_msl.inc    Metal Shading Language (macOS)
 # Needs glslangValidator and spirv-cross (Debian/Ubuntu: glslang-tools spirv-cross).
 set -eu
-VARIANTS="2 3 4 9"   # the octave counts of the 1.18+ climate noises
+VARIANTS="0 2 3 4 9" # 0: sample tests alone, else the octave counts of the climate noises
 
 cd "$(dirname "$0")/../src"
 tmp=$(mktemp -d)

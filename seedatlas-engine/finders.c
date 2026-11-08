@@ -3332,6 +3332,52 @@ void wilson(double n, double p, double z, double *lo, double *hi)
     *hi = w + d;
 }
 
+void initMonteCarloRule(MonteCarloRule *rule, Range r, double coverage,
+        double confidence)
+{
+    if (r.sy == 0)
+        r.sy = 1;
+    size_t n = (size_t)r.sx*r.sy*r.sz;
+
+    // z-score (i.e. probit, or standard deviations) for the confidence
+    double zscore = sqrt(2.0) * inverf(confidence);
+
+    // One standard deviation is approximately given by sqrt(n) elements,
+    // hence we will take zscore * sqrt(n) as the maximum number of samples
+    // to reach the desired confidence. This gives us a wilson score interval
+    // for the upper and lower bound of successes we aim for.
+    double wn = zscore * sqrt(n);
+    double wlo, whi;
+    wilson(wn, coverage, zscore, &wlo, &whi);
+
+    rule->coverage = coverage;
+    rule->zscore = zscore;
+    rule->width = whi - wlo;
+    // When the number of samples approaches the total number elements,
+    // we can avoid repeated samples by shuffling a buffer.
+    // (TODO: adjust for hypergeometric distribution?)
+    rule->shuffle = n < 4 * wn && n < INT_MAX;
+}
+
+int monteCarloDecide(const MonteCarloRule *rule, double m, double x)
+{
+    // check if we can abort early with the current confidence interval
+    double coverage = rule->coverage;
+    double per_m = 1.0 / m;
+    double lo, hi;
+    wilson(m, x * per_m, rule->zscore, &lo, &hi);
+
+    if (lo - per_m > coverage)
+        return 1;
+    if (hi + per_m < coverage)
+        return 0;
+    if (hi - lo < rule->width)
+    {   // should occur around i ~ wn
+        return x * per_m > coverage;
+    }
+    return -1;
+}
+
 int monteCarloBiomes(
         Generator         * g,
         Range               r,
@@ -3348,21 +3394,9 @@ int monteCarloBiomes(
     struct touple { int x, y, z; } *buf = 0;
     size_t n = (size_t)r.sx*r.sy*r.sz;
 
-    // z-score (i.e. probit, or standard deviations) for the confidence
-    double zscore = sqrt(2.0) * inverf(confidence);
-
-    // One standard deviation is approximately given by sqrt(n) elements,
-    // hence we will take zscore * sqrt(n) as the maximum number of samples
-    // to reach the desired confidence. This gives us a wilson score interval
-    // for the upper and lower bound of successes we aim for.
-    double wn = zscore * sqrt(n);
-    double wlo, whi;
-    wilson(wn, coverage, zscore, &wlo, &whi);
-
-    // When the number of samples approaches the total number elements,
-    // we can avoid repeated samples by shuffling a buffer.
-    // (TODO: adjust for hypergeometric distribution?)
-    if (n < 4 * wn && n < INT_MAX)
+    MonteCarloRule rule;
+    initMonteCarloRule(&rule, r, coverage, confidence);
+    if (rule.shuffle)
         buf = (struct touple*) malloc(n * sizeof(*buf));
 
     if (buf)
@@ -3425,25 +3459,10 @@ int monteCarloBiomes(
         }
         m += 1.0;
 
-        // check if we can abort early with the current confidence interval
-        double per_m = 1.0 / m;
-        double lo, hi;
-        wilson(m, x * per_m, zscore, &lo, &hi);
-
-        if (lo - per_m > coverage)
+        int d = monteCarloDecide(&rule, m, x);
+        if (d >= 0)
         {
-            ret = 1;
-            break;
-        }
-        if (hi + per_m < coverage)
-        {
-            ret = 0;
-            break;
-        }
-
-        if (hi - lo < whi - wlo)
-        {   // should occur around i ~ wn
-            ret = x * per_m > coverage;
+            ret = d;
             break;
         }
     }
