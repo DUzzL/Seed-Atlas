@@ -242,6 +242,16 @@ enum {
     SAMPLE_NO_BIOME = 0x4,  // do not apply climate noise to biome mapping
 };
 void initBiomeNoise(BiomeNoise *bn, int mc);
+/// Parameters of the double Perlin noise of a 1.18+ climate parameter.
+STRUCT(ClimateNoiseSpec)
+{
+    double amp[9];          // octave amplitudes (len used)
+    int len;
+    int omin[2];            // first octave: normal, large biomes
+    uint64_t md5[2][2];     // seed salt (lo, hi): normal, large biomes
+};
+const ClimateNoiseSpec *getClimateNoiseSpec(int nptype);
+
 void setBiomeSeed(BiomeNoise *bn, uint64_t seed, int large);
 /**
  * Initializes only the climate noises in @mask (bits 1 << NP_*), in the same

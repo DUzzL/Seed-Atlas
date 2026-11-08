@@ -841,76 +841,43 @@ int genEndScaled(const EndNoise *en, int *out, Range r, int mc, uint64_t sha)
 // Overworld and Nether Biome Generation 1.18
 //==============================================================================
 
+// The climate noises of 1.18+: md5 salts are those of "minecraft:temperature",
+// "minecraft:vegetation", "minecraft:continentalness", "minecraft:erosion",
+// "minecraft:offset" and "minecraft:ridge" (or their "_large" variants).
+static const ClimateNoiseSpec g_climate_specs[NP_MAX] = {
+    [NP_TEMPERATURE] = { {1.5, 0, 1, 0, 0, 0, 0, 0, 0}, 6, {-10, -12}, {{0x5c7e6b29735f0d7f, 0xf7d86f1bbc734988}, {0x944b0073edf549db, 0x4ff44347e9d22b96}} },
+    [NP_HUMIDITY] = { {1, 1, 0, 0, 0, 0, 0, 0, 0}, 6, {-8, -10}, {{0x81bb4d22e8dc168e, 0xf1c8b4bea16303cd}, {0x71b8ab943dbd5301, 0xbb63ddcf39ff7a2b}} },
+    [NP_CONTINENTALNESS] = { {1, 1, 2, 2, 2, 1, 1, 1, 1}, 9, {-9, -11}, {{0x83886c9d0ae3a662, 0xafa638a61b42e8ad}, {0x9a3f51a113fce8dc, 0xee2dbd157e5dcdad}} },
+    [NP_EROSION] = { {1, 1, 0, 1, 1, 0, 0, 0, 0}, 5, {-9, -11}, {{0xd02491e6058f6fd8, 0x4792512c94c17a80}, {0x8c984b1f8702a951, 0xead7b1f92bae535f}} },
+    [NP_SHIFT] = { {1, 1, 1, 0, 0, 0, 0, 0, 0}, 4, {-3, -3}, {{0x080518cf6af25384, 0x3f3dfb40a54febd5}, {0x080518cf6af25384, 0x3f3dfb40a54febd5}} },
+    [NP_WEIRDNESS] = { {1, 2, 1, 0, 0, 0, 0, 0, 0}, 6, {-7, -7}, {{0xefc8ef4d36102b34, 0x1beeeb324a0f24ea}, {0xefc8ef4d36102b34, 0x1beeeb324a0f24ea}} },
+};
+
+const ClimateNoiseSpec *getClimateNoiseSpec(int nptype)
+{
+    if (nptype < 0 || nptype >= NP_MAX)
+        return NULL;
+    return &g_climate_specs[nptype];
+}
+
 static int init_climate_seed(
     DoublePerlinNoise *dpn, PerlinNoise *oct,
     uint64_t xlo, uint64_t xhi, int large, int nptype, int nmax,
     PerlinJob *jobs, int *njobs
     )
 {
-    Xoroshiro pxr;
-    int n = 0;
-
-    switch (nptype)
+    const ClimateNoiseSpec *spec = getClimateNoiseSpec(nptype);
+    if (!spec)
     {
-    case NP_SHIFT: {
-        static const double amp[] = {1, 1, 1, 0};
-        // md5 "minecraft:offset"
-        pxr.lo = xlo ^ 0x080518cf6af25384;
-        pxr.hi = xhi ^ 0x3f3dfb40a54febd5;
-        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, -3, 4, nmax,
-            jobs, njobs);
-        } break;
-
-    case NP_TEMPERATURE: {
-        static const double amp[] = {1.5, 0, 1, 0, 0, 0};
-        // md5 "minecraft:temperature" or "minecraft:temperature_large"
-        pxr.lo = xlo ^ (large ? 0x944b0073edf549db : 0x5c7e6b29735f0d7f);
-        pxr.hi = xhi ^ (large ? 0x4ff44347e9d22b96 : 0xf7d86f1bbc734988);
-        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, large ? -12 : -10, 6, nmax,
-            jobs, njobs);
-        } break;
-
-    case NP_HUMIDITY: {
-        static const double amp[] = {1, 1, 0, 0, 0, 0};
-        // md5 "minecraft:vegetation" or "minecraft:vegetation_large"
-        pxr.lo = xlo ^ (large ? 0x71b8ab943dbd5301 : 0x81bb4d22e8dc168e);
-        pxr.hi = xhi ^ (large ? 0xbb63ddcf39ff7a2b : 0xf1c8b4bea16303cd);
-        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, large ? -10 : -8, 6, nmax,
-            jobs, njobs);
-        } break;
-
-    case NP_CONTINENTALNESS: {
-        static const double amp[] = {1, 1, 2, 2, 2, 1, 1, 1, 1};
-        // md5 "minecraft:continentalness" or "minecraft:continentalness_large"
-        pxr.lo = xlo ^ (large ? 0x9a3f51a113fce8dc : 0x83886c9d0ae3a662);
-        pxr.hi = xhi ^ (large ? 0xee2dbd157e5dcdad : 0xafa638a61b42e8ad);
-        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, large ? -11 : -9, 9, nmax,
-            jobs, njobs);
-        } break;
-
-    case NP_EROSION: {
-        static const double amp[] = {1, 1, 0, 1, 1};
-        // md5 "minecraft:erosion" or "minecraft:erosion_large"
-        pxr.lo = xlo ^ (large ? 0x8c984b1f8702a951 : 0xd02491e6058f6fd8);
-        pxr.hi = xhi ^ (large ? 0xead7b1f92bae535f : 0x4792512c94c17a80);
-        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, large ? -11 : -9, 5, nmax,
-            jobs, njobs);
-        } break;
-
-    case NP_WEIRDNESS: {
-        static const double amp[] = {1, 2, 1, 0, 0, 0};
-        // md5 "minecraft:ridge"
-        pxr.lo = xlo ^ 0xefc8ef4d36102b34;
-        pxr.hi = xhi ^ 0x1beeeb324a0f24ea;
-        n += xDoublePerlinInitDeferred(dpn, &pxr, oct, amp, -7, 6, nmax,
-            jobs, njobs);
-        } break;
-
-    default:
         printf("unsupported climate parameter %d\n", nptype);
         exit(1);
     }
-    return n;
+    large = large ? 1 : 0;
+    Xoroshiro pxr;
+    pxr.lo = xlo ^ spec->md5[large][0];
+    pxr.hi = xhi ^ spec->md5[large][1];
+    return xDoublePerlinInitDeferred(dpn, &pxr, oct, spec->amp, spec->omin[large],
+        spec->len, nmax, jobs, njobs);
 }
 
 void setBiomeSeedParts(BiomeNoise *bn, uint64_t seed, int large, uint32_t mask)
