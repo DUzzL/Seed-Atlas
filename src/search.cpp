@@ -192,6 +192,23 @@ QString Condition::apply(int mc)
         setupBiomeFilter(&bf, mc, bfflags, 0, 0, ex, exlen, in, inlen);
     else
         setupBiomeFilter(&bf, mc, bfflags, in, inlen, ex, exlen, 0, 0);
+
+    ncbpara = 0;
+    if (type == F_BIOME_SAMPLE)
+    {   // a sample counts if its biome is one of the included ones
+        uint64_t set[4] = { biomeToFind, 0, biomeToFindM, 0 };
+        if (getBiomeClimateBounds(&cb, mc, set))
+        {
+            // in the order of the noise costs; bounds that hardly exclude
+            // anything are not worth the extra samples
+            const int order[] = {
+                NP_TEMPERATURE, NP_HUMIDITY, NP_WEIRDNESS, NP_EROSION, NP_CONTINENTALNESS,
+            };
+            for (int p : order)
+                if (cb.lo[p] > -6000 || cb.hi[p] < 6000)
+                    cbpara[ncbpara++] = p;
+        }
+    }
     return "";
 }
 
@@ -1094,6 +1111,7 @@ static int f_track_minmax(void *data, int x, int z, double p)
 struct sample_boime_t
 {
     const Condition *cond;
+    SearchThreadEnv *env;
     Pos at;
     int64_t rmaxsq; // the squared radius can exceed the int range
     int n;
@@ -1103,6 +1121,27 @@ struct sample_boime_t
     int *imax;
     std::atomic_bool *stop;
 };
+
+// Can the biome at a 1:4 position be an included one? The climate bounds of
+// the included biomes often rule that out with one or two noises, which are
+// then the only ones that need initializing.
+static bool biomeMayBeIncluded(sample_boime_t *info, int x, int z)
+{
+    const Condition *c = info->cond;
+    SearchThreadEnv *env = info->env;
+    env->init4Climate(1U << NP_SHIFT);
+    double px, pz;
+    getBiomeNoisePos(&env->g.bn, x, z, 0, &px, &pz);
+    for (int i = 0; i < c->ncbpara; i++)
+    {
+        int p = c->cbpara[i];
+        env->init4Climate(1U << p);
+        int64_t v = sampleBiomeNoisePara(&env->g.bn, p, px, pz);
+        if (v < c->cb.lo[p] || v > c->cb.hi[p])
+            return false;
+    }
+    return true;
+}
 
 static int f_biome_sampler(Generator *g, int scale, int x, int y, int z, void *data)
 {
@@ -1117,6 +1156,10 @@ static int f_biome_sampler(Generator *g, int scale, int x, int y, int z, void *d
         if (rsq >= info->rmaxsq)
             return -1;
     }
+
+    if (info->cond->ncbpara && !biomeMayBeIncluded(info, x, z))
+        return 0;
+    info->env->init4Dim(DIM_OVERWORLD);
 
     int id = getBiomeAt(g, scale, x, y, z);
     uint64_t incl = 0, excl = 0;
@@ -1931,6 +1974,7 @@ L_qm_any:
             sample.imax = imax;
             sample.cent = cent;
             sample.stop = env->stop;
+            sample.env = env;
 
             uint64_t rng;
             setSeed(&rng, env->seed);
@@ -1943,8 +1987,9 @@ L_qm_any:
                 f = f_noise_sampler;
             }
             else
-            {
-                env->init4Dim(DIM_OVERWORLD);
+            {   // the sampler initializes the noises that it needs
+                if (!cond->ncbpara)
+                    env->init4Dim(DIM_OVERWORLD);
                 f = f_biome_sampler;
             }
             int ok = monteCarloBiomes(&env->g, r, &rng, cond->converage, cond->confidence, f, &sample);

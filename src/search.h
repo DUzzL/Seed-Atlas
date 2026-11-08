@@ -659,6 +659,11 @@ struct /*__attribute__((packed))*/ Condition
     // generated members - initialized when the search is started
     uint8_t     generated_start[0]; // address dummy
     BiomeFilter bf;
+    // biome samples: the climate parameters that can rule out the biomes at
+    // a position (cheap noises first), with their bounds
+    BiomeClimateBounds cb;
+    int cbpara[NP_MAX];
+    int ncbpara;
 
     // perform version upgrades
     bool versionUpgrade();
