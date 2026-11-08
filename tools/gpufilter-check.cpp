@@ -36,31 +36,6 @@ static double now()
     return duration<double>(steady_clock::now().time_since_epoch()).count();
 }
 
-// The CPU side of a sample test: the stopping rule of monteCarloBiomes(), with
-// the positions whose climate is within the bounds as the successes (as
-// biomeMayBeIncluded() in search.cpp; the real biomes succeed at most there).
-struct SampleEval { const GpuClimateFilter::SampleTest *t; BiomeNoise *bn; };
-
-static int evalSample(Generator *, int scale, int x, int, int z, void *data)
-{
-    const SampleEval *e = (const SampleEval*) data;
-    if (e->t->rmaxsq)
-    {
-        int64_t dx = x * scale, dz = z * scale;
-        if (dx*dx + dz*dz >= e->t->rmaxsq)
-            return -1;
-    }
-    double px, pz;
-    getBiomeNoisePos(e->bn, x, z, 0, &px, &pz);
-    for (size_t i = 0; i < e->t->paras.size(); i++)
-    {
-        int64_t v = sampleBiomeNoisePara(e->bn, e->t->paras[i], px, pz);
-        if (v < e->t->lo[i] || v > e->t->hi[i])
-            return 0;
-    }
-    return 1;
-}
-
 static int checkSamples(uint32_t ncpu, uint32_t ngpu)
 {
     struct Case { const char *name; int mc; int biome; int r; double cov; int large; };
@@ -120,18 +95,12 @@ static int checkSamples(uint32_t ncpu, uint32_t ngpu)
         double tgpu = now() - t0;
         std::set<uint64_t> kept(passed.begin(), passed.end());
 
-        BiomeNoise bn;
-        SampleEval e = { &t, &bn };
-        Range rg = {4, t.x, t.z, t.w, t.h, 0, 1};
         uint32_t cpupass = 0, missed = 0;
         t0 = now();
         for (uint32_t i = 0; i < ncpu && i < ngpu; i++)
         {
             uint64_t s = seed0 + i;
-            setBiomeSeed(&bn, s, c.large);
-            uint64_t rng;
-            setSeed(&rng, s);
-            bool ok = monteCarloBiomes(NULL, rg, &rng, t.coverage, t.confidence, evalSample, &e) == 1;
+            bool ok = GpuClimateFilter::cpuPasses(t, c.large, s);
             cpupass += ok;
             if (ok && !kept.count(s))
                 missed++;
@@ -198,16 +167,12 @@ int main(int argc, char **argv)
         std::set<uint64_t> kept(passed.begin(), passed.end());
 
         // the exact test of the search (see F_CLIMATE_NOISE in search.cpp)
-        BiomeNoise bn;
         uint32_t cpupass = 0, missed = 0;
         t0 = now();
         for (uint32_t i = 0; i < ncpu && i < ngpu; i++)
         {
             uint64_t s = seed0 + i;
-            setClimateParaSeed(&bn, s, c.large, c.t.para, -1);
-            double pmin, pmax;
-            getParaRange(&bn.climate[c.t.para], &pmin, &pmax, c.t.x, c.t.z, c.t.w, c.t.h, NULL, NULL);
-            bool ok = pmin <= c.t.lmax && pmax >= c.t.lmin;
+            bool ok = GpuClimateFilter::cpuPasses(c.t, c.large, s);
             cpupass += ok;
             if (ok && !kept.count(s))
                 missed++;

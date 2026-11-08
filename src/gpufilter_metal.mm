@@ -53,7 +53,12 @@ id<MTLComputePipelineState> getPipeline(id<MTLDevice> device, const GpuMslKernel
     if (@available(macOS 15.0, *))
         opt.mathMode = MTLMathModeSafe;
     else
+    {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         opt.fastMathEnabled = NO;
+#pragma clang diagnostic pop
+    }
     NSString *src = [NSString stringWithUTF8String:kernel->source];
     id<MTLLibrary> lib = [device newLibraryWithSource:src options:opt error:&err];
     id<MTLComputePipelineState> pso = nil;

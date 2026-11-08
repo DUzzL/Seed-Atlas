@@ -66,6 +66,9 @@ public:
     GpuClimateFilter(const GpuClimateFilter&) = delete;
     GpuClimateFilter& operator=(const GpuClimateFilter&) = delete;
 
+    // Prepares the filter; false where the GPU cannot take the tests or
+    // fails its self test (the first time a filter is set up, the GPU has to
+    // keep every seed that passes a few exact CPU tests).
     bool init(const Tests& tests, bool large);
 
     // Appends the seeds in [start, start + count) that the filter keeps to
@@ -73,7 +76,14 @@ public:
     // case all seeds have to be tested on the CPU.
     bool filter(uint64_t start, uint32_t count, std::vector<uint64_t>& passed);
 
+    // The exact CPU tests that the GPU tests prefilter: does the seed pass?
+    static bool cpuPasses(const Test& t, bool large, uint64_t seed);
+    static bool cpuPasses(const SampleTest& t, bool large, uint64_t seed);
+
 private:
+    bool initBackend(const Tests& tests, bool large);
+    static bool selfTest();
+
     std::unique_ptr<GpuBackend> backend;
 };
 

@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 // Bound on the directional derivative of a Perlin octave per unit of its
 // input. The largest value observed in 4e7 random samples is 3.16; the
@@ -294,6 +295,14 @@ static bool initSampleTest(const GpuClimateFilter::SampleTest& t, bool large,
 bool GpuClimateFilter::init(const Tests& tests, bool large)
 {
     backend.reset();
+    if (!forced() && !selfTest())
+        return false;
+    return initBackend(tests, large);
+}
+
+bool GpuClimateFilter::initBackend(const Tests& tests, bool large)
+{
+    backend.reset();
     if (tests.empty())
         return false;
 
@@ -349,4 +358,118 @@ bool GpuClimateFilter::filter(uint64_t start, uint32_t count, std::vector<uint64
     }
     std::sort(passed.begin() + old, passed.end());
     return true;
+}
+
+bool GpuClimateFilter::cpuPasses(const Test& t, bool large, uint64_t seed)
+{
+    // as F_CLIMATE_NOISE in search.cpp
+    BiomeNoise bn;
+    setBiomeSeedParts(&bn, seed, large, 1U << t.para);
+    double pmin, pmax;
+    getParaRange(&bn.climate[t.para], &pmin, &pmax, t.x, t.z, t.w, t.h, NULL, NULL);
+    return pmin <= t.lmax && pmax >= t.lmin;
+}
+
+// monteCarloBiomes() with the positions whose climate is within the bounds
+// as the successes (biomeMayBeIncluded() in search.cpp); the real biomes can
+// only succeed there.
+struct SampleEval
+{
+    const GpuClimateFilter::SampleTest *t;
+    const BiomeNoise *bn;
+};
+
+static int evalSample(Generator *, int scale, int x, int, int z, void *data)
+{
+    const SampleEval *e = (const SampleEval*) data;
+    if (e->t->rmaxsq)
+    {
+        int64_t dx = x * scale, dz = z * scale;
+        if (dx*dx + dz*dz >= e->t->rmaxsq)
+            return -1;
+    }
+    double px, pz;
+    getBiomeNoisePos(e->bn, x, z, 0, &px, &pz);
+    for (size_t i = 0; i < e->t->paras.size(); i++)
+    {
+        int64_t v = sampleBiomeNoisePara(e->bn, e->t->paras[i], px, pz);
+        if (v < e->t->lo[i] || v > e->t->hi[i])
+            return 0;
+    }
+    return 1;
+}
+
+bool GpuClimateFilter::cpuPasses(const SampleTest& t, bool large, uint64_t seed)
+{
+    BiomeNoise bn;
+    setBiomeSeed(&bn, seed, large);
+    SampleEval e = { &t, &bn };
+    Range r = {4, t.x, t.z, t.w, t.h, 0, 1};
+    uint64_t rng;
+    setSeed(&rng, seed);
+    return monteCarloBiomes(NULL, r, &rng, t.coverage, t.confidence, evalSample, &e) == 1;
+}
+
+// Does the GPU keep every seed that passes the exact CPU tests? This guards
+// against drivers that compile the kernel wrongly. The tests pass often on
+// the CPU (a third and a few percent of the seeds), so a wrong GPU shows.
+bool GpuClimateFilter::selfTest()
+{
+    static std::mutex mutex;
+    static int result = -1;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (result >= 0)
+        return result;
+
+    Tests climate, sample;
+    climate.climate.push_back({ NP_TEMPERATURE, -16, -16, 32, 32, 2000, 1e9 });
+    SampleTest st;
+    st.x = st.z = -25;
+    st.w = st.h = 50;
+    st.rmaxsq = 99 * 99 + 1;
+    st.coverage = 0.4;
+    st.confidence = 0.95f;
+    uint64_t desert[4] = { 1ULL << 2, 0, 0, 0 };
+    BiomeClimateBounds cb;
+    if (getBiomeClimateBounds(&cb, MC_NEWEST, desert))
+    {
+        for (int p : { NP_TEMPERATURE, NP_HUMIDITY })
+        {
+            st.paras.push_back(p);
+            st.lo.push_back(cb.lo[p]);
+            st.hi.push_back(cb.hi[p]);
+        }
+        sample.samples.push_back(st);
+    }
+
+    auto t0 = std::chrono::steady_clock::now();
+    const uint64_t seed0 = 0x5EED;
+    const uint32_t n = 512;
+    bool ok = true;
+    int cpupass = 0;
+    for (const Tests *tests : { &climate, &sample })
+    {
+        GpuClimateFilter f;
+        std::vector<uint64_t> kept;
+        if (tests->empty() || !f.initBackend(*tests, false) || !f.filter(seed0, n, kept))
+        {
+            ok = false;
+            break;
+        }
+        for (uint64_t seed = seed0; seed < seed0 + n && ok; seed++)
+        {
+            bool pass = tests->climate.empty()
+                ? cpuPasses(tests->samples[0], false, seed)
+                : cpuPasses(tests->climate[0], false, seed);
+            cpupass += pass;
+            if (pass && !std::binary_search(kept.begin(), kept.end(), seed))
+                ok = false;
+        }
+    }
+    if (debugEnabled())
+        fprintf(stderr, "gpu self test: %s (%d seeds pass on the CPU, %.1f ms)\n",
+            ok ? "passed" : "FAILED", cpupass, std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0).count());
+    result = ok;
+    return ok;
 }
