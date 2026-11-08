@@ -738,6 +738,23 @@ double sampleDoublePerlin(const DoublePerlinNoise *noise,
     return v * noise->amplitude;
 }
 
+double sampleDoublePerlinOctaves(const DoublePerlinNoise *noise, int o0, int o1,
+        double x, double y, double z)
+{
+    const double f = 337.0 / 331.0;
+    OctaveNoise a = noise->octA, b = noise->octB;
+    a.octaves += o0;
+    b.octaves += o0;
+    a.octcnt = (o1 < a.octcnt ? o1 : a.octcnt) - o0;
+    b.octcnt = (o1 < b.octcnt ? o1 : b.octcnt) - o0;
+    double v = 0;
+    if (a.octcnt > 0)
+        v += sampleOctaveT(&a, x, y, z, 0);
+    if (b.octcnt > 0)
+        v += sampleOctaveT(&b, x*f, y*f, z*f, 0);
+    return v * noise->amplitude;
+}
+
 double sampleDoublePerlinCoherent(const DoublePerlinNoise *noise,
         double x, double y, double z)
 {

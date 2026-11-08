@@ -724,6 +724,17 @@ struct SearchThreadEnv
     // while the generator itself is not (yet) fully initialized
     uint32_t climask;
     uint64_t climseed;
+    // climateMayBeIn() initializes the other climate noises progressively:
+    // climjobs holds the octave initializations of all of them for climseed
+    // (when climjobsok), climjob0 where each noise starts in it, climpairs
+    // how many octave pairs of each noise have been initialized, and
+    // climrest what the remaining octaves can add (seed independent)
+    PerlinJob climjobs[sizeof(BiomeNoise::oct) / sizeof(PerlinNoise)];
+    int climjob0[NP_MAX];
+    int climpairs[NP_MAX];
+    double climrest[NP_MAX][10];
+    bool climjobsok;
+    bool climrestok;
     // init4Noise() keeps noiseoct octaves of noiseparam for noiseseed and
     // serves requests for fewer octaves by limiting the octave counts, which
     // is equivalent to initializing fewer octaves
@@ -747,6 +758,9 @@ struct SearchThreadEnv
     void init4Noise(int nptype, int octaves);
     // initialize only the overworld climate noises in mask (1 << NP_*)
     void init4Climate(uint32_t mask);
+    // Is the climate parameter (as by sampleBiomeNoisePara()) at a noise
+    // position within [lo, hi]? Initializes only as many octaves as needed.
+    bool climateMayBeIn(int nptype, double px, double pz, int lo, int hi);
     void prepareSurfaceNoise(int dim);
 };
 

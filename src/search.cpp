@@ -292,6 +292,12 @@ SearchThreadEnv::SearchThreadEnv()
 , octaves()
 , climask()
 , climseed()
+, climjobs()
+, climjob0()
+, climpairs()
+, climrest()
+, climjobsok()
+, climrestok()
 , noiseparam(-2)
 , noiseoct()
 , noiseseed()
@@ -319,6 +325,8 @@ QString SearchThreadEnv::init(int mc, bool large, const ConditionTree& condtree)
     this->surfdim = DIM_UNDEF;
     this->octaves = 0;
     this->climask = 0;
+    this->climjobsok = false;
+    this->climrestok = false;
     this->noiseparam = -2;
     uint32_t flags = 0;
     if (large)
@@ -380,6 +388,7 @@ void SearchThreadEnv::init4Dim(int dim)
             applySeed(&g, dim, seed);
         }
         climask = 0;
+        climjobsok = false;
         noiseparam = -2;
         this->surfdim = DIM_UNDEF;
     }
@@ -426,6 +435,7 @@ void SearchThreadEnv::init4Noise(int nptype, int octaves)
         noiseparam = nptype;
         noiseseed = seed;
         climask = 0; // the octave buffer layout differs
+        climjobsok = false;
         if (g.dim == DIM_OVERWORLD)
             g.dim = DIM_UNDEF; // and the generator is no longer complete
     }
@@ -454,6 +464,7 @@ void SearchThreadEnv::init4Climate(uint32_t mask)
     if (climseed != seed)
     {
         climask = 0;
+        climjobsok = false;
         climseed = seed;
     }
     uint32_t need = mask & ~climask;
@@ -465,6 +476,88 @@ void SearchThreadEnv::init4Climate(uint32_t mask)
     setBiomeSeedParts(&g.bn, seed, large, need);
     climask |= need;
     noiseparam = -2;
+}
+
+bool SearchThreadEnv::climateMayBeIn(int nptype, double px, double pz, int lo, int hi)
+{
+    bool full = g.dim == DIM_OVERWORLD && g.seed == seed && g.bn.nptype == -1;
+    if (!full && !(climseed == seed && (climask & (1U << nptype))))
+    {
+        if (climseed != seed)
+        {
+            climask = 0;
+            climjobsok = false;
+            climseed = seed;
+        }
+        DoublePerlinNoise *dp = &g.bn.climate[nptype];
+        if (!climjobsok)
+        {   // the jobs leave the octaves of the noises in climask as they are
+            if (g.dim == DIM_OVERWORLD)
+                g.dim = DIM_UNDEF;
+            setBiomeSeedJobs(&g.bn, seed, large, (1U << NP_MAX) - 1, climjobs);
+            for (int i = 0, j = 0; i < NP_MAX; i++)
+            {
+                climjob0[i] = j;
+                climpairs[i] = 0;
+                j += g.bn.climate[i].octA.octcnt + g.bn.climate[i].octB.octcnt;
+            }
+            if (!climrestok)
+            {   // the bound in units of the parameter, with a margin for
+                // the rounding of the partial sums and of the conversion
+                for (int i = 0; i < NP_MAX; i++)
+                {
+                    const DoublePerlinNoise *d = &g.bn.climate[i];
+                    int na = d->octA.octcnt, nb = d->octB.octcnt;
+                    const PerlinJob *jb = climjobs + climjob0[i];
+                    for (int k = 0; k <= na && k < 10; k++)
+                    {
+                        double amp = 0;
+                        for (int o = k; o < na; o++)
+                            amp += fabs(jb[o].amplitude);
+                        for (int o = k; o < nb; o++)
+                            amp += fabs(jb[na+o].amplitude);
+                        climrest[i][k] = 10000.0 * d->amplitude * PERLIN_VALUE_BOUND * amp + 2;
+                    }
+                }
+                climrestok = true;
+            }
+            climjobsok = true;
+            noiseparam = -2;
+        }
+
+        // Add one octave pair after the other, until the rest cannot bring
+        // the value into the range or all octaves are initialized.
+        int na = dp->octA.octcnt;
+        if (dp->octB.octcnt != na || na >= 10)
+        {   // not a layout this supports: initialize the noise as a whole
+            init4Climate(1U << nptype);
+        }
+        else
+        {
+            double v = 0;
+            int k = 0;
+            while (true)
+            {
+                if (k < climpairs[nptype])
+                {
+                    v += 10000.0 * sampleDoublePerlinOctaves(dp, k, climpairs[nptype], px, 0, pz);
+                    k = climpairs[nptype];
+                }
+                if (k == na)
+                    break;
+                double r = climrest[nptype][k];
+                if (v - r > hi || v + r < lo)
+                    return false;
+                PerlinJob *jb = climjobs + climjob0[nptype];
+                PerlinJob pair[2] = { jb[k], jb[na+k] };
+                xPerlinInitJobs(pair, 2);
+                climpairs[nptype] = k + 1;
+            }
+            climask |= 1U << nptype;
+        }
+    }
+    int64_t v = sampleBiomeNoisePara(&g.bn, nptype, px, pz);
+    return v >= lo && v <= hi;
 }
 
 void SearchThreadEnv::prepareSurfaceNoise(int dim)
@@ -1135,9 +1228,7 @@ static bool biomeMayBeIncluded(sample_boime_t *info, int x, int z)
     for (int i = 0; i < c->ncbpara; i++)
     {
         int p = c->cbpara[i];
-        env->init4Climate(1U << p);
-        int64_t v = sampleBiomeNoisePara(&env->g.bn, p, px, pz);
-        if (v < c->cb.lo[p] || v > c->cb.hi[p])
+        if (!env->climateMayBeIn(p, px, pz, c->cb.lo[p], c->cb.hi[p]))
             return false;
     }
     return true;

@@ -104,6 +104,20 @@ double sampleDoublePerlin(const DoublePerlinNoise *noise,
 double sampleDoublePerlinCoherent(const DoublePerlinNoise *noise,
         double x, double y, double z);
 
+/// The octaves [o0, o1) of both octave noises of sampleDoublePerlin(), times
+/// its amplitude. With the octaves [0, octcnt) this is sampleDoublePerlin(),
+/// up to rounding, so a noise can be evaluated (and initialized) one octave
+/// pair at a time; PERLIN_VALUE_BOUND bounds what the remaining octaves add.
+double sampleDoublePerlinOctaves(const DoublePerlinNoise *noise, int o0, int o1,
+        double x, double y, double z);
+
+/// The largest absolute value of a Perlin octave before its amplitude. The
+/// fade weights interpolate the eight corner terms g.o convexly, and a corner
+/// term is at most the sum of the two largest |o_i|. That bound peaks at
+/// 1.0364 on a 400^3 grid of the cell, and with a slope of at most 1.35 per
+/// axis it cannot exceed 1.043 between the grid points.
+#define PERLIN_VALUE_BOUND 1.05
+
 
 #ifdef __cplusplus
 }

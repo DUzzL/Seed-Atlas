@@ -261,6 +261,15 @@ void setBiomeSeed(BiomeNoise *bn, uint64_t seed, int large);
  * has been initialized for that seed.
  */
 void setBiomeSeedParts(BiomeNoise *bn, uint64_t seed, int large, uint32_t mask);
+/**
+ * Like setBiomeSeedParts(), but returns the octave initializations of the
+ * climate noises in @mask as jobs instead of running them, in the order of
+ * the parameters and within each noise octave noise A before B. @jobs needs
+ * room for one job per entry of bn->oct. Running a subset of the jobs with
+ * xPerlinInitJobs() initializes those octaves exactly.
+ */
+int setBiomeSeedJobs(BiomeNoise *bn, uint64_t seed, int large, uint32_t mask,
+    PerlinJob *jobs);
 void setBetaBiomeSeed(BiomeNoiseBeta *bnb, uint64_t seed);
 int sampleBiomeNoise(const BiomeNoise *bn, int64_t *np, int x, int y, int z,
     uint64_t *dat, uint32_t sample_flags);

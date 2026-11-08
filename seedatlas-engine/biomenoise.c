@@ -880,15 +880,14 @@ static int init_climate_seed(
         spec->len, nmax, jobs, njobs);
 }
 
-void setBiomeSeedParts(BiomeNoise *bn, uint64_t seed, int large, uint32_t mask)
+int setBiomeSeedJobs(BiomeNoise *bn, uint64_t seed, int large, uint32_t mask,
+    PerlinJob *jobs)
 {
     Xoroshiro pxr;
     xSetSeed(&pxr, seed);
     uint64_t xlo = xNextLong(&pxr);
     uint64_t xhi = xNextLong(&pxr);
 
-    // all octaves are collected first, so their initializations can interleave
-    PerlinJob jobs[sizeof(bn->oct) / sizeof(*bn->oct)];
     int njobs = 0, nrun = 0;
     int n = 0, i = 0;
     for (; i < NP_MAX; i++)
@@ -909,8 +908,16 @@ void setBiomeSeedParts(BiomeNoise *bn, uint64_t seed, int large, uint32_t mask)
         printf("setBiomeSeed(): BiomeNoise is malformed, buffer too small\n");
         exit(1);
     }
-    xPerlinInitJobs(jobs, nrun);
     bn->nptype = -1;
+    return nrun;
+}
+
+void setBiomeSeedParts(BiomeNoise *bn, uint64_t seed, int large, uint32_t mask)
+{
+    // all octaves are collected first, so their initializations can interleave
+    PerlinJob jobs[sizeof(bn->oct) / sizeof(*bn->oct)];
+    int njobs = setBiomeSeedJobs(bn, seed, large, mask, jobs);
+    xPerlinInitJobs(jobs, njobs);
 }
 
 void setBiomeSeed(BiomeNoise *bn, uint64_t seed, int large)
