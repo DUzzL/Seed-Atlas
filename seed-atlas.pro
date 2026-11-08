@@ -153,17 +153,24 @@ SOURCES += \
         src/world.cpp \
         src/gpufilter.cpp
 
-# Experimental GPU prefilter: Metal on macOS, a stub elsewhere
+# Experimental GPU prefilter: Metal on macOS, Vulkan (loaded at run time) on
+# Windows and Linux, none in WebAssembly. The kernels are generated from
+# src/gpufilter.comp with tools/gen-gpu-kernels.sh.
 macx {
     OBJECTIVE_SOURCES += src/gpufilter_metal.mm
     QMAKE_OBJECTIVE_CFLAGS += -fobjc-arc
     LIBS += -framework Metal -framework Foundation
-} else {
+} else:wasm {
     SOURCES += src/gpufilter_stub.cpp
+} else {
+    SOURCES += src/gpufilter_vulkan.cpp
+    HEADERS += src/vkmini.h
+    unix: LIBS += -ldl
 }
 
 HEADERS += \
         src/gpufilter.h \
+        src/gpufilter_backend.h \
         $$ENGINE_PATH/finders.h \
         $$ENGINE_PATH/generator.h \
         $$ENGINE_PATH/layers.h \

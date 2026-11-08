@@ -2,12 +2,15 @@
 #define GPUFILTER_H
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
-struct ConditionTree;
+class GpuBackend;
 
 /* Experimental GPU prefilter for searches with 1.18+ climate parameter
- * conditions (macOS with Metal only, enabled with SEED_ATLAS_GPU=1).
+ * conditions: Metal on macOS, Vulkan on Windows and Linux. It is enabled with
+ * SEED_ATLAS_GPU=1, or with SEED_ATLAS_GPU=force, which keeps the GPU even
+ * where it is slower than the CPU (for testing).
  *
  * The GPU rejects seeds whose climate noise cannot reach a required range of
  * a climate condition that has to hold at the search origin. It builds the
@@ -29,9 +32,8 @@ public:
 
     // Is the GPU filter enabled and available on this system?
     static bool enabled();
-
-    // The tests that can serve as a prefilter for a condition tree.
-    static std::vector<Test> analyze(const ConditionTree& tree, int mc);
+    // Use the GPU even when it is slower than the CPU (for testing)?
+    static bool forced();
 
     GpuClimateFilter();
     ~GpuClimateFilter();
@@ -46,8 +48,7 @@ public:
     bool filter(uint64_t start, uint32_t count, std::vector<uint64_t>& passed);
 
 private:
-    struct Impl;
-    Impl *d;
+    std::unique_ptr<GpuBackend> backend;
 };
 
 #endif // GPUFILTER_H

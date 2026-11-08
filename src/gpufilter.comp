@@ -1,0 +1,263 @@
+// GPU prefilter for 1.18+ climate parameter conditions (see gpufilter.h).
+//
+// This is the only source of the kernel. tools/gen-gpu-kernels.sh compiles
+// a variant for each value of NOCT to SPIR-V for Vulkan (gpufilter_spirv.inc)
+// and translates those to Metal (gpufilter_msl.inc); both generated files
+// are part of the repository.
+//
+// The permutations are built exactly as on the CPU (integer arithmetic). The
+// noise is sampled in single precision on a grid; with a bound on the noise
+// gradient, every seed rejected here also fails the exact test on the CPU.
+#version 450
+#extension GL_ARB_gpu_shader_int64 : require
+
+// NOCT: the most octaves per octave noise that the kernel supports. The
+// generator compiles a variant for each value in GPU_KERNEL_OCTAVES. The
+// permutations take 2 * NOCT * 260 bytes per thread of 32 KiB shared memory.
+#ifndef NOCT
+#define NOCT 9
+#endif
+#define TG (32768 / (2 * NOCT * 260))
+layout(local_size_x = TG) in;
+
+// The tests and octaves are uniform buffers (std140, read through the
+// constant cache); the C structs in gpufilter_backend.h have the same layout.
+const uint MAX_TESTS = 8;
+const uint MAX_OCTS = MAX_TESTS * 9;
+
+struct Oct {
+    uint64_t mlo, mhi;  // md5 salt of the octave
+    float amp, lac;     // amplitude and lacunarity
+    float pad0, pad1;
+};
+
+struct Test {
+    uint64_t clo, chi;  // md5 salt of the climate parameter
+    ivec4 step;         // grid spacing of each level
+    vec4 bound;         // gradient bound * grid radius + margin of each level
+    uint noct, oct0;    // octaves per octave noise, first in the octave buffer
+    float dpamp;        // amplitude of the double Perlin noise
+    float margin;       // rounding error margin
+    float lmin, lmax;   // the bounds must overlap this required range
+    int x, z, w, h;     // area in quart coordinates
+    uint nlevels;       // grid levels, coarse to fine
+    uint pad;
+};
+
+layout(std140, binding = 0) uniform ParamBuf { uint64_t seed0; uint count; uint ntests; } P;
+layout(std140, binding = 1) uniform TestBuf { Test tests[MAX_TESTS]; };
+layout(std140, binding = 2) uniform OctBuf { Oct octs[MAX_OCTS]; };
+layout(std430, binding = 3) buffer CountBuf { uint npass; };
+layout(std430, binding = 4) writeonly buffer PassBuf { uint64_t passed[]; };
+
+// The permutations (257 bytes each, padded to 260) of all threads. Metal
+// gets them as bytes (PERM_BYTES, set by the generator); Vulkan as words of
+// four bytes, which needs no 8-bit shared memory support.
+const uint PERM_WORDS = 65;
+#ifdef PERM_BYTES
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+shared uint8_t perm[TG * 2 * NOCT * PERM_WORDS * 4];
+uint pget(uint base, uint i) { return uint(perm[4u * base + i]); }
+void pset(uint base, uint i, uint v) { perm[4u * base + i] = uint8_t(v); }
+#else
+shared uint perm[TG * 2 * NOCT * PERM_WORDS];
+uint pget(uint base, uint i)
+{
+    return (perm[base + (i >> 2)] >> ((i & 3u) * 8u)) & 0xFFu;
+}
+void pset(uint base, uint i, uint v)
+{
+    uint k = base + (i >> 2), s = (i & 3u) * 8u;
+    perm[k] = (perm[k] & ~(0xFFu << s)) | (v << s);
+}
+#endif
+
+uint64_t rotl(uint64_t x, uint b) { return (x << b) | (x >> (64u - b)); }
+
+// Xoroshiro128++ as in rng.h
+uint64_t xnext(inout uint64_t lo, inout uint64_t hi)
+{
+    uint64_t l = lo, h = hi;
+    uint64_t n = rotl(l + h, 17u) + l;
+    h ^= l;
+    lo = rotl(l, 49u) ^ h ^ (h << 21);
+    hi = rotl(h, 28u);
+    return n;
+}
+
+uint xnextint(inout uint64_t lo, inout uint64_t hi, uint n)
+{
+    uint64_t r = (xnext(lo, hi) & 0xFFFFFFFFul) * uint64_t(n);
+    if (uint(r) < n)
+    {
+        while (uint(r) < (0u - n) % n)
+            r = (xnext(lo, hi) & 0xFFFFFFFFul) * uint64_t(n);
+    }
+    return uint(r >> 32);
+}
+
+float xnextdouble(inout uint64_t lo, inout uint64_t hi)
+{
+    return float(xnext(lo, hi) >> 11) * exp2(-53.0);
+}
+
+
+float grad(uint idx, float a, float b, float c)
+{
+    idx &= 15u;
+    float u = ((0xAF00u >> idx) & 1u) != 0u ? b : a;
+    float v = ((0x500Fu >> idx) & 1u) != 0u ? b : c;
+    u = ((0xEAAAu >> idx) & 1u) != 0u ? -u : u;
+    v = ((0x8CCCu >> idx) & 1u) != 0u ? -v : v;
+    return u + v;
+}
+
+struct Perlin { float a, b, c, d2, t2; uint h2; uint base; };
+
+float lerpf(float t, float a, float b) { return a + t * (b - a); }
+
+float fade(float d) { return d*d*d * (d * (d*6.0-15.0) + 10.0); }
+
+// samplePerlin() with y = 0 (precomputed y lattice)
+float sampleP(Perlin p, float x, float z)
+{
+    float d1 = x + p.a, d3 = z + p.c;
+    float i1 = floor(d1), i3 = floor(d3);
+    d1 -= i1; d3 -= i3;
+    uint h1 = uint(int(i1)) & 255u, h3 = uint(int(i3)) & 255u;
+    float d2 = p.d2, t2 = p.t2;
+    float t1 = fade(d1), t3 = fade(d3);
+    uint B = p.base;
+    uint a1 = (pget(B, h1) + p.h2) & 255u, b1 = (pget(B, h1+1u) + p.h2) & 255u;
+    uint a2 = (pget(B, a1) + h3) & 255u, b2 = (pget(B, b1) + h3) & 255u;
+    uint a3 = (pget(B, a1+1u) + h3) & 255u, b3 = (pget(B, b1+1u) + h3) & 255u;
+    float l1 = grad(pget(B, a2),    d1,     d2,     d3);
+    float l2 = grad(pget(B, b2),    d1-1.0, d2,     d3);
+    float l3 = grad(pget(B, a3),    d1,     d2-1.0, d3);
+    float l4 = grad(pget(B, b3),    d1-1.0, d2-1.0, d3);
+    float l5 = grad(pget(B, a2+1u), d1,     d2,     d3-1.0);
+    float l6 = grad(pget(B, b2+1u), d1-1.0, d2,     d3-1.0);
+    float l7 = grad(pget(B, a3+1u), d1,     d2-1.0, d3-1.0);
+    float l8 = grad(pget(B, b3+1u), d1-1.0, d2-1.0, d3-1.0);
+    l1 = lerpf(t1, l1, l2); l3 = lerpf(t1, l3, l4);
+    l5 = lerpf(t1, l5, l6); l7 = lerpf(t1, l7, l8);
+    l1 = lerpf(t2, l1, l3); l5 = lerpf(t2, l5, l7);
+    return lerpf(t3, l1, l5);
+}
+
+// xPerlinInit()
+Perlin initPerlin(uint base, uint64_t lo, uint64_t hi)
+{
+    Perlin p;
+    p.base = base;
+    p.a = xnextdouble(lo, hi) * 256.0;
+    p.b = xnextdouble(lo, hi) * 256.0;
+    p.c = xnextdouble(lo, hi) * 256.0;
+    for (uint i = 0u; i < 256u; i++)
+        pset(base, i, i);
+    for (uint i = 0u; i < 256u; i++)
+    {
+        uint j = xnextint(lo, hi, 256u - i) + i;
+        uint t = pget(base, i);
+        pset(base, i, pget(base, j));
+        pset(base, j, t);
+    }
+    pset(base, 256u, pget(base, 0u));
+    float i2 = floor(p.b);
+    p.d2 = p.b - i2;
+    p.h2 = uint(int(i2)) & 255u;
+    p.t2 = fade(p.d2);
+    return p;
+}
+
+// sampleDoublePerlin() at (x, 0, z), times 10000
+float sampleClimate(Test T, Perlin pn[2*NOCT], float x, float z)
+{
+    const float f = 337.0 / 331.0;
+    uint n = T.noct;
+    float v = 0.0;
+    for (uint o = 0u; o < n; o++)
+    {
+        Oct oc = octs[T.oct0 + o];
+        v += oc.amp * sampleP(pn[o], x * oc.lac, z * oc.lac);
+    }
+    for (uint o = 0u; o < n; o++)
+    {
+        Oct oc = octs[T.oct0 + o];
+        v += oc.amp * sampleP(pn[n+o], x * f * oc.lac, z * f * oc.lac);
+    }
+    return v * 10000.0 * T.dpamp;
+}
+
+// Can the noise of the test overlap its required range? Coarse to fine: the
+// samples alone overlapping the range (up to the rounding margin) means the
+// test cannot reject the seed; the samples widened by the bound of their grid
+// missing it means it must. Seeds still undecided at the finest level stay.
+bool mayPass(Test T, Perlin pn[2*NOCT])
+{
+    for (uint lv = 0u; lv < T.nlevels; lv++)
+    {
+        int step = T.step[lv];
+        float vmin = 1e30, vmax = -1e30;
+        for (int j = 0; ; j += step)
+        {
+            j = min(j, T.h - 1);
+            for (int i = 0; ; i += step)
+            {
+                i = min(i, T.w - 1);
+                float v = sampleClimate(T, pn, float(T.x + i), float(T.z + j));
+                vmin = min(vmin, v);
+                vmax = max(vmax, v);
+                if (vmax + T.margin >= T.lmin && vmin - T.margin <= T.lmax)
+                    return true;
+                if (i == T.w - 1) break;
+            }
+            if (j == T.h - 1) break;
+        }
+        if (vmax + T.bound[lv] < T.lmin || vmin - T.bound[lv] > T.lmax)
+            return false;
+    }
+    return true;
+}
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= P.count)
+        return;
+    uint64_t seed = P.seed0 + uint64_t(gid);
+    uint base0 = gl_LocalInvocationID.x * 2u * NOCT * PERM_WORDS;
+
+    // xSetSeed()
+    uint64_t l = seed ^ 0x6a09e667f3bcc909ul;
+    uint64_t h = l + 0x9e3779b97f4a7c15ul;
+    l = (l ^ (l >> 30)) * 0xbf58476d1ce4e5b9ul;
+    h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9ul;
+    l = (l ^ (l >> 27)) * 0x94d049bb133111ebul;
+    h = (h ^ (h >> 27)) * 0x94d049bb133111ebul;
+    l = l ^ (l >> 31);
+    h = h ^ (h >> 31);
+    uint64_t xlo = xnext(l, h), xhi = xnext(l, h);
+
+    for (uint t = 0u; t < P.ntests; t++)
+    {
+        Test T = tests[t];
+        uint n = T.noct;
+        // xDoublePerlinInit(): octave noise A, then B
+        Perlin pn[2*NOCT];
+        uint64_t plo = xlo ^ T.clo, phi = xhi ^ T.chi;
+        for (uint k = 0u; k < 2u; k++)
+        {
+            uint64_t olo = xnext(plo, phi), ohi = xnext(plo, phi);
+            for (uint i = 0u; i < n; i++)
+            {
+                Oct oc = octs[T.oct0 + i];
+                pn[k*n+i] = initPerlin(base0 + (k*n+i) * PERM_WORDS, olo ^ oc.mlo, ohi ^ oc.mhi);
+            }
+        }
+        if (!mayPass(T, pn))
+            return; // the seed fails this test on the CPU as well
+    }
+    uint k = atomicAdd(npass, 1u);
+    passed[k] = seed;
+}
