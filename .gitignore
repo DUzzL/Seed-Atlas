@@ -34,3 +34,21 @@ Thumbs.db
 # aqt writes its log into the working directory
 /aqtinstall.log
 /seedatlas-sax/build/
+
+# Private-only files (see tools/private-paths.txt): they live only in the
+# private repository seed-atlas-plus, which re-includes them at the end of its
+# own .gitignore.
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.claude/
+.codex/
+.cursor/
+.cursorrules
+/.github/copilot-instructions.md
+/reports/
+/report/
+*report*.md
+AUDIT*.md
+/notes/
+/private/

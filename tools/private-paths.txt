@@ -1,0 +1,19 @@
+# Files that belong only in the private repository (seed-atlas-plus) and must
+# never be committed to the public one. One git pathspec per line, matched
+# case-insensitively at any depth. tools/check-private-paths.sh enforces the
+# list in CI and in the pre-push hook; the .gitignore block "Private-only files"
+# mirrors it so that git add does not pick these files up in the first place.
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.claude/**
+.codex/**
+.cursor/**
+.cursorrules
+.github/copilot-instructions.md
+reports/**
+report/**
+*report*.md
+AUDIT*.md
+notes/**
+private/**

@@ -1,0 +1,21 @@
+name: Private files
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  no-private-files:
+    name: No private-only files
+    # The private repository seed-atlas-plus keeps these files on purpose.
+    if: github.repository == 'DUzzL/Seed-Atlas'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Tracked files
+        run: tools/check-private-paths.sh
+      - name: Whole history
+        run: tools/check-private-paths.sh --all
