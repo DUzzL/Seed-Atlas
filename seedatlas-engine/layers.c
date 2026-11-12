@@ -789,7 +789,81 @@ int mapMushroom(const Layer * l, int * out, int x, int z, int w, int h)
 }
 
 
+static int mapDeepOceanArea(const Layer * l, int * out, int x, int z, int w, int h);
+
+// L_DEEP_OCEAN_256 is the common ancestor of the biome, hills-noise and river
+// branches, so a query evaluates it, and the whole stack above it, three times
+// on overlapping areas. For small areas (point queries) the first request
+// contains the others: the last result is kept per thread and repeated
+// requests are answered from it. Layers are pure functions of the position, so
+// this is exact. The key covers everything the result depends on: the layer,
+// its seeds and the version (the stack above it is fixed per version).
+#if defined(_MSC_VER)
+#define LAYER_THREAD_LOCAL __declspec(thread)
+#else
+#define LAYER_THREAD_LOCAL _Thread_local
+#endif
+
+enum { DEEP_OCEAN_MEMO_MAX = 1024 };
+
+typedef struct
+{
+    const Layer *l;
+    uint64_t startSeed, startSalt;
+    int mc;
+    int x, z, w, h;
+    int ids[DEEP_OCEAN_MEMO_MAX];
+} DeepOceanMemo;
+
+static LAYER_THREAD_LOCAL DeepOceanMemo g_deep_ocean_memo;
+
+// Custom (filter) layers keep their state in 'data'; with one of those above,
+// results are not shared.
+static int hasCustomAncestor(const Layer *l)
+{
+    for (l = l->p; l; l = l->p)
+    {
+        if (l->data || l->p2)
+            return 1;
+    }
+    return 0;
+}
+
 int mapDeepOcean(const Layer * l, int * out, int x, int z, int w, int h)
+{
+    DeepOceanMemo *m = &g_deep_ocean_memo;
+    int64_t j;
+    if (hasCustomAncestor(l))
+        return mapDeepOceanArea(l, out, x, z, w, h);
+    if (m->l == l && m->startSeed == l->startSeed &&
+        m->startSalt == l->startSalt && m->mc == l->mc &&
+        x >= m->x && z >= m->z && x + w <= m->x + m->w && z + h <= m->z + m->h)
+    {
+        for (j = 0; j < h; j++)
+        {
+            memcpy(out + j*w, m->ids + (int64_t)(z - m->z + j) * m->w + (x - m->x),
+                w * sizeof(int));
+        }
+        return 0;
+    }
+
+    int err = mapDeepOceanArea(l, out, x, z, w, h);
+    if (err != 0)
+        return err; // e.g. a filter layer above stopped early
+
+    if ((int64_t)w * h <= DEEP_OCEAN_MEMO_MAX)
+    {
+        m->l = l;
+        m->startSeed = l->startSeed;
+        m->startSalt = l->startSalt;
+        m->mc = l->mc;
+        m->x = x; m->z = z; m->w = w; m->h = h;
+        memcpy(m->ids, out, (size_t)w * h * sizeof(int));
+    }
+    return 0;
+}
+
+static int mapDeepOceanArea(const Layer * l, int * out, int x, int z, int w, int h)
 {
     int pX = x - 1;
     int pZ = z - 1;
@@ -1908,12 +1982,12 @@ void mapVoronoiPlane(uint64_t sha, int *out, int *src,
 
 int mapVoronoi(const Layer * l, int * out, int x, int z, int w, int h)
 {
-    x -= 2;
-    z -= 2;
-    int px = x >> 2;
-    int pz = z >> 2;
-    int pw = ((x + w) >> 2) - px + 2;
-    int ph = ((z + h) >> 2) - pz + 2;
+    // 1.15 - 1.17 overworld: the column zoomer of vanilla, i.e. the 3D voronoi
+    // access of the 1:4 biomes at block y = 0 (verified against 1.16.5).
+    int px = (x - 2) >> 2;
+    int pz = (z - 2) >> 2;
+    int pw = ((x - 2 + w) >> 2) - px + 2;
+    int ph = ((z - 2 + h) >> 2) - pz + 2;
 
     if (l->p)
     {
@@ -1924,7 +1998,10 @@ int mapVoronoi(const Layer * l, int * out, int x, int z, int w, int h)
 
     int *src = out + (int64_t)w*h;
     memmove(src, out, sizeof(int)*pw*ph);
-    mapVoronoiPlane(l->startSalt, out, src, x,z,w,h, 0, px,pz,pw,ph);
+    // mapVoronoiPlane() shifts the block coordinates itself and evaluates the
+    // cell layers y-1 and y (after its own shift by 2) at the fraction of a
+    // block y with (y-2) & 3 == 2: the argument 2 is block y = 0.
+    mapVoronoiPlane(l->startSalt, out, src, x,z,w,h, 2, px,pz,pw,ph);
 
     return 0;
 }

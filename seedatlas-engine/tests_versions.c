@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if STRUCT_CONFIG_OVERRIDE
@@ -194,6 +195,207 @@ static void testBiomeFilterClimateBounds(void)
     }
     assert(differ == 0);
     assert(skipping > 0);
+}
+
+/* 1.15 - 1.17 overworld at 1:1: vanilla's column zoomer, i.e. the voronoi
+ * access of the 1:4 biomes at block y = 0. Reference from a vanilla 1.16.5
+ * dedicated server (server jar sha1 1b557e7b033b583cd9f66746b7a9ab1ec1673ced):
+ * the biome at each block was tested with "execute positioned x y z if
+ * predicate" and location_check predicates, at y = 10, 100 or 190 (the result
+ * does not depend on y). 209 of the 354 points are where the previous, doubly
+ * shifted voronoi access gave another biome. All points lie within 112 blocks
+ * of the origin. */
+static const struct { int64_t seed; int x, z, id; } g_vanilla_1_16_5[] = {
+    {12345LL, 65, -107, taiga_mountains}, {12345LL, -45, -106, taiga}, {12345LL, -35, -106, taiga_mountains},
+    {12345LL, 45, -106, taiga_mountains}, {12345LL, 48, -106, taiga_mountains}, {12345LL, -61, -100, taiga},
+    {12345LL, 74, -100, taiga}, {12345LL, -40, -99, taiga_mountains}, {12345LL, -99, -95, taiga_mountains},
+    {12345LL, -94, -93, taiga_mountains}, {12345LL, -92, -88, taiga}, {12345LL, -43, -88, taiga_mountains},
+    {12345LL, -42, -88, taiga_mountains}, {12345LL, 36, -88, taiga_mountains}, {12345LL, 66, -88, taiga_mountains},
+    {12345LL, 85, -88, taiga_mountains}, {12345LL, -108, -87, taiga_mountains}, {12345LL, 78, -86, taiga_mountains},
+    {12345LL, -77, -85, taiga_mountains}, {12345LL, 56, -85, taiga_mountains}, {12345LL, -84, -83, taiga_mountains},
+    {12345LL, -42, -80, taiga_mountains}, {12345LL, -45, -79, taiga_mountains}, {12345LL, -46, -77, taiga_mountains},
+    {12345LL, -50, -76, taiga_mountains}, {12345LL, -54, -74, taiga_mountains}, {12345LL, -56, -73, taiga_mountains},
+    {12345LL, -58, -71, taiga_mountains}, {12345LL, -63, -68, taiga_mountains}, {12345LL, -59, -68, taiga_mountains},
+    {12345LL, 26, -68, taiga_mountains}, {12345LL, 110, -66, taiga_mountains}, {12345LL, 16, -64, taiga_mountains},
+    {12345LL, 39, -59, taiga_mountains}, {12345LL, -1, -55, taiga_mountains}, {12345LL, 111, -55, taiga},
+    {12345LL, 109, -51, taiga}, {12345LL, 21, -50, taiga_mountains}, {12345LL, 95, -49, taiga_mountains},
+    {12345LL, 108, -47, taiga}, {12345LL, -104, -46, taiga_mountains}, {12345LL, 85, -40, taiga_mountains},
+    {12345LL, -71, -38, taiga_mountains}, {12345LL, 105, -37, taiga}, {12345LL, 47, -34, taiga_mountains},
+    {12345LL, -80, -30, taiga_mountains}, {12345LL, -4, -30, taiga_mountains}, {12345LL, 34, -28, taiga_mountains},
+    {12345LL, 45, -28, taiga_mountains}, {12345LL, -1, -24, taiga_mountains}, {12345LL, 14, -24, taiga_mountains},
+    {12345LL, 40, -23, taiga_mountains}, {12345LL, -67, -12, taiga_mountains}, {12345LL, 27, -12, taiga_mountains},
+    {12345LL, -35, -10, taiga_mountains}, {12345LL, -25, -10, taiga_mountains}, {12345LL, -38, -5, taiga_mountains},
+    {12345LL, 94, 3, taiga_mountains}, {12345LL, -55, 7, taiga_mountains}, {12345LL, -24, 15, mountains},
+    {12345LL, 0, 16, taiga_mountains}, {12345LL, 8, 16, mountains}, {12345LL, -25, 18, mountains},
+    {12345LL, -51, 19, taiga_mountains}, {12345LL, -56, 20, taiga_mountains}, {12345LL, -29, 20, mountains},
+    {12345LL, -27, 21, mountains}, {12345LL, 10, 21, taiga_mountains}, {12345LL, -32, 25, mountains},
+    {12345LL, -31, 26, mountains}, {12345LL, -30, 26, mountains}, {12345LL, 11, 31, taiga_mountains},
+    {12345LL, -33, 32, mountains}, {12345LL, -32, 34, mountains}, {12345LL, 10, 36, mountains},
+    {12345LL, -97, 37, taiga_mountains}, {12345LL, -82, 39, taiga_mountains}, {12345LL, -47, 39, mountains},
+    {12345LL, -40, 39, mountains}, {12345LL, 34, 39, taiga_mountains}, {12345LL, -51, 41, mountains},
+    {12345LL, -81, 43, mountains}, {12345LL, -54, 44, mountains}, {12345LL, -52, 44, mountains},
+    {12345LL, -81, 45, taiga_mountains}, {12345LL, -62, 46, mountains}, {12345LL, -88, 47, mountains},
+    {12345LL, 62, 47, taiga_mountains}, {12345LL, 19, 48, taiga_mountains}, {12345LL, -88, 49, taiga_mountains},
+    {12345LL, -28, 49, mountains}, {12345LL, 99, 49, taiga_mountains}, {12345LL, 12, 51, taiga_mountains},
+    {12345LL, 13, 51, taiga_mountains}, {12345LL, -106, 52, taiga_mountains}, {12345LL, -90, 52, mountains},
+    {12345LL, 11, 52, taiga_mountains}, {12345LL, 45, 53, taiga_mountains}, {12345LL, 44, 54, taiga_mountains},
+    {12345LL, 105, 54, taiga_mountains}, {12345LL, 14, 56, mountains}, {12345LL, 18, 56, taiga_mountains},
+    {12345LL, -85, 57, mountains}, {12345LL, 100, 57, taiga_mountains}, {12345LL, 18, 58, taiga_mountains},
+    {12345LL, 40, 79, taiga_mountains}, {12345LL, 79, 81, mountains}, {12345LL, 89, 81, mountains},
+    {12345LL, 92, 81, mountains}, {12345LL, 79, 83, mountains}, {12345LL, 45, 85, mountains},
+    {12345LL, 49, 85, taiga_mountains}, {12345LL, 73, 85, mountains}, {12345LL, 75, 85, mountains},
+    {12345LL, 104, 85, taiga_mountains}, {12345LL, 43, 86, mountains}, {12345LL, 52, 89, mountains},
+    {12345LL, 59, 93, mountains}, {12345LL, 59, 94, mountains}, {-4172144997902289642LL, -43, -108, frozen_river},
+    {-4172144997902289642LL, -91, -106, snowy_tundra}, {-4172144997902289642LL, -21, -104, plains}, {-4172144997902289642LL, -34, -101, snowy_tundra},
+    {-4172144997902289642LL, 42, -101, plains}, {-4172144997902289642LL, -97, -99, snowy_tundra}, {-4172144997902289642LL, -49, -98, snowy_tundra},
+    {-4172144997902289642LL, 111, -98, snowy_tundra}, {-4172144997902289642LL, -22, -96, river}, {-4172144997902289642LL, -19, -96, plains},
+    {-4172144997902289642LL, 92, -96, snowy_tundra}, {-4172144997902289642LL, -106, -95, snowy_tundra}, {-4172144997902289642LL, -104, -95, snowy_tundra},
+    {-4172144997902289642LL, 89, -95, snowy_tundra}, {-4172144997902289642LL, -24, -93, river}, {-4172144997902289642LL, 76, -92, snowy_tundra},
+    {-4172144997902289642LL, -17, -91, snowy_mountains}, {-4172144997902289642LL, 69, -90, plains}, {-4172144997902289642LL, -13, -88, plains},
+    {-4172144997902289642LL, -31, -87, frozen_river}, {-4172144997902289642LL, -1, -87, plains}, {-4172144997902289642LL, 65, -87, snowy_tundra},
+    {-4172144997902289642LL, 30, -86, plains}, {-4172144997902289642LL, -40, -85, frozen_river}, {-4172144997902289642LL, -36, -85, river},
+    {-4172144997902289642LL, -27, -85, river}, {-4172144997902289642LL, -34, -81, snowy_mountains}, {-4172144997902289642LL, -29, -81, snowy_mountains},
+    {-4172144997902289642LL, -36, -79, snowy_mountains}, {-4172144997902289642LL, 10, -79, plains}, {-4172144997902289642LL, 55, -79, snowy_tundra},
+    {-4172144997902289642LL, 44, -75, plains}, {-4172144997902289642LL, 25, -74, snowy_mountains}, {-4172144997902289642LL, -49, -70, frozen_river},
+    {-4172144997902289642LL, 27, -70, snowy_mountains}, {-4172144997902289642LL, -38, -69, snowy_mountains}, {-4172144997902289642LL, 14, -69, snowy_mountains},
+    {-4172144997902289642LL, 13, -68, snowy_mountains}, {-4172144997902289642LL, 7, -67, snowy_mountains}, {-4172144997902289642LL, -41, -66, snowy_mountains},
+    {-4172144997902289642LL, 22, -66, snowy_mountains}, {-4172144997902289642LL, -47, -64, snowy_tundra}, {-4172144997902289642LL, -46, -63, snowy_mountains},
+    {-4172144997902289642LL, -44, -62, snowy_mountains}, {-4172144997902289642LL, -94, -61, snowy_tundra}, {-4172144997902289642LL, -55, -61, frozen_river},
+    {-4172144997902289642LL, -49, -60, river}, {-4172144997902289642LL, -40, -58, snowy_mountains}, {-4172144997902289642LL, -56, -56, frozen_river},
+    {-4172144997902289642LL, -34, -54, snowy_mountains}, {-4172144997902289642LL, 43, -53, snowy_mountains}, {-4172144997902289642LL, -40, -52, frozen_river},
+    {-4172144997902289642LL, -38, -52, frozen_river}, {-4172144997902289642LL, -44, -51, frozen_river}, {-4172144997902289642LL, -40, -51, frozen_river},
+    {-4172144997902289642LL, -33, -51, frozen_river}, {-4172144997902289642LL, -26, -51, river}, {-4172144997902289642LL, -54, -50, snowy_tundra},
+    {-4172144997902289642LL, -100, -48, snowy_tundra}, {-4172144997902289642LL, -40, -48, snowy_tundra}, {-4172144997902289642LL, -44, -47, snowy_tundra},
+    {-4172144997902289642LL, -27, -47, frozen_river}, {-4172144997902289642LL, -23, -45, river}, {-4172144997902289642LL, -29, -44, frozen_river},
+    {-4172144997902289642LL, -24, -44, river}, {-4172144997902289642LL, 48, -44, snowy_tundra}, {-4172144997902289642LL, 49, -44, snowy_tundra},
+    {-4172144997902289642LL, 61, -43, snowy_tundra}, {-4172144997902289642LL, -27, -42, snowy_tundra}, {-4172144997902289642LL, -13, -40, frozen_river},
+    {-4172144997902289642LL, 62, -39, snowy_tundra}, {-4172144997902289642LL, -63, -38, snowy_taiga}, {-4172144997902289642LL, -62, -38, snowy_taiga},
+    {-4172144997902289642LL, -16, -35, snowy_tundra}, {-4172144997902289642LL, -14, -35, snowy_tundra}, {-4172144997902289642LL, -26, -33, snowy_tundra},
+    {-4172144997902289642LL, 23, -32, snowy_tundra}, {-4172144997902289642LL, -1, -31, frozen_river}, {-4172144997902289642LL, -64, -30, snowy_taiga},
+    {-4172144997902289642LL, -3, -28, frozen_river}, {-4172144997902289642LL, 21, -25, snowy_tundra}, {-4172144997902289642LL, 5, -21, snowy_tundra},
+    {-4172144997902289642LL, 15, -21, snowy_tundra}, {-4172144997902289642LL, -3, -20, frozen_river}, {-4172144997902289642LL, -106, -18, snowy_taiga_hills},
+    {-4172144997902289642LL, -83, -18, snowy_taiga}, {-4172144997902289642LL, -87, -16, snowy_taiga}, {-4172144997902289642LL, -86, -15, snowy_taiga},
+    {-4172144997902289642LL, -1, -15, snowy_tundra}, {-4172144997902289642LL, 111, -15, snowy_tundra}, {-4172144997902289642LL, -87, -9, snowy_taiga_hills},
+    {-4172144997902289642LL, -46, -3, snowy_taiga}, {-4172144997902289642LL, 104, -3, snowy_tundra}, {-4172144997902289642LL, -45, -1, snowy_taiga},
+    {-4172144997902289642LL, 55, 0, snowy_tundra}, {-4172144997902289642LL, 84, 3, snowy_tundra}, {-4172144997902289642LL, 27, 4, snowy_tundra},
+    {-4172144997902289642LL, 71, 8, snowy_tundra}, {-4172144997902289642LL, 35, 15, snowy_tundra}, {-4172144997902289642LL, -108, 19, snowy_taiga_hills},
+    {-4172144997902289642LL, 78, 29, snowy_tundra}, {-4172144997902289642LL, -82, 31, snowy_taiga}, {-4172144997902289642LL, -54, 38, snowy_tundra},
+    {-4172144997902289642LL, 81, 39, snowy_tundra}, {-4172144997902289642LL, -20, 40, snowy_tundra}, {-4172144997902289642LL, 45, 40, snowy_tundra},
+    {-4172144997902289642LL, -23, 44, snowy_tundra}, {-4172144997902289642LL, -5, 46, snowy_tundra}, {-4172144997902289642LL, -55, 47, snowy_tundra},
+    {-4172144997902289642LL, -47, 48, snowy_tundra}, {-4172144997902289642LL, 98, 52, snowy_tundra}, {-4172144997902289642LL, -78, 64, snowy_tundra},
+    {-4172144997902289642LL, -10, 66, frozen_river}, {-4172144997902289642LL, 17, 68, snowy_tundra}, {-4172144997902289642LL, 42, 72, frozen_river},
+    {-4172144997902289642LL, 40, 84, snowy_tundra}, {-4172144997902289642LL, 26, 96, snowy_tundra}, {-4172144997902289642LL, 64, 98, snowy_tundra},
+    {-4172144997902289642LL, 30, 101, snowy_tundra}, {-4172144997902289642LL, 29, 104, snowy_tundra}, {3141592653589793LL, -74, -108, forest},
+    {3141592653589793LL, -98, -107, plains}, {3141592653589793LL, -86, -107, river}, {3141592653589793LL, -61, -106, plains},
+    {3141592653589793LL, 44, -106, plains}, {3141592653589793LL, -27, -105, forest}, {3141592653589793LL, 45, -105, plains},
+    {3141592653589793LL, -85, -103, river}, {3141592653589793LL, 43, -102, plains}, {3141592653589793LL, -84, -101, river},
+    {3141592653589793LL, -99, -100, river}, {3141592653589793LL, -53, -100, plains}, {3141592653589793LL, 38, -100, river},
+    {3141592653589793LL, -89, -99, river}, {3141592653589793LL, -106, -98, lukewarm_ocean}, {3141592653589793LL, -102, -98, river},
+    {3141592653589793LL, 44, -98, plains}, {3141592653589793LL, -101, -97, river}, {3141592653589793LL, -92, -96, beach},
+    {3141592653589793LL, -11, -95, forest}, {3141592653589793LL, -52, -94, forest}, {3141592653589793LL, -90, -93, beach},
+    {3141592653589793LL, -85, -93, plains}, {3141592653589793LL, 82, -92, river}, {3141592653589793LL, 66, -91, river},
+    {3141592653589793LL, 99, -91, river}, {3141592653589793LL, -101, -90, river}, {3141592653589793LL, -94, -89, beach},
+    {3141592653589793LL, -92, -89, beach}, {3141592653589793LL, -49, -89, forest}, {3141592653589793LL, 105, -89, plains},
+    {3141592653589793LL, -48, -88, forest}, {3141592653589793LL, 49, -88, river}, {3141592653589793LL, 108, -88, river},
+    {3141592653589793LL, 62, -86, river}, {3141592653589793LL, 89, -86, river}, {3141592653589793LL, -98, -84, beach},
+    {3141592653589793LL, -45, -84, plains}, {3141592653589793LL, -26, -84, forest}, {3141592653589793LL, 82, -83, plains},
+    {3141592653589793LL, -47, -82, plains}, {3141592653589793LL, 101, -82, river}, {3141592653589793LL, -102, -81, plains},
+    {3141592653589793LL, -73, -81, plains}, {3141592653589793LL, -101, -80, plains}, {3141592653589793LL, 93, -80, plains},
+    {3141592653589793LL, -96, -79, plains}, {3141592653589793LL, 87, -79, plains}, {3141592653589793LL, -103, -77, plains},
+    {3141592653589793LL, 64, -77, plains}, {3141592653589793LL, -46, -75, plains}, {3141592653589793LL, 59, -75, plains},
+    {3141592653589793LL, -108, -72, river}, {3141592653589793LL, 21, -72, forest}, {3141592653589793LL, 55, -72, plains},
+    {3141592653589793LL, -34, -70, forest}, {3141592653589793LL, 57, -70, plains}, {3141592653589793LL, 58, -70, plains},
+    {3141592653589793LL, 109, -70, plains}, {3141592653589793LL, -47, -69, plains}, {3141592653589793LL, 51, -69, forest},
+    {3141592653589793LL, -32, -68, forest}, {3141592653589793LL, 53, -68, plains}, {3141592653589793LL, -33, -67, forest},
+    {3141592653589793LL, 98, -65, plains}, {3141592653589793LL, -102, -64, river}, {3141592653589793LL, -106, -62, river},
+    {3141592653589793LL, 86, -61, plains}, {3141592653589793LL, -35, -56, forest}, {3141592653589793LL, 38, -56, plains},
+    {3141592653589793LL, -104, -55, plains}, {3141592653589793LL, -33, -55, plains}, {3141592653589793LL, -97, -53, plains},
+    {3141592653589793LL, -96, -53, plains}, {3141592653589793LL, -86, -53, plains}, {3141592653589793LL, 2, -52, forest},
+    {3141592653589793LL, -4, -50, forest}, {3141592653589793LL, 23, -50, plains}, {3141592653589793LL, -104, -48, river},
+    {3141592653589793LL, -23, -48, plains}, {3141592653589793LL, -19, -43, forest}, {3141592653589793LL, -20, -41, forest},
+    {3141592653589793LL, -22, -40, forest}, {3141592653589793LL, -101, -38, river}, {3141592653589793LL, 42, -38, plains},
+    {3141592653589793LL, -97, -37, river}, {3141592653589793LL, 11, -37, plains}, {3141592653589793LL, 14, -36, plains},
+    {3141592653589793LL, -85, -34, plains}, {3141592653589793LL, -83, -33, plains}, {3141592653589793LL, -92, -32, beach},
+    {3141592653589793LL, -80, -31, river}, {3141592653589793LL, 55, -30, plains}, {3141592653589793LL, 66, -29, plains},
+    {3141592653589793LL, -95, -15, river}, {3141592653589793LL, -21, -11, plains}, {3141592653589793LL, -9, -8, plains},
+    {3141592653589793LL, -4, 0, plains}, {3141592653589793LL, 96, 4, plains}, {3141592653589793LL, 64, 9, plains},
+    {3141592653589793LL, -86, 14, plains}, {3141592653589793LL, -89, 21, plains}, {3141592653589793LL, -26, 23, plains},
+    {3141592653589793LL, -77, 25, plains}, {3141592653589793LL, -55, 32, plains}, {3141592653589793LL, -35, 35, plains},
+    {3141592653589793LL, -11, 35, plains}, {3141592653589793LL, -35, 53, wooded_hills}, {3141592653589793LL, 32, 59, plains},
+    {3141592653589793LL, 8, 70, wooded_hills}, {3141592653589793LL, -94, 72, lukewarm_ocean}, {3141592653589793LL, 62, 73, forest},
+    {3141592653589793LL, -92, 85, lukewarm_ocean}, {3141592653589793LL, 44, 102, forest}, {3141592653589793LL, 36, 108, river},
+};
+
+static void testVoronoi1x1Vanilla(void)
+{
+    enum { X0 = -112, W = 224 };
+    int64_t seed = 0;
+    int *area = NULL;
+    Generator g;
+    setupGenerator(&g, MC_1_16_5, 0);
+    for (size_t i = 0; i < sizeof(g_vanilla_1_16_5) / sizeof(g_vanilla_1_16_5[0]); i++)
+    {
+        int x = g_vanilla_1_16_5[i].x, z = g_vanilla_1_16_5[i].z;
+        if (!area || seed != g_vanilla_1_16_5[i].seed)
+        {
+            seed = g_vanilla_1_16_5[i].seed;
+            applySeed(&g, DIM_OVERWORLD, (uint64_t) seed);
+            Range r = { 1, X0, X0, W, W, 0, 1 };
+            free(area);
+            area = allocCache(&g, r);
+            assert(area && genBiomes(&g, area, r) == 0);
+        }
+        assert(area[(z - X0) * W + (x - X0)] == g_vanilla_1_16_5[i].id);
+        assert(getBiomeAt(&g, 1, x, 64, z) == g_vanilla_1_16_5[i].id);
+    }
+    free(area);
+}
+
+/* getBiomeCentersEx(): the climate prefilter of 1.18+ only skips cells that
+ * cannot be the biome, so the result equals the search without it (the
+ * reference, getBiomeCentersUnfiltered()). */
+int getBiomeCentersUnfiltered(Pos *pos, int *siz, int nmax, Generator *g, Range r,
+    int match, int minsiz, int tol, volatile char *stop, int *status);
+
+static void testBiomeCentersPrefilter(void)
+{
+    static const int mcs[] = { MC_1_18, MC_NEWEST };
+    static const int biomes[] = { ocean, forest, river, cherry_grove };
+    static const int scales[] = { 4, 16, 1 };
+    enum { NMAX = 4096 };
+    static Pos p0[NMAX], p1[NMAX];
+    static int s0[NMAX], s1[NMAX];
+    for (size_t v = 0; v < sizeof(mcs) / sizeof(mcs[0]); v++)
+    {
+        Generator g;
+        setupGenerator(&g, mcs[v], 0);
+        applySeed(&g, DIM_OVERWORLD, 1234567 + v);
+        for (size_t s = 0; s < sizeof(scales) / sizeof(scales[0]); s++)
+        {
+            int sc = scales[s];
+            int w = sc == 1 ? 64 : (sc == 4 ? 100 : 50);
+            Range r = { sc, -w / 2 - 13, -w / 2 + 7, w, w, sc == 1 ? 64 : 16, 1 };
+            for (size_t b = 0; b < sizeof(biomes) / sizeof(biomes[0]); b++)
+            {
+                int tol = 1 + (int) (b % 3);
+                int st0, st1;
+                int n0 = getBiomeCentersUnfiltered(p0, s0, NMAX, &g, r, biomes[b],
+                    1, tol, NULL, &st0);
+                int n1 = getBiomeCentersEx(p1, s1, NMAX, &g, r, biomes[b],
+                    1, tol, NULL, &st1);
+                assert(st0 == 0 && st1 == 0);
+                assert(n0 == n1);
+                for (int i = 0; i < n0; i++)
+                {   // the same regions (listed in the order of their first cell)
+                    int k;
+                    for (k = 0; k < n1; k++)
+                        if (p1[k].x == p0[i].x && p1[k].z == p0[i].z && s1[k] == s0[i])
+                            break;
+                    assert(k < n1);
+                }
+            }
+        }
+    }
 }
 
 int main(void)
@@ -566,6 +768,8 @@ int main(void)
     testBiomeClimateBounds();
     testStructureBiomeChecks();
     testBiomeFilterClimateBounds();
+    testVoronoi1x1Vanilla();
+    testBiomeCentersPrefilter();
 
     puts("version, biome, and structure tests passed");
     return 0;

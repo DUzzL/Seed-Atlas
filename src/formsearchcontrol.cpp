@@ -154,7 +154,7 @@ FormSearchControl::FormSearchControl(MainWindow *parent)
     connect(ui->results->horizontalHeader(), &QHeaderView::sortIndicatorChanged, this, &FormSearchControl::onSort);
     ui->results->sortByColumn(-1, Qt::AscendingOrder);
 
-    connect(&sthread, &SearchMaster::searchResult, this, &FormSearchControl::searchResult);
+    connect(&sthread, &SearchMaster::searchResults, this, &FormSearchControl::searchResults);
     connect(&sthread, &SearchMaster::searchFinish, this, &FormSearchControl::searchFinish, Qt::QueuedConnection);
 
     connect(&stimer, &QTimer::timeout, this, QOverload<>::of(&FormSearchControl::progressTimeout));
@@ -508,11 +508,17 @@ void FormSearchControl::on_buttonStart_clicked()
             // keep the results: a changed filter has already discarded them,
             // so the list only holds seeds found up to the resume position
             if (!resultfile.fileName().isEmpty())
-            {
+            {   // the file holds the search and its results so far: the ones
+                // kept for a resumed search are written again after the header
                 resultfile.close();
-                resultfile.open(QIODevice::ReadWrite | QIODevice::Truncate | QIODevice::Text);
-                QTextStream stream(&resultfile);
-                session.writeHeader(stream);
+                if (resultfile.open(QIODevice::ReadWrite | QIODevice::Truncate | QIODevice::Text))
+                {
+                    QTextStream stream(&resultfile);
+                    session.writeHeader(stream);
+                    for (const SeedTableModel::Seed& s : std::as_const(model->seeds))
+                        stream << QString::asprintf("%" PRId64 "\n", (int64_t)s.seed);
+                    stream.flush();
+                }
             }
             ui->lineStart->setText(QString::asprintf("%" PRId64, (int64_t)session.sc.startseed));
             ui->buttonStart->setText(tr("Abort search"));
@@ -670,6 +676,7 @@ int FormSearchControl::pasteList(bool dummy)
     QStringList slist = clipboard->text().split('\n');
     std::vector<uint64_t> seeds;
 
+    int skipped = 0;
     for (QString s : std::as_const(slist))
     {
         s = s.trimmed();
@@ -677,16 +684,25 @@ int FormSearchControl::pasteList(bool dummy)
             continue;
         bool ok = true;
         uint64_t seed = (uint64_t) s.toLongLong(&ok);
+        if (!ok) // unsigned notation of a negative seed
+            seed = s.toULongLong(&ok);
         if (!ok)
-            return 0;
+        {   // lines that are no seeds are left out, and reported below
+            skipped++;
+            continue;
+        }
         seeds.push_back(seed);
     }
 
+    int added = 0;
     if (!seeds.empty())
+        added = searchResultsAdd(seeds, dummy);
+    if (!dummy && skipped)
     {
-        return searchResultsAdd(seeds, dummy);
+        ui->labelStatus->setText(tr("Pasted %n seed(s); ", "", added) +
+            tr("%n line(s) of the clipboard are no seeds and were skipped.", "", skipped));
     }
-    return 0;
+    return added;
 }
 
 void FormSearchControl::onSort(int, Qt::SortOrder)
@@ -711,19 +727,24 @@ void FormSearchControl::onSort(int, Qt::SortOrder)
     }
 }
 
-void FormSearchControl::searchResult(uint64_t seed)
+void FormSearchControl::searchResults(QVector<uint64_t> seeds)
 {
-    if (discardSearch)
+    if (discardSearch || seeds.empty())
         return;
     if (resultfile.isOpen())
     {
-        char s[32];
-        snprintf(s, sizeof(s), "%" PRId64 "\n", seed);
-        resultfile.write(s);
-        resultfile.flush();
+        QByteArray buf;
+        for (uint64_t seed : seeds)
+        {
+            char s[32];
+            snprintf(s, sizeof(s), "%" PRId64 "\n", (int64_t)seed);
+            buf += s;
+        }
+        resultfile.write(buf);
+        resultfile.flush(); // once per batch
     }
 
-    qbuf.push_back(seed);
+    qbuf.insert(qbuf.end(), seeds.begin(), seeds.end());
     if (ui->checkStop->isChecked())
     {
         searchResultsAdd(qbuf, false);

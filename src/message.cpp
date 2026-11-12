@@ -5,6 +5,15 @@
 #include <QStyle>
 #include <QTextStream>
 
+#include <stdio.h>
+#if defined(_WIN32)
+#include <io.h>
+#define isatty _isatty
+#define fileno _fileno
+#else
+#include <unistd.h>
+#endif
+
 
 static
 int term_prompt(const QString& title, const QString& text, QMessageBox::StandardButtons buttons)
@@ -45,15 +54,39 @@ int term_prompt(const QString& title, const QString& text, QMessageBox::Standard
         opts.push_back(std::make_pair(QApplication::translate("QPlatformTheme", "Close"), QMessageBox::Close));
     if (opts.size() <= 1)
         return buttons;
+    // Without an answer (no terminal, or the input ends) the prompt takes
+    // the cautious option: abort, cancel or no where there is one.
+    int fallback = opts[0].second;
+    for (int b : { QMessageBox::Abort, QMessageBox::Cancel, QMessageBox::No, QMessageBox::Close })
+    {
+        if (buttons & b)
+        {
+            fallback = b;
+            break;
+        }
+    }
     for (size_t i = 0; i < opts.size(); i++)
         out << QString("%1%2 [%3]").arg(i==0 ? "" : ", ").arg(opts[i].first).arg(i+1);
     out << ":";
     out.flush();
+    if (!isatty(fileno(stdin)))
+    {
+        out << " (no terminal input)\n";
+        out.flush();
+        return fallback;
+    }
     QTextStream in (stdin);
     uint num = 0;
     while (true)
     {
-        num = in.readLine().toUInt();
+        QString line;
+        if (!in.readLineInto(&line))
+        {   // end of input
+            out << "\n";
+            out.flush();
+            return fallback;
+        }
+        num = line.toUInt();
         if (num >= 1 && num <= opts.size())
             break;
         out << "Invalid option, try again: ";

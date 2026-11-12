@@ -100,6 +100,12 @@ if [[ ! -x "$binary" ]]; then
   echo "Missing Seed Atlas executable" >&2
   exit 1
 fi
+for license in LICENSE.txt LGPL-3.0.txt THIRD_PARTY_NOTICES.md LEGAL_NOTICE.md SOURCE_CODE.md; do
+  if [[ ! -s "$app_path/Contents/Resources/Licenses/$license" ]]; then
+    echo "Missing license file in the app: $license" >&2
+    exit 1
+  fi
+done
 if [[ "${SEED_ATLAS_REQUIRE_UNIVERSAL:-0}" == "1" ]]; then
   architectures=" $(lipo -archs "$binary") "
   if [[ "$architectures" != *" arm64 "* || \

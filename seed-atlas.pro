@@ -84,13 +84,41 @@ LUAPATH = $$PWD/lua/src
 
 TARGET = seed-atlas
 
-# Public packages pass the source commit as a machine-readable build ID (the
-# packaging scripts in installer/ do this). Other builds are "development"
-# builds: they never offer the update, which would remove the running copy.
+# The application version has one source: the file VERSION.txt, e.g. "4.3.0" for
+# a release or "4.3.dev0" for a development version (patch number -1 - N).
+# The packaging scripts and workflows read the same file.
+SEED_ATLAS_VERSION = $$cat($$PWD/VERSION.txt)
+SEED_ATLAS_VERSION = $$first(SEED_ATLAS_VERSION)
+SEED_ATLAS_VERSION_PARTS = $$split(SEED_ATLAS_VERSION, .)
+SEED_ATLAS_VERS_MAJOR = $$member(SEED_ATLAS_VERSION_PARTS, 0)
+SEED_ATLAS_VERS_MINOR = $$member(SEED_ATLAS_VERSION_PARTS, 1)
+SEED_ATLAS_VERS_PATCH = $$member(SEED_ATLAS_VERSION_PARTS, 2)
+contains(SEED_ATLAS_VERS_PATCH, "^dev[0-9]+$") {
+    SEED_ATLAS_VERS_DEV = $$replace(SEED_ATLAS_VERS_PATCH, "^dev", "")
+    SEED_ATLAS_VERS_PATCH = -$$num_add($$SEED_ATLAS_VERS_DEV, 1)
+}
+!contains(SEED_ATLAS_VERS_MAJOR, "^[0-9]+$")|!contains(SEED_ATLAS_VERS_MINOR, "^[0-9]+$")|!contains(SEED_ATLAS_VERS_PATCH, "^-?[0-9]+$") {
+    error("VERSION must hold MAJOR.MINOR.PATCH or MAJOR.MINOR.devN, not \"$$SEED_ATLAS_VERSION\".")
+}
+DEFINES += SEED_ATLAS_VERS_MAJOR=$$SEED_ATLAS_VERS_MAJOR \
+           SEED_ATLAS_VERS_MINOR=$$SEED_ATLAS_VERS_MINOR \
+           SEED_ATLAS_VERS_PATCH=$$SEED_ATLAS_VERS_PATCH
+
+# Public packages pass the source commit as a machine-readable build ID and its
+# commit time (seconds since 1970) as the build time; the packaging scripts in
+# installer/ do this. Other builds are "development" builds without update
+# checks. The update check compares the build times to find a newer release.
 isEmpty(SEED_ATLAS_BUILD_ID) {
     SEED_ATLAS_BUILD_ID = development
 }
+isEmpty(SEED_ATLAS_BUILD_TIME) {
+    SEED_ATLAS_BUILD_TIME = 0
+}
+!contains(SEED_ATLAS_BUILD_TIME, "^[0-9]+$") {
+    error("SEED_ATLAS_BUILD_TIME must be the commit time in seconds since 1970.")
+}
 DEFINES += SEED_ATLAS_BUILD_ID=\\\"$$SEED_ATLAS_BUILD_ID\\\"
+DEFINES += SEED_ATLAS_BUILD_TIME=$${SEED_ATLAS_BUILD_TIME}LL
 
 SOURCES += \
         $$LUAPATH/lapi.c \

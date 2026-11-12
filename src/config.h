@@ -18,6 +18,13 @@ inline QString appSettingsId()
     const QByteArray testId = qgetenv("SEED_ATLAS_TEST_SETTINGS_ID");
     return testId.isEmpty() ? QStringLiteral(APP_STRING) : QString::fromLocal8Bit(testId);
 }
+
+// The folder of the files next to the settings: the automatic session, its
+// backup and the Lua scripts. Test runs that select their own settings (with
+// SEED_ATLAS_TEST_SETTINGS_DIR or SEED_ATLAS_TEST_SETTINGS_ID) get their own
+// folder, so they never touch the files of the real installation. The folder
+// is created if it does not exist.
+QString appConfigDir();
 #define APP_DISPLAY_NAME "Seed Atlas"
 
 #define PRECOMPUTE48_BUFSIZ ((int64_t)1 << 30)
@@ -38,6 +45,9 @@ struct ExtGenConfig
     void save(QSettings& settings);
     void load() { QSettings s(appSettingsId(), appSettingsId()); load(s); }
     void save() { QSettings s(appSettingsId(), appSettingsId()); save(s); }
+
+    // the settings that change generated worlds (not experimentalVers)
+    bool sameGeneration(const ExtGenConfig& o) const;
 };
 
 extern unsigned char g_biomeColors[256][3];
@@ -46,8 +56,16 @@ extern unsigned char g_tempsColors[256][3];
 extern qreal g_fontscale;
 extern qreal g_iconscale;
 
-// Keep the extended generator settings in global scope.
+// Keep the extended generator settings in global scope. g_extgen belongs to
+// the GUI thread (or to the start of a headless run); worker threads read the
+// published copy of activeExtGen() instead, which never changes while they
+// hold it. Call publishExtGen() after changing g_extgen.
 extern ExtGenConfig g_extgen;
+void publishExtGen();
+const ExtGenConfig& activeExtGen();
+// Replaces g_extgen with the generation settings of a session (keeping the
+// experimental versions option) and publishes the result.
+void applyExtGen(const ExtGenConfig& extgen);
 
 
 struct WorldInfo
@@ -252,6 +270,12 @@ struct SearchConfig
     bool stoponres;
     uint64_t smin;
     uint64_t smax;
+    // World generation settings the results depend on. reset() takes the
+    // current g_extgen; a session file overrides them only with lines it
+    // actually contains, which are written only for values that differ from
+    // the defaults (so default sessions stay readable by older versions).
+    ExtGenConfig extgen;
+    bool extgenSaltsRead;
 
     SearchConfig() { reset(); }
 

@@ -102,7 +102,10 @@ void MapView::setSeed(WorldInfo wi, int dim, LayerOpt lopt)
     velx = velz = 0;
     this->lopt = lopt;
 
-    if (world == NULL || !wi.equals(world->wi) ||
+    WorldInfo sameY = wi;
+    if (world)
+        sameY.y = world->wi.y;
+    if (world == NULL || !sameY.equals(world->wi) ||
         world->lopt.mode == LOPT_STRUCTS || lopt.mode == LOPT_STRUCTS)
     {
         deleteWorld();
@@ -110,9 +113,13 @@ void MapView::setSeed(WorldInfo wi, int dim, LayerOpt lopt)
         QObject::connect(world, &QWorld::update, this, &MapView::mapUpdate);
         world->setBiomeHighlights(biomeHighlights);
     }
-    else if (world->dim != dim || world->lopt.activeDifference(lopt))
+    else
     {
-        world->setDim(dim, lopt);
+        // a new y level only invalidates the tiles that depend on it
+        if (world->wi.y != wi.y)
+            world->setY(wi.y);
+        if (world->dim != dim || world->lopt.activeDifference(lopt))
+            world->setDim(dim, lopt);
     }
     settingsToWorld();
     update(2);

@@ -5,7 +5,7 @@ macOS-DMG und Linux-Flatpak bauen, auf GitHub austauschen und mit `update.json`
 die Update-Meldung in bereits installierten Apps auslösen. Eine fortlaufende
 öffentliche Versionsnummer ist dafür nicht erforderlich.
 
-Die Beispiele entsprechen dem Stand vom 10. September 2026. Sie bauen ohne
+Die Beispiele entsprechen dem Stand vom 11. November 2026. Sie bauen ohne
 Publisher-Signaturen und ohne Notarisierung. Alle Build-Befehle werden im
 Projektverzeichnis ausgeführt, sofern nicht anders angegeben.
 
@@ -16,7 +16,8 @@ Projektverzeichnis ausgeführt, sofern nicht anders angegeben.
 2. Genau eine neue interne Build-ID festlegen und für alle drei Builds verwenden.
 3. Die drei Installer mit den unten beschriebenen Skripten bauen. Jedes Skript
    erzeugt auch eine passende `dist/update.json`.
-4. Prüfen, dass die drei erzeugten Manifestdateien dieselbe `buildId` enthalten.
+4. Prüfen, dass die drei erzeugten Manifestdateien dieselbe `buildId` und
+   dieselbe `buildTime` enthalten.
    Installer auf den Zielsystemen testen, einschließlich des Update-Checks.
 5. Die bisherigen vier Release-Dateien als zusammengehöriges Backup aufbewahren.
 6. Auf der GitHub-Release-Seite zuerst die drei Installer ersetzen und ihre
@@ -34,15 +35,28 @@ Diese drei Angaben erfüllen unterschiedliche Aufgaben:
 
 | Angabe | Beispiel | Bedeutung für den Updater |
 | --- | --- | --- |
-| Seed-Atlas-App-/Paketversion | `4.3.dev0` | Nicht für den Update-Vergleich verwendet. |
+| Seed-Atlas-App-/Paketversion | `4.3.dev0` | Steht nur in `VERSION.txt`. Wird im Update-Dialog angezeigt, aber nicht verglichen. |
 | Unterstützte Minecraft-Version | `26.3` | Auswahl für die Weltgenerierung, keine Update-Kennung. |
 | Interne Build-ID | 40 hexadezimale Zeichen | Wird in die App eingebaut und mit GitHub verglichen. |
+| Build-Zeit | Commit-Zeit in Sekunden seit 1970 | Ordnet die Builds: Ein Update wird nur angeboten, wenn der veröffentlichte Build neuer ist. |
+
+Die App-Version hat genau eine Quelle: die Datei `VERSION.txt` im
+Projektverzeichnis (z. B. `4.3.0` oder `4.3.dev0`). `seed-atlas.pro`, die drei
+Packaging-Skripte und die Release-Workflows lesen sie von dort. Beim Wechsel der
+Version außerdem in `etc/org.seedatlas.SeedAtlas.metainfo.xml` einen neuen
+obersten `<release>`-Eintrag anlegen; der CI-Job `packaging-metadata` prüft, dass
+beide übereinstimmen.
 
 Du kannst die Installer weiterhin unter gleichbleibenden Namen hochladen und
 die Paketversion beibehalten. Auch ein Release-Tag muss für den Vergleich nicht
 hochgezählt werden. Die interne Build-ID muss sich bei einem neuen App-Stand
-aber ändern. Der Versionsparameter der Packaging-Skripte ersetzt diese ID nicht
-und ändert nicht automatisch die im Quellcode hinterlegte App-Versionsanzeige.
+aber ändern. Der optionale Versionsparameter der Packaging-Skripte ersetzt diese
+ID nicht; ohne ihn verwenden die Skripte `VERSION.txt`.
+
+Die Build-Zeit ermitteln die Skripte aus der Commit-Zeit der Build-ID
+(`git show -s --format=%ct`). Bei Möglichkeit B (eigene Kennung) zusätzlich
+`SEED_ATLAS_BUILD_TIME` setzen, z. B. `date +%s` beim Festlegen der Kennung,
+und auf allen drei Rechnern denselben Wert verwenden.
 
 ### Möglichkeit A: Git-Commit als Build-ID
 
@@ -114,12 +128,12 @@ Runtime-/SDK-Paar 6.10 aus dem Manifest.
 Verwende einen vollständigen Checkout oder das mitgelieferte Quellarchiv:
 
 ```sh
-unzip Seed-Atlas-4.3.dev0-Source.zip
-cd Seed-Atlas-4.3.dev0-Source
+unzip Seed-Atlas-<version>-Source.zip
+cd Seed-Atlas-<version>-Source
 ```
 
 Beim Quellarchiv fehlt die Git-Historie; daher vor dem Packaging eine explizite
-`SEED_ATLAS_BUILD_ID` nach Abschnitt 2 setzen.
+`SEED_ATLAS_BUILD_ID` und `SEED_ATLAS_BUILD_TIME` nach Abschnitt 2 setzen.
 
 Für jedes Betriebssystem eine eigene, frische Quellkopie verwenden. Insbesondere
 keinen bereits kompilierten Quellordner zwischen Windows, macOS und Linux teilen:
@@ -153,6 +167,15 @@ Die Engine-Makefile setzt `-fwrapv` selbst; die App-Builds erhalten dort immer
 `-O3`. Auf Windows die Tests mit dem passenden MinGW-Compiler und
 `mingw32-make` bauen und die erzeugte `test-versions.exe` ausführen.
 
+Die App selbst prüft das Skript `.github/workflows/app-tests.sh` (wie in der
+CI): bekannte Seeds für mehrere Beispielfilter, Sitzungs-Roundtrip und eine
+fehlerhafte Sitzung bei geschlossener Standardeingabe. Aufruf mit dem gebauten
+Executable, z. B. auf macOS:
+
+```sh
+bash .github/workflows/app-tests.sh "$PWD/build/seed-atlas.app/Contents/MacOS/seed-atlas"
+```
+
 Zusätzlich die fertig installierte GUI auf den Zielbetriebssystemen starten:
 Versionsauswahl, Karte, Struktur-Icons, gespeicherte Sitzung und Update-Dialog
 prüfen. Ein erfolgreicher Compilerlauf oder ein Test unter Wine ersetzt keinen
@@ -170,13 +193,15 @@ SEED_ATLAS_TEST_SETTINGS_DIR="$first_run_dir/settings" \
 SEED_ATLAS_UPDATE_URL="file://$first_run_dir/missing-update.json" \
 SEED_ATLAS_UI_TEST_EMPTY_FIRST_RUN=1 \
 SEED_ATLAS_UI_SNAPSHOT="$first_run_dir/firstrun.png" \
-  "dist/seed-atlas.app/Contents/MacOS/seed-atlas" \
-  --session="$first_run_dir/session.save"
+  "dist/seed-atlas.app/Contents/MacOS/seed-atlas"
 echo "Exit-Code: $?"
 ```
 
-Vorher die Testeinstellungen entfernen, damit wirklich ein Erststart simuliert
-wird (macOS: `defaults delete com.seed-atlas-uitest.seed-atlas-uitest`). Der
+Mit `SEED_ATLAS_TEST_SETTINGS_DIR` liegen auch automatische Sitzung, deren
+Sicherung (`session.save.bak`) und die Lua-Skripte in diesem Verzeichnis; die
+Sitzung der normalen Installation bleibt unberührt. Vorher die Testeinstellungen
+entfernen, damit wirklich ein Erststart simuliert wird (macOS:
+`defaults delete com.seed-atlas-uitest.seed-atlas-uitest`). Der
 gleiche Aufruf eignet sich auch auf Windows und Linux mit dem jeweils
 installierten Executable.
 
@@ -191,28 +216,29 @@ In PowerShell, nach Festlegung der Build-ID:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File installer/windows/build-installer.ps1 `
-  -Version 4.3.dev0 `
   -QtBin "C:\Qt\6.8.3\mingw_64\bin" `
   -MingwBin "C:\Qt\Tools\mingw1310_64\bin" `
   -InnoCompiler "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
 ```
 
-Das Skript kompiliert die App, bündelt Qt-/MinGW-Laufzeitdateien mit
-`windeployqt`, erstellt das Quellarchiv und baut den Inno-Setup-Installer.
+Das Skript liest die Version aus `VERSION.txt` (ein `-Version` überschreibt
+sie), kompiliert die App, bündelt Qt-/MinGW-Laufzeitdateien mit `windeployqt`,
+legt die Lizenztexte in `Licenses` ab, erstellt das Quellarchiv (inklusive
+`seedatlas-sax/` und `tools/`) und baut den Inno-Setup-Installer.
 Eine Authenticode-Signatur wird nicht erzeugt.
 
 Ergebnisse:
 
 ```text
-dist/Seed-Atlas-4.3.dev0-Windows-x64-Setup.exe
-dist/Seed-Atlas-4.3.dev0-Windows-x64-Portable/
-dist/Seed-Atlas-4.3.dev0-Source.zip
+dist/Seed-Atlas-<version>-Windows-x64-Setup.exe
+dist/Seed-Atlas-<version>-Windows-x64-Portable/
+dist/Seed-Atlas-<version>-Source.zip
 dist/update.json
 ```
 
-Für den regulären Download die Setup-EXE verwenden. Die portable Ausgabe hat
-keinen Uninstaller und kann deshalb nicht denselben Selbstentfernungsablauf
-ausführen. Beim normalen Installer bleiben App-ID und Installationsziel stabil.
+Für den regulären Download die Setup-EXE verwenden. Beim normalen Installer
+bleiben App-ID und Installationsziel stabil; ein neuer Installer aktualisiert
+eine bestehende Installation an Ort und Stelle.
 
 ## 5. macOS: universelle unsigned `.dmg`
 
@@ -244,17 +270,17 @@ export QT_PREFIX="$PWD/build-tools/Qt/6.8.3/macos"
 export SEED_ATLAS_UNIVERSAL=1
 export SEED_ATLAS_UNSIGNED=1
 unset SEED_ATLAS_BUILD_ONLY SEED_ATLAS_PACKAGE_ONLY
-bash installer/macos/build-dmg.sh 4.3.dev0
+bash installer/macos/build-dmg.sh
 
 SEED_ATLAS_UNSIGNED=1 SEED_ATLAS_REQUIRE_UNIVERSAL=1 \
   bash installer/macos/verify-dmg.sh \
-  dist/Seed-Atlas-4.3.dev0-macOS-UNSIGNED.dmg
+  dist/Seed-Atlas-<version>-macOS-UNSIGNED.dmg
 ```
 
 Ergebnisse:
 
 ```text
-dist/Seed-Atlas-4.3.dev0-macOS-UNSIGNED.dmg
+dist/Seed-Atlas-<version>-macOS-UNSIGNED.dmg
 dist/update.json
 ```
 
@@ -265,10 +291,10 @@ Silicon. Das ist keine Publisher-Signatur und keine Apple-Freigabe. Die Datei
 nicht als signiert oder notarisiert bewerben.
 
 Das Prüfskript kontrolliert unter anderem beide Architekturen, die Integrität
-des App-Bundles und das Finder-Layout mit Hintergrund und Applications-Link.
-Zum Installationstest `Seed Atlas.app` aus dem DMG nach Applications ziehen
-und die installierte Kopie starten. Nicht direkt aus dem schreibgeschützten
-DMG auf Selbstentfernung testen.
+des App-Bundles, die Lizenztexte in `Contents/Resources/Licenses` und das
+Finder-Layout mit Hintergrund und Applications-Link. Zum Installationstest
+`Seed Atlas.app` aus dem DMG nach Applications ziehen und die installierte
+Kopie starten.
 
 `SEED_ATLAS_BUILD_ONLY=1` kompiliert nur und erzeugt noch kein vollständiges
 Release-Paket mit Manifest. `SEED_ATLAS_PACKAGE_ONLY=1` verpackt ein vorhandenes
@@ -290,8 +316,8 @@ Den identischen Quellstand in ein eigenes Verzeichnis innerhalb des Linux-
 Dateisystems kopieren und dort dieselbe Build-ID setzen. Anschließend:
 
 ```sh
-bash installer/flatpak/build-flatpak.sh 4.3.dev0
-flatpak install --user ./dist/Seed-Atlas-4.3.dev0-Linux-x86_64.flatpak
+bash installer/flatpak/build-flatpak.sh
+flatpak install --user ./dist/Seed-Atlas-<version>-Linux-x86_64.flatpak
 flatpak run org.seedatlas.SeedAtlas
 ```
 
@@ -301,7 +327,7 @@ und ausreichend Platz für SDK, Runtime und Build benötigt. Es erzeugt ohne
 GPG-Signatur:
 
 ```text
-dist/Seed-Atlas-4.3.dev0-Linux-x86_64.flatpak
+dist/Seed-Atlas-<version>-Linux-x86_64.flatpak
 dist/update.json
 ```
 
@@ -310,17 +336,18 @@ ein eigener Architektur-Download, kein Ersatz für ein x86_64-Paket. Das Bundle
 enthält einen Verweis auf Flathub zum Nachladen der Runtime, nicht die gesamte
 Runtime selbst.
 
-Für den derzeitigen Update-Ablauf mit `--user` installieren. Die automatische
-Entfernung ruft ebenfalls `flatpak uninstall --user` auf und ist nicht für eine
-systemweite Installation ausgelegt.
+Eine neuere Bundle-Datei mit `flatpak install --user` ersetzt die installierte
+Version derselben App-ID.
 
 ### Hinweis zu GitHub Actions
 
-Der vorhandene Workflow [Native packages](.github/workflows/native-packages.yml)
-baut derzeit Linux und macOS, nicht Windows. Sein macOS-Job verlangt Signier-
-und Notarisierungs-Secrets. Er ist daher nicht ohne Anpassung ein unsigned
-Drei-Plattform-Builder. Er führt derzeit auch nicht die obige Engine-Testfolge
-aus. Für den hier beschriebenen Ablauf die lokalen Packaging-Skripte verwenden;
+Der Workflow [Tests](.github/workflows/tests.yml) läuft bei jedem Push und Pull
+Request: Engine-Tests auf Linux, macOS und Windows, Mod-ABI-Tests, ein
+App-Build auf allen drei Systemen mit `app-tests.sh` und ein Linux-Build mit
+AddressSanitizer/UBSan. [Unsigned release](.github/workflows/unsigned-release.yml)
+baut alle drei Pakete (manuell oder bei Push auf einen `release-*`-Branch).
+[Native packages](.github/workflows/native-packages.yml) baut Linux und macOS,
+nicht Windows; sein macOS-Job verlangt Signier- und Notarisierungs-Secrets. Für den hier beschriebenen Ablauf die lokalen Packaging-Skripte verwenden;
 Details zur optionalen signierten Variante stehen in
 [installer/PACKAGING.md](installer/PACKAGING.md).
 
@@ -328,33 +355,31 @@ Details zur optionalen signierten Variante stehen in
 
 ### Dateiformat und Erzeugung
 
-Die Datei ist ein normales JSON-Objekt mit genau einer benötigten Eigenschaft:
+Die Packaging-Skripte schreiben ein JSON-Objekt dieser Form:
 
 ```json
 {
-  "buildId": "ff6308982ac37052c97f9fb19349f85a992f2361"
+  "buildId": "ff6308982ac37052c97f9fb19349f85a992f2361",
+  "buildTime": 1762851234,
+  "version": "4.3.0"
 }
 ```
 
-Das ist die Kennung des lokal erstellten 26.3-Installer-Satzes, kein Platzhalter
-für alle zukünftigen Updates. Bei einer neuen Veröffentlichung muss hier deren
-eigene Kennung stehen.
+- `buildId` (Pflicht): genau 40 hexadezimale Zeichen. Builds vor 4.3 lesen nur
+  dieses Feld und vergleichen es auf Gleichheit; die zusätzlichen Felder stören
+  sie nicht.
+- `buildTime` (ab 4.3): Commit-Zeit des Builds in Sekunden seit 1970. Damit
+  erkennt die App, ob der veröffentlichte Build neuer ist als sie selbst.
+- `version`: wird im Update-Dialog angezeigt, aber nicht verglichen.
 
-`buildId` ist eine Zeichenkette mit genau 40 hexadezimalen Zeichen. Schreibweise
-des Feldnamens beachten; kein `buildID`, keine Versionsnummer wie `26.3`, keine
-Kommentare und kein zusätzliches Komma nach dem letzten Feld. Die Skripte
-schreiben gültiges UTF-8-JSON automatisch. Normalerweise nicht von Hand erstellen.
+Normalerweise nicht von Hand erstellen. Jedes der drei Packaging-Skripte
+verwendet dieselbe ID und Build-Zeit beim Kompilieren und für seine
+`dist/update.json`. Deshalb genügt für GitHub eine der drei Dateien, aber nur,
+wenn alle drei übereinstimmen. Die Datei entsteht erst am Ende eines
+erfolgreichen Packaging-Laufs.
 
-Jedes der drei Packaging-Skripte verwendet dieselbe ermittelte ID sowohl beim
-Kompilieren als auch für seine `dist/update.json`. Deshalb genügt für GitHub
-eine der drei Dateien, aber nur, wenn alle drei `buildId`-Werte übereinstimmen.
-Die Datei entsteht erst am Ende eines erfolgreichen Packaging-Laufs. Nach einem
-abgebrochenen Lauf kann in `dist/` noch eine Datei vom letzten Build liegen.
-
-Das Manifest enthält keine Installer-URLs, Betriebssystemliste, Release-Notizen,
-Datumsangabe, Versionsreihenfolge oder Download-Prüfsummen. Solche zusätzlichen
-Felder werden vom aktuellen Updater nicht ausgewertet. Die Build-ID ist auch
-keine kryptografische Überprüfung des heruntergeladenen Installers.
+Das Manifest enthält keine Installer-URLs, Prüfsummen oder Signaturen. Die App
+lädt nichts herunter und führt nichts aus; sie öffnet nur die Release-Seite.
 
 ### Wo die App nachschaut
 
@@ -374,88 +399,44 @@ Die App greift ohne GitHub-Anmeldung zu. Release und Downloads müssen deshalb
 Adressen im Updater berücksichtigt werden; ein Feld in `update.json` kann den
 fest eingebauten Link des Update-Buttons nicht ändern.
 
-### Der Vergleich ist ausschließlich „gleich oder verschieden“
+### Der Vergleich
 
 Bei aktivierter Einstellung prüft die GUI einmal nach jedem Start asynchron
-das Manifest. Ein laufendes Programm fragt nicht regelmäßig erneut ab.
+das Manifest. Manuell: `Menu → Help → Check for updates` (das Menü-Symbol der
+Werkzeugleiste enthält die früheren Menüs).
 
-Aktuelle UI-Einschränkung: Im Code existiert zusätzlich `Help → Check for
-updates`, aber das Hauptfenster leert und versteckt die Menüleiste. Diese Aktion
-ist daher in der derzeitigen Oberfläche nicht zugänglich. Zum erneuten Prüfen
-Startchecks aktivieren und die App neu starten. Ein sichtbarer manueller
-Update-Button wäre eine separate Codeänderung; diese Anleitung setzt ihn nicht
-voraus.
-
-| Eingebaute ID | ID auf GitHub | Ergebnis |
+| Eingebauter Build | Manifest auf GitHub | Ergebnis |
 | --- | --- | --- |
-| A | A | Kein Start-Popup. |
-| A | B | Update-Popup. |
-| B | A | Ebenfalls Update-Popup, auch wenn B tatsächlich neuer ist. |
-| Beliebige ID | Fehlende/ungültige Datei oder Netzwerkfehler | Beim Start still, kein Popup. |
-| `development` | Beliebige ID | Kein Update-Check für diesen Entwicklungsbuild. |
+| ID A | ID A | Kein Popup („up to date“ bei manueller Prüfung). |
+| ID A, Zeit t | ID B, Zeit > t | Update-Popup („newer build“). |
+| ID A, Zeit t | ID B, Zeit ≤ t | Kein Popup; manuell: „newer than the published release“. |
+| ID A | ID B ohne `buildTime` (Manifest vor 4.3) | Update-Popup („different build“), da keine Reihenfolge bekannt ist. |
+| Beliebig | Fehlende/ungültige Datei oder Netzwerkfehler | Beim Start still; manuell eine Fehlermeldung. |
+| `development` | Beliebig | Kein Update-Check für diesen Entwicklungsbuild. |
 
-A und B stehen hier für unterschiedliche gültige 40-stellige Kennungen.
-Die App prüft weder Git-Historie noch Zeitstempel oder semantische Versionen.
-Auch Groß-/Kleinschreibung kann beim Zeichenkettenvergleich einen Unterschied
-auslösen; deshalb überall exakt dieselbe kleingeschriebene ID verwenden.
-
-Die intern vorhandene manuelle Prüffunktion würde bei gleicher ID „up to date“
-und bei Netzwerk-/Manifestproblemen einen Fehler anzeigen. Der derzeit sichtbare
-Startcheck zeigt diese Rückmeldungen nicht. Kein Popup allein beweist daher
-noch nicht, dass GitHub erfolgreich erreicht wurde; zusätzlich die URL und die
-Prüffälle aus Abschnitt 9 kontrollieren.
-
-Wenn nur ein Plattformpaket eine andere ID bekommt, können dessen Nutzer nach
-jeder Neuinstallation erneut ein Update angeboten bekommen. Auch bei einer
-Änderung nur für ein Betriebssystem deshalb für diesen einfachen gemeinsamen
-Update-Kanal alle drei Pakete mit der neuen ID veröffentlichen.
+Die IDs werden ohne Beachtung der Groß-/Kleinschreibung verglichen; die Skripte
+schreiben sie klein. Ein Build ohne eingebaute Build-Zeit (älteres Packaging)
+kann wie ein Manifest ohne `buildTime` nur auf Ungleichheit prüfen.
 
 ### Popup, Installation und Daten
 
-- `Not now`: App bleibt installiert und geöffnet. Beim nächsten Start wird
-  erneut gefragt, solange eine andere ID online steht und Startchecks aktiv sind.
-- `Do not ask again`: Deaktiviert zukünftige Startchecks insgesamt, nicht nur
-  dieses eine Update. Gilt unabhängig davon, welcher Button angeklickt wird.
-- Wieder aktivieren: Einstellungen, `General → Miscellaneous → Check for Seed
-  Atlas updates at startup`. Danach neu starten, damit wieder geprüft wird.
-- `Update`: Öffnet die GitHub-Seite im Browser, stößt danach die Entfernung
-  der installierten Kopie an und beendet die App über den normalen Schließpfad.
-  Anschließend lädt der Nutzer den neuen Installer herunter und installiert ihn.
+- `Download`: Öffnet die GitHub-Release-Seite im Browser. Die installierte App
+  bleibt unverändert und geöffnet. Installiert wird der neue Build vom Nutzer:
+  Der Windows-Installer aktualisiert die bestehende Installation (gleiche
+  Inno-`AppId`), auf macOS ersetzt das Ziehen aus dem DMG die alte App, ein
+  neues Flatpak-Bundle ersetzt die installierte Version.
+- `Not now`: Beim nächsten Start wird erneut gefragt.
+- `Do not check for updates at start`: Deaktiviert zukünftige Startchecks
+  insgesamt. Wieder aktivieren: Einstellungen, `General → Miscellaneous →
+  Check for Seed Atlas updates at startup`.
 
-Dies ist kein automatischer Download und kein In-place-Update. Die App wartet
-nicht, bis der neue Installer heruntergeladen oder seine Installation gelungen
-ist. Bereits das erfolgreiche Übergeben des Links an den Browser führt zur
-Selbstentfernung. Schlägt das Öffnen des Browsers fehl, bleibt die App bestehen.
+Frühere Ausgaben (vor 4.3) entfernten sich bei `Update` selbst. Das macht die
+App nicht mehr; es gibt keinen Selbstentfernungs- oder Dry-Run-Modus mehr.
 
-Die Entfernung unterscheidet sich nach Plattform:
-
-| Plattform | Aktuelles Verhalten |
-| --- | --- |
-| Windows-Setup | Startet den mitinstallierten Inno-Uninstaller leise. Eine portable Kopie ohne `unins???.exe` wird nicht gelöscht; es erscheint ein Hinweis. |
-| macOS | Verschiebt das laufende `.app`-Bundle in den Papierkorb. Fehlende Rechte oder ein Start aus dem DMG können das verhindern. |
-| Linux-Flatpak | Startet über den Host `flatpak uninstall --user --noninteractive org.seedatlas.SeedAtlas`, ohne `--delete-data`. |
-| Linux ohne Flatpak | Versucht, nur die ausführbare Datei in den Papierkorb zu verschieben. |
-
-Ein sofort erkannter Entfernungsfehler wird angezeigt und die App bleibt offen.
-Bei extern gestarteten Uninstallern wird allerdings nur der Prozessstart geprüft,
-nicht dessen späteres Ergebnis. Im Fehlerfall kann man die alte App manuell
-ersetzen; Benutzerdaten dafür nicht löschen.
-
-Einstellungen und regulär gespeicherte Sitzungsdaten liegen außerhalb der
-Programminstallation. Die vorgesehenen Entfernungswege löschen diese nicht.
-Auch die Einstellung „Do not ask again“ bleibt damit nach einer Neuinstallation
-erhalten. Sitzungswiederherstellung und automatische Speicherung richten sich
-weiterhin nach den App-Einstellungen; wichtige ungespeicherte Arbeit vorher
-selbst speichern und bei Bedarf sichern.
-
-Für zukünftige Installer die bestehenden Kennungen und Datenpfade beibehalten:
-insbesondere die `seed-atlas`-Settings-Kennung, die Windows-Inno-`AppId` und die
-Flatpak-ID `org.seedatlas.SeedAtlas`. Keine Datenbereinigung zum Update hinzufügen,
-kein `flatpak uninstall --delete-data` und kein `--reset-all` verwenden.
-
-Sehr alte Seed-Atlas-Ausgaben ohne eingebauten Updater erhalten durch das bloße
-Hochladen der JSON-Datei noch keinen Update-Dialog. Diese Nutzer müssen zunächst
-einmal manuell eine Ausgabe mit Updater installieren.
+Einstellungen und Sitzungsdaten liegen außerhalb der Programminstallation und
+bleiben bei einer Neuinstallation erhalten. Für zukünftige Installer die
+bestehenden Kennungen beibehalten: die `seed-atlas`-Settings-Kennung, die
+Windows-Inno-`AppId` und die Flatpak-ID `org.seedatlas.SeedAtlas`.
 
 ## 8. Die vier Dateien manuell auf GitHub austauschen
 
@@ -498,7 +479,7 @@ Releases nicht mehr austauschen. Dann ist ein neues Release mit komplettem
 Dateisatz nötig; das Überschreiben desselben Releases ist damit nicht vereinbar.
 Siehe [GitHub: Immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
 
-Warum JSON zuletzt? Sobald die neue ID online steht, bietet jede abweichende
+Warum JSON zuletzt? Sobald die neue ID online steht, bietet jede ältere
 Installation ein Update an. Dann müssen bereits alle neuen Installer verfügbar
 sein. Der Austausch in einem bestehenden Release ist trotzdem nicht atomar:
 Eine schon während des Austauschs heruntergeladene neue App kann vorübergehend
@@ -514,8 +495,9 @@ curl --fail --location --header "Cache-Control: no-cache" \
 ```
 
 In Windows PowerShell explizit `curl.exe` verwenden, damit nicht ein anders
-arbeitender PowerShell-Alias ausgeführt wird. Der ausgegebene `buildId`-Wert muss
-mit der lokalen `dist/update.json` und allen drei Builds übereinstimmen.
+arbeitender PowerShell-Alias ausgeführt wird. Die ausgegebenen Werte `buildId`
+und `buildTime` müssen mit der lokalen `dist/update.json` und allen drei Builds
+übereinstimmen.
 
 Die drei lokal erzeugten JSON-Dateien vor dem Zusammenführen getrennt aufbewahren
 und ihren Inhalt vergleichen. Zur zusätzlichen Syntaxprüfung einer Datei:
@@ -532,31 +514,28 @@ und die tatsächlich installierten Pakete gegen das Manifest testen.
 Auch den passenden Quellstand archivieren. Wenn ein alter Release-Tag bestehen
 bleibt, bildet GitHubs automatisch erzeugtes „Source code“-Archiv nicht plötzlich
 den neuen lokalen Arbeitsstand ab. Das Windows-Packaging erzeugt dafür zusätzlich
-ein eigenes `Seed-Atlas-4.3.dev0-Source.zip`.
+ein eigenes `Seed-Atlas-<version>-Source.zip`; es gehört zu jedem Release.
 
 Bei einem Rollback immer Installer und ihre ursprüngliche JSON-Datei gemeinsam
-zurücksetzen. Weil nur auf Ungleichheit geprüft wird, bekommen Nutzer des
-zurückgezogenen Builds dann ebenfalls einen Wechsel angeboten.
+zurücksetzen. Nutzer des zurückgezogenen (neueren) Builds bekommen dann kein
+Update angeboten, weil der veröffentlichte Build älter ist; sie müssen den
+älteren Installer bei Bedarf selbst installieren.
 
-## 9. Den Update-Dialog testen, ohne die App zu entfernen
+## 9. Den Update-Dialog testen
 
-Der Updater besitzt folgende Test-Umgebungsvariablen. Diese nicht mit der
-Build-Variable aus Abschnitt 2 verwechseln:
+Der Updater besitzt folgende Test-Umgebungsvariablen. Diese nicht mit den
+Build-Variablen aus Abschnitt 2 verwechseln:
 
 | Variable | Wirkung beim Start der App |
 | --- | --- |
-| `SEED_ATLAS_UPDATE_URL` | Verwendet ein anderes Manifest, auch eine lokale `file://`-URL. Der Update-Button öffnet weiterhin die echte GitHub-Release-Seite. |
-| `SEED_ATLAS_UPDATE_BUILD_ID` | Überschreibt nur zum Test die lokale Vergleichs-ID. Ändert weder das Binary noch `update.json`. |
-| `SEED_ATLAS_UPDATE_DRY_RUN` | Verhindert Selbstentfernung und anschließendes Beenden durch den Updater. Der Browser wird trotzdem geöffnet. |
-| `SEED_ATLAS_TEST_SETTINGS_DIR` | Schaltet den Testmodus ein: Die App legt ihre Einstellungen unter der eigenen Kennung `seed-atlas-uitest` ab und lässt die normalen Einstellungen unverändert. Das Verzeichnis wird zusätzlich für das Ini-Format registriert. |
-| `SEED_ATLAS_TEST_SETTINGS_ID` | Verwendet genau diese Kennung statt `seed-atlas` bzw. statt der aus `SEED_ATLAS_TEST_SETTINGS_DIR` abgeleiteten Testkennung. Für Erststarttests vorher die Testeinstellungen entfernen, z. B. auf macOS mit `defaults delete com.seed-atlas-uitest.seed-atlas-uitest`. |
+| `SEED_ATLAS_UPDATE_URL` | Verwendet ein anderes Manifest, auch eine lokale `file://`-URL. Der Download-Button öffnet weiterhin die echte GitHub-Release-Seite. |
+| `SEED_ATLAS_UPDATE_BUILD_ID` | Überschreibt nur zum Test die lokale Vergleichs-ID. |
+| `SEED_ATLAS_UPDATE_BUILD_TIME` | Überschreibt nur zum Test die lokale Build-Zeit (Sekunden seit 1970). |
+| `SEED_ATLAS_TEST_SETTINGS_DIR` | Testmodus: Einstellungen unter der Kennung `seed-atlas-uitest`; automatische Sitzung, deren Sicherung und Lua-Skripte in diesem Verzeichnis. Die normale Installation bleibt unverändert. |
+| `SEED_ATLAS_TEST_SETTINGS_ID` | Verwendet genau diese Settings-Kennung. Ohne `SEED_ATLAS_TEST_SETTINGS_DIR` liegen Sitzung und Lua-Skripte in einem eigenen Ordner neben dem normalen Konfigurationsordner, benannt nach der Kennung. |
 
-Bei `SEED_ATLAS_UPDATE_DRY_RUN` zählt bereits das Vorhandensein der Variable.
-Auch der Wert `0` aktiviert diesen Schutz. Zum Abschalten die Variable vollständig
-entfernen. Die Checkbox wird im Dry Run weiterhin gespeichert.
 Wichtig: Ohne `SEED_ATLAS_TEST_SETTINGS_DIR` bzw. `SEED_ATLAS_TEST_SETTINGS_ID`
-schreibt der Test in die echten App-Einstellungen. Ein Klick auf
-`Do not ask again` würde dort den Startcheck dauerhaft abschalten.
+schreibt der Test in die echten App-Einstellungen.
 
 Beispiel auf macOS mit bereits installierter App und lokalem Release-Manifest:
 
@@ -564,61 +543,41 @@ Beispiel auf macOS mit bereits installierter App und lokalem Release-Manifest:
 update_test_dir="$(mktemp -d /tmp/seed-atlas-update-test.XXXXXX)"
 cp dist/update.json "$update_test_dir/update.json"
 
-SEED_ATLAS_UPDATE_DRY_RUN=1 \
 SEED_ATLAS_UPDATE_BUILD_ID=0000000000000000000000000000000000000000 \
+SEED_ATLAS_UPDATE_BUILD_TIME=1 \
 SEED_ATLAS_UPDATE_URL="file://$update_test_dir/update.json" \
 SEED_ATLAS_TEST_SETTINGS_DIR="$update_test_dir/settings" \
-  "/Applications/Seed Atlas.app/Contents/MacOS/seed-atlas" \
-  --session="$update_test_dir/session.save"
+  "/Applications/Seed Atlas.app/Contents/MacOS/seed-atlas"
 ```
-
-Die hier simulierte Null-ID muss sich von der Manifest-ID unterscheiden. Eine
-schon laufende App vor dem Test regulär schließen. Der direkte Executable-Aufruf
-stellt sicher, dass dieser neue Prozess die Variablen erhält. Der eigene
-`--session`-Pfad hält die Testsitzung getrennt von der normalen Sitzung.
 
 Prüffälle:
 
-1. Unterschiedliche IDs: Popup erscheint. `Not now` lässt die App offen.
-2. `Update` im Dry Run: GitHub öffnet sich, die App wird nicht entfernt und
-   bleibt geöffnet.
-3. `Do not ask again` aktivieren und denselben Test mit demselben Testordner
-   wiederholen: kein Start-Popup. Dafür nur den App-Aufruf wiederholen, nicht
-   erneut mit `mktemp` einen frischen Einstellungsordner anlegen.
-4. Startchecks in den Einstellungen wieder aktivieren. Als simulierte lokale ID
-   exakt die Manifest-ID verwenden: kein Start-Popup. Zur Gegenprobe wieder eine
-   andere ID einsetzen: Das Popup muss wieder erscheinen.
-5. Für die abschließende Kontrolle der wirklich eingebauten ID die Zeile
-   `SEED_ATLAS_UPDATE_BUILD_ID=...` weglassen und eine eventuell früher exportierte
-   Variable dieses Namens entfernen. Das neue Paket darf mit seinem eigenen
-   Manifest kein Update-Popup anzeigen. Den Dry-Run-Schutz dabei beibehalten und
-   durch den vorherigen Test mit abweichender ID sicherstellen, dass die
-   Manifestdatei erreichbar ist und Startchecks eingeschaltet sind.
+1. Andere ID, ältere lokale Zeit (wie oben): Popup „newer build“. `Not now`
+   lässt die App offen; `Download` öffnet GitHub, die App bleibt installiert.
+2. Andere ID, `SEED_ATLAS_UPDATE_BUILD_TIME` größer als `buildTime` des
+   Manifests: kein Start-Popup; `Check for updates` meldet „newer than the
+   published release“.
+3. `Do not check for updates at start` aktivieren und denselben Aufruf mit
+   demselben Testordner wiederholen: kein Start-Popup.
+4. Die Override-Zeilen weglassen: Das neue Paket darf mit seinem eigenen
+   Manifest kein Update-Popup anzeigen.
 
-Die Variablen in diesem Shell-Beispiel gelten nur für den jeweiligen App-Aufruf.
-Wer sie stattdessen per `export` oder `$env:...` setzt, muss sie danach wieder
-entfernen. Für den abschließenden öffentlichen Check auch
-`SEED_ATLAS_UPDATE_URL` entfernen, damit tatsächlich GitHub geprüft wird.
-
-Auf Windows gelten dieselben Variablen in PowerShell, auf Linux bei einem
-nativen App-Aufruf ebenfalls. Bei Flatpak müssen Testvariablen mit
+Bei Flatpak müssen Testvariablen mit
 `flatpak run --env=NAME=WERT ... org.seedatlas.SeedAtlas` explizit in die Sandbox
-übergeben werden; lokale Manifest-, Einstellungs- und Sitzungspfade müssen darin
-zugänglich sein. Eine echte Deinstallation nur an einer separaten Testinstallation
-mit zuvor gesicherten Testdaten prüfen, nicht an der Arbeitsinstallation.
+übergeben werden; lokale Manifest- und Einstellungspfade müssen darin
+zugänglich sein.
 
 ## 10. Häufige Fehler
 
 | Problem | Prüfen / beheben |
 | --- | --- |
 | Kein Popup trotz neuer App-Dateien | Wurde wirklich eine neue Build-ID verwendet? Uncommittete Änderungen verändern `HEAD` nicht. |
-| Kein sichtbarer manueller Update-Button | Die aktuelle Menüleiste ist ausgeblendet. Startchecks aktivieren und neu starten; siehe Abschnitt 7. |
+| Kein Popup, obwohl ein neuer Build veröffentlicht ist | `buildTime` im Manifest prüfen: Sie muss größer sein als die Build-Zeit der installierten App. Manuell über `Menu → Help → Check for updates` prüfen. |
 | Gar keine Update-Prüfung | „Do not ask again“ bzw. Startcheck-Einstellung prüfen. Ausgaben ohne Updater oder mit ID `development` zunächst manuell ersetzen. |
 | Manifest nicht erreichbar / kein Popup trotz verschiedener IDs | Öffentliche URL mit `curl` prüfen: Internetzugang, Latest-Ziel, Assetname und JSON-Format kontrollieren. Beim Start werden Netzwerk-/Manifestfehler absichtlich nicht angezeigt. |
 | Nach jedem Neuinstallieren wieder ein Update | Manifest-ID und alle drei eingebauten IDs prüfen; keine alte EXE/DMG/Flatpak oder JSON aus einem fehlgeschlagenen Build hochladen. Test-Overrides entfernen. |
 | Nur eine Plattform meldet ständig ein Update | Wahrscheinlich unterschiedliche Build-IDs oder ein vergessenes altes Plattformpaket. Alle drei Builds mit derselben ID veröffentlichen. |
-| Lokaler neuer Build meldet ein Update auf den alten Download | Nur bei Builds mit gesetzter `SEED_ATLAS_BUILD_ID` (Packaging-Skripte) erwartbar, solange GitHub eine andere ID hat; der Updater kennt keine Reihenfolge. Ein direkter `qmake`-Build ohne ID ist ein `development`-Build und prüft nicht auf Updates. |
-| `Update` entfernt die App beim Test nicht | Dry-Run-Variable noch gesetzt, portable Windows-Kopie, schreibgeschütztes DMG oder systemweites Flatpak prüfen. |
+| Lokaler neuer Build meldet ein Update auf den alten Download | Nur solange das Manifest auf GitHub noch kein `buildTime` enthält (vor 4.3 erzeugt). Ein direkter `qmake`-Build ohne ID ist ein `development`-Build und prüft nicht auf Updates. |
 | Beim Umstieg auf universal/anderen Compiler Linker- oder Architekturfehler | Frische Quellkopie verwenden bzw. generierte Engine-Objekte vor dem neuen Build bereinigen. |
 
 Die maßgeblichen Implementierungen sind [src/updater.cpp](src/updater.cpp),

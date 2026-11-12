@@ -18,7 +18,7 @@ modules:
     buildsystem: simple
     build-commands:
       - make -C seedatlas-engine clean
-      - qmake6 CONFIG+=release "SEED_ATLAS_BUILD_ID=${SEED_ATLAS_BUILD_ID}" PREFIX=/app seed-atlas.pro
+      - qmake6 CONFIG+=release "SEED_ATLAS_BUILD_ID=${SEED_ATLAS_BUILD_ID}" "SEED_ATLAS_BUILD_TIME=${SEED_ATLAS_BUILD_TIME}" PREFIX=/app seed-atlas.pro
       - make -j${FLATPAK_BUILDER_N_JOBS}
       - install -Dm755 seed-atlas /app/bin/seed-atlas
       - install -Dm644 etc/org.seedatlas.SeedAtlas.desktop /app/share/applications/org.seedatlas.SeedAtlas.desktop
@@ -27,6 +27,10 @@ modules:
       - install -Dm644 LICENSE /app/share/licenses/org.seedatlas.SeedAtlas/LICENSE
       - install -Dm644 LEGAL_NOTICE.md /app/share/doc/seed-atlas/LEGAL_NOTICE.md
       - install -Dm644 THIRD_PARTY_NOTICES.md /app/share/doc/seed-atlas/THIRD_PARTY_NOTICES.md
+      - install -Dm644 SOURCE_CODE.md /app/share/doc/seed-atlas/SOURCE_CODE.md
+      - install -Dm644 installer/licenses/LGPL-3.0.txt /app/share/doc/seed-atlas/LGPL-3.0.txt
+      - install -Dm644 LICENSE /app/share/doc/seed-atlas/LICENSE.txt
+      - install -Dm644 seedatlas-engine/LICENSE /app/share/doc/seed-atlas/cubiomes-LICENSE.txt
     sources:
       - type: dir
         path: ../..

@@ -6,8 +6,7 @@ on:
 permissions:
   contents: read
 
-env:
-  SEED_ATLAS_VERSION: 4.3.dev0
+# The version comes from VERSION.txt (the step after each checkout).
 
 jobs:
   flatpak:
@@ -15,6 +14,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+      - name: Read the version from VERSION.txt
+        shell: bash
+        run: echo "SEED_ATLAS_VERSION=$(tr -d '[:space:]' < VERSION.txt)" >> "$GITHUB_ENV"
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
@@ -35,6 +37,9 @@ jobs:
     environment: macos-release
     steps:
       - uses: actions/checkout@v6
+      - name: Read the version from VERSION.txt
+        shell: bash
+        run: echo "SEED_ATLAS_VERSION=$(tr -d '[:space:]' < VERSION.txt)" >> "$GITHUB_ENV"
       - name: Require macOS distribution credentials
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}

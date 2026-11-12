@@ -16,6 +16,7 @@
 #include <QEventLoop>
 #include <QMutex>
 #include <QDirIterator>
+#include <QFile>
 #include <QVector>
 
 
@@ -41,6 +42,14 @@ bool Session::save(QWidget *widget, QTextStream& stream)
     for (uint64_t s : slist)
         stream << QString::asprintf("%" PRId64 "\n", (int64_t)s);
     stream.flush();
+    // a full disk or a lost device shows as a failed write
+    if (stream.status() != QTextStream::Ok)
+        return false;
+    if (QFileDevice *f = qobject_cast<QFileDevice*>(stream.device()))
+    {
+        if (f->error() != QFileDevice::NoError)
+            return false;
+    }
     return true;
 }
 
@@ -163,6 +172,7 @@ SearchMaster::SearchMaster(QWidget *parent)
     , bscansize(64)
     , binflight()
 {
+    fast48pure = false;
     env.stop = &stop;
 }
 
@@ -298,8 +308,8 @@ bool SearchMaster::set(QWidget *widget, const Session& s)
         }
         if (c.type == F_TEMPS)
         {
-            int w = (c.x2 >> 10) - (c.x1 >> 10) + 1;
-            int h = (c.z2 >> 10) - (c.z1 >> 10) + 1;
+            int64_t w = (int64_t)(c.x2 >> 10) - (c.x1 >> 10) + 1;
+            int64_t h = (int64_t)(c.z2 >> 10) - (c.z1 >> 10) + 1;
             if (c.count > w * h)
             {
                 QString msg = tr("Temperature category condition with ID %1 has too "
@@ -375,7 +385,8 @@ static void genQHBases(int qual, uint64_t salt, std::vector<uint64_t>& list48)
         if (getQuadHutCst(low) > cst_type)
             continue;
 
-        file.open(QIODevice::ReadOnly);
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
         QTextStream stream(&file);
 
         while (!stream.atEnd())
@@ -629,7 +640,8 @@ static void conditionArea(const Condition& c, int& x, int& z, int& w, int& h, in
 }
 
 // The tests that can serve as a GPU prefilter for a condition tree.
-static GpuClimateFilter::Tests gpuTestsFor(const ConditionTree& tree, int mc)
+static GpuClimateFilter::Tests gpuTestsFor(const ConditionTree& tree, int mc,
+                                           const SearchThreadEnv& env)
 {
     GpuClimateFilter::Tests tests;
     if (mc < MC_1_18 || tree.condvec.empty() || tree.references.empty())
@@ -686,12 +698,39 @@ static GpuClimateFilter::Tests gpuTestsFor(const ConditionTree& tree, int mc)
             }
             tests.samples.push_back(t);
         }
+        else if (c.type == F_BIOME && (int)b < (int)env.areachecks.size() &&
+                 !env.areachecks[(int)b].biomes.empty())
+        {   // the required biomes of a 1:4 area, as areaMayHaveBiomes(): the
+            // climate range over the area grown by the shift has to reach
+            // the (widened) bounds of each of them
+            const SearchThreadEnv::AreaCheck& ac = env.areachecks[(int)b];
+            for (const auto& bounds : ac.biomes)
+            {
+                for (const SearchThreadEnv::AreaBound& ab : bounds)
+                {
+                    GpuClimateFilter::Test t;
+                    t.para = ab.para;
+                    t.x = x - ac.shift;
+                    t.z = z - ac.shift;
+                    t.w = w + 2 * ac.shift;
+                    t.h = h + 2 * ac.shift;
+                    t.lmin = ab.lo;
+                    t.lmax = ab.hi;
+                    tests.climate.push_back(t);
+                }
+            }
+        }
     }
     return tests;
 }
 
 void SearchMaster::startSearch()
 {
+    if (stopping)
+    {   // called while a stop waits for the workers (from the event loop)
+        emit searchFinish(false);
+        return;
+    }
     stopSearch();
     stop = false;
     preSearch();
@@ -702,7 +741,17 @@ void SearchMaster::startSearch()
     uint64_t gpumin = (uint64_t) 2 * 0x10000 * std::max(threadcnt, 1);
     if (searchtype == SEARCH_INC && slist.empty() && scnt >= gpumin &&
         GpuClimateFilter::enabled())
-        gputests = gpuTestsFor(condtree, mc);
+        gputests = gpuTestsFor(condtree, mc, env);
+
+    fast48pure = treeFast48IsPure(condtree);
+    lowstate.reset();
+    if (searchtype == SEARCH_INC && !slist.empty() && fast48pure)
+    {
+        lowstate.reset(new (std::nothrow) std::atomic<uint8_t>[slist.size()]);
+        if (lowstate)
+            for (size_t i = 0; i < slist.size(); i++)
+                lowstate[i].store(0, std::memory_order_relaxed);
+    }
 
     if (stop)
     {
@@ -714,8 +763,8 @@ void SearchMaster::startSearch()
     {
         SearchWorker *worker = new SearchWorker(this);
         QObject::connect(
-            worker, &SearchWorker::result,
-            this, &SearchMaster::onWorkerResult,
+            worker, &SearchWorker::results,
+            this, &SearchMaster::onWorkerResults,
             Qt::QueuedConnection);
         QObject::connect(
             worker, &SearchWorker::finished,
@@ -732,39 +781,55 @@ void SearchMaster::startSearch()
     itemtimer.start();
     count = 0;
 
+    // The workers yield to interactive work (the map, the analysis tabs and
+    // the UI). On macOS this is the utility QoS class, which still runs on
+    // the performance cores when nothing else needs them.
     for (SearchWorker *worker : workers)
     {
-        worker->start();
+        worker->start(QThread::LowPriority);
     }
 }
 
 void SearchMaster::stopSearch()
 {
     stop = true;
-    if (workers.empty())
+    // A stop can be requested again from the events processed below (a
+    // result that reaches the limit, stop on result); the first one finishes
+    // the job.
+    if (workers.empty() || stopping)
         return;
 
     stopping = true;
-    for (SearchWorker *worker : workers)
+    // the events below can change the member, so this works on a copy
+    const std::vector<SearchWorker*> list = workers;
+    for (SearchWorker *worker : list)
         disconnect(worker, &SearchWorker::finished,
                    this, &SearchMaster::onWorkerFinished);
-    for (SearchWorker *worker : workers)
+    for (SearchWorker *worker : list)
     {
         while (!worker->wait(10))
             QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     }
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
-    for (SearchWorker *worker : workers)
     {
-        worker->disconnect(this);
-        delete worker;
+        QMutexLocker locker(&mutex);
+        workers.clear();
     }
-    workers.clear();
+    deleteWorkers(list);
     stopping = false;
     finishQueued = false;
 
     emit searchFinish(false);
+}
+
+void SearchMaster::deleteWorkers(const std::vector<SearchWorker*>& list)
+{
+    for (SearchWorker *worker : list)
+    {
+        worker->disconnect(this);
+        delete worker;
+    }
 }
 
 
@@ -794,7 +859,7 @@ bool SearchMaster::getProgress(QString *status, uint64_t *prog, uint64_t *end, u
         if (worker->prog < *prog)
         {
             *prog = worker->prog;
-            *seed = worker->seed;
+            *seed = worker->seed.load(std::memory_order_acquire);
             valid = true;
         }
     }
@@ -911,14 +976,15 @@ bool SearchMaster::requestItem(SearchWorker *item)
     if (searchtype == SEARCH_BLOCKS && slist.empty())
         return requestBlockItem(item);
 
-    if (!gputests.empty())
-        itemsize = 0x10000; // GPU batches need large items
+    // GPU batches need large items (of a size the worker chooses), the CPU
+    // keeps the adaptive size, which keeps the progress fine-grained
+    int itemsize = item->wantgpu && !gputests.empty() ? item->gpuitemsize : this->itemsize;
 
     item->prog      = prog;
     item->idx       = idx;
     item->sstart    = seed;
     item->scnt      = itemsize;
-    item->seed      = seed;
+    item->seed.store(seed, std::memory_order_release);
 
     prog += itemsize;
 
@@ -1028,7 +1094,8 @@ bool SearchMaster::requestBlockItem(SearchWorker *item)
         if (high + cnt > 0x10000)
             cnt = 0x10000 - high;
         item->itemkind  = SearchWorker::ITEM_SEEDS;
-        item->sstart    = item->seed = ((uint64_t)high << 48) | low;
+        item->sstart    = ((uint64_t)high << 48) | low;
+        item->seed.store(item->sstart, std::memory_order_release);
         item->prog      = (low << 16) | high;
         item->scnt      = cnt;
         high += cnt;
@@ -1045,7 +1112,7 @@ bool SearchMaster::requestBlockItem(SearchWorker *item)
         uint32_t high = bscan == bfirst ? bhigh0 : 0;
         item->itemkind  = SearchWorker::ITEM_SCAN48;
         item->sstart    = bscan;
-        item->seed      = ((uint64_t)high << 48) | bscan;
+        item->seed.store(((uint64_t)high << 48) | bscan, std::memory_order_release);
         item->prog      = (bscan << 16) | high;
         item->scnt      = (int) cnt;
         item->found.clear();
@@ -1095,9 +1162,9 @@ void SearchMaster::updateBlockProgress()
     }
 }
 
-void SearchMaster::onWorkerResult(uint64_t seed)
+void SearchMaster::onWorkerResults(QVector<uint64_t> seeds)
 {
-    emit searchResult(seed);
+    emit searchResults(seeds);
     resultSlots.release();
 }
 
@@ -1126,9 +1193,9 @@ void SearchMaster::onWorkerFinished()
                 return;
             }
         const bool done = isdone && !stop;
-        for (SearchWorker *worker : workers)
-            delete worker;
+        const std::vector<SearchWorker*> list = workers;
         workers.clear();
+        deleteWorkers(list);
         finishQueued = false;
         locker.unlock();
         emit searchFinish(done);
@@ -1147,9 +1214,11 @@ SearchWorker::SearchWorker(SearchMaster *master)
     this->idx           = master->idx;
     this->sstart        = master->seed;
     this->scnt          = 0;
-    this->seed          = master->seed;
+    this->seed.store(master->seed);
     this->itemkind      = ITEM_SEEDS;
     this->scanns        = 0;
+    this->wantgpu       = false;
+    this->gpuitemsize   = 0x4000;
 
     this->env.stop      = &master->stop;
 }
@@ -1164,38 +1233,168 @@ bool SearchWorker::getNextItem()
     return master->requestItem(this);
 }
 
-bool SearchWorker::reportResult(uint64_t seed)
+void SearchWorker::report(uint64_t s)
 {
+    if (!master->stoponres)
+    {
+        resbuf.push_back(s);
+        return;
+    }
+    // only the first result of the search counts, it goes out at once
     bool acquired = false;
     while (!*env.stop && !(acquired = master->resultSlots.tryAcquire(1, 10))) {}
     if (*env.stop)
     {   // the stop can arrive right after the slot was acquired
         if (acquired)
             master->resultSlots.release();
-        return false;
+        return;
     }
-
-    if (master->stoponres && master->stop.exchange(true))
+    if (master->stop.exchange(true))
     {
         master->resultSlots.release();
+        return;
+    }
+    emit results(QVector<uint64_t>{ s });
+}
+
+bool SearchWorker::flushResults()
+{
+    if (resbuf.empty())
+        return !*env.stop;
+    bool acquired = false;
+    while (!*env.stop && !(acquired = master->resultSlots.tryAcquire(1, 10))) {}
+    if (*env.stop)
+    {   // dropped: the progress still points at the start of this item
+        if (acquired)
+            master->resultSlots.release();
+        resbuf.clear();
         return false;
     }
-
-    emit result(seed);
+    emit results(resbuf);
+    resbuf.clear();
     return true;
+}
+
+int SearchWorker::testSeed(uint64_t s)
+{
+    env.setSeed(s);
+    return testTreeAt({0, 0}, &env, PASS_FULL_64, nullptr);
+}
+
+// Incremental search with the GPU prefilter: the GPU removes the seeds that
+// fail for sure, the CPU tests the rest. Whether that is faster than the
+// CPU alone depends on the tests, the GPU and how many workers share it, so
+// the worker keeps measuring both: a GPU item starts with a CPU sample from
+// time to time, and a worker that runs on the CPU tries the GPU again after
+// a while. The workers thereby settle on a share of the GPU that pays off.
+void SearchWorker::runIncGpu(GpuClimateFilter *gpu)
+{
+    std::unique_ptr<GpuClimateFilter> owned(gpu);
+    std::vector<uint64_t> passed;
+    const bool forced = GpuClimateFilter::forced();
+    QElapsedTimer sincegpu; // CPU time since the GPU was last measured
+    double retry = 2e9;     // when to try the GPU again (ns)
+    sincegpu.start();
+    wantgpu = true;
+
+    while (!*env.stop && getNextItem())
+    {
+        uint64_t rem = ~(uint64_t)0 - sstart;
+        uint32_t cnt = rem < (uint64_t)(scnt - 1) ? (uint32_t)(rem + 1) : (uint32_t)scnt;
+        uint64_t start = sstart;
+        QElapsedTimer timer;
+
+        if (owned && wantgpu)
+        {
+            if (!forced && cnt > 4096 && (gpuitems % 16 == 0 || cpunsps == 0))
+            {   // a CPU sample to compare with
+                const uint32_t ncpu = 2048;
+                timer.start();
+                for (uint32_t i = 0; i < ncpu && !*env.stop; i++)
+                    if (testSeed(start + i) == COND_OK)
+                        report(start + i);
+                double ns = (double) timer.nsecsElapsed() / ncpu;
+                cpunsps = cpunsps ? 0.5 * (cpunsps + ns) : ns;
+                start += ncpu;
+                cnt -= ncpu;
+            }
+            gpuitems++;
+            timer.start();
+            passed.clear();
+            if (cnt && !*env.stop && !owned->filter(start, cnt, passed))
+            {
+                owned.reset(); // the GPU failed: the CPU takes over
+            }
+            else
+            {
+                for (uint64_t s : passed)
+                {
+                    if (*env.stop)
+                        break;
+                    if (testSeed(s) == COND_OK)
+                        report(s);
+                }
+                if (cnt)
+                {
+                    double ns = (double) timer.nsecsElapsed() / cnt;
+                    gpunsps = gpunsps ? 0.5 * (gpunsps + ns) : ns;
+                    // items of about half a second: large enough for the GPU,
+                    // small enough for a fine-grained progress (the CPU tests
+                    // the seeds that pass, which can take most of the time)
+                    double want = 0.5e9 / gpunsps;
+                    gpuitemsize = (int) std::max(8192.0, std::min(65536.0, want));
+                }
+                cnt = 0;
+            }
+        }
+        if (cnt)
+        {   // on the CPU
+            timer.start();
+            for (uint32_t i = 0; i < cnt && !*env.stop; i++)
+                if (testSeed(start + i) == COND_OK)
+                    report(start + i);
+            if (owned)
+            {
+                double ns = (double) timer.nsecsElapsed() / cnt;
+                cpunsps = cpunsps ? 0.5 * (cpunsps + ns) : ns;
+            }
+        }
+        flushResults();
+
+        // the kind of the next item
+        if (!owned)
+            wantgpu = false;
+        else if (forced || cpunsps == 0 || gpunsps == 0 || gpunsps < cpunsps)
+        {
+            wantgpu = true;
+            retry = 2e9;
+            sincegpu.start();
+        }
+        else if (wantgpu)
+        {   // the CPU is faster for now
+            wantgpu = false;
+            sincegpu.start();
+        }
+        else if (sincegpu.nsecsElapsed() > retry)
+        {   // try the GPU again, less often while it keeps losing
+            wantgpu = true;
+            retry = std::min(retry * 2, 64e9);
+        }
+    }
 }
 
 void SearchWorker::run()
 {
     Pos origin = {0,0};
-    std::unique_ptr<GpuClimateFilter> gpu;
-    std::vector<uint64_t> passed;
-    bool gpucalibrated = false;
+    resbuf.clear();
     if (!env.init(master->mc, master->large, master->condtree).isEmpty())
     {
         *env.stop = true;
         return;
     }
+    // the fast 48-bit pass can be skipped for seeds whose lower 48 bits
+    // passed it already (block searches, known list entries)
+    const bool skipfast = master->fast48pure;
 
     switch (master->searchtype)
     {
@@ -1205,15 +1404,10 @@ void SearchWorker::run()
             uint64_t ie = idx+scnt < len ? idx+scnt : len;
             for (uint64_t i = idx; i < ie; i++)
             {
-                seed = slist[i];
-                env.setSeed(seed);
-                if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
-                {
-                    reportResult(seed);
-                }
+                if (testSeed(slist[i]) == COND_OK)
+                    report(slist[i]);
             }
-            //if (ie == len) // done
-            //   break;
+            flushResults();
         }
         break;
 
@@ -1225,160 +1419,94 @@ void SearchWorker::run()
                 uint64_t ie = idx+scnt < len ? idx+scnt : len;
                 for (uint64_t i = idx; i < ie; i++)
                 {
-                    seed = slist[i];
-                    env.setSeed(seed);
+                    env.setSeed(slist[i]);
                     if (testTreeAt(origin, &env, PASS_FULL_48, nullptr) != COND_FAILED)
-                    {
-                        reportResult(seed);
-                    }
+                        report(slist[i]);
                 }
             }
             else
             {
-                seed = sstart;
+                uint64_t s = sstart;
                 for (int i = 0; i < scnt; i++)
                 {
-                    env.setSeed(seed);
+                    env.setSeed(s);
                     if (testTreeAt(origin, &env, PASS_FULL_48, nullptr) != COND_FAILED)
-                    {
-                        reportResult(seed);
-                    }
-
-                    if (seed >= MASK48)
-                    {   // done
-                        break;
-                    }
-                    seed++;
+                        report(s);
+                    if (s >= MASK48)
+                        break; // done
+                    s++;
                 }
             }
+            flushResults();
         }
         break;
 
     case SEARCH_INC:
-        if (!master->gputests.empty())
+        if (!slist && !master->gputests.empty())
         {
-            gpu.reset(new GpuClimateFilter);
-            if (!gpu->init(master->gputests, master->large))
-                gpu.reset();
+            GpuClimateFilter *gpu = new GpuClimateFilter;
+            if (gpu->init(master->gputests, master->large))
+            {
+                runIncGpu(gpu);
+                break;
+            }
+            delete gpu;
         }
+        wantgpu = false;
         while (!*env.stop && getNextItem())
         {
             if (slist)
             {   // seed = (high << 48) | slist[..]
                 uint64_t high = (sstart >> 48) & 0xffff;
                 uint64_t lowidx = idx;
+                std::atomic<uint8_t> *ls = master->lowstate.get();
 
                 for (int i = 0; i < scnt; i++)
                 {
-                    seed = (high << 48) | slist[lowidx];
-
-                    env.setSeed(seed);
-                    if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
+                    uint64_t s = (high << 48) | slist[lowidx];
+                    // the fast 48-bit pass of an entry is the same for all
+                    // upper bits, so it runs once for each entry
+                    uint8_t known = ls ? ls[lowidx].load(std::memory_order_relaxed) : 0;
+                    if (known != 2)
                     {
-                        reportResult(seed);
+                        env.setSeed(s);
+                        int st;
+                        if (known == 1)
+                            st = testTreeAt64Only(origin, &env, nullptr);
+                        else if (ls)
+                        {
+                            st = testTreeAt(origin, &env, PASS_FAST_48, nullptr);
+                            ls[lowidx].store(st == COND_FAILED ? 2 : 1, std::memory_order_relaxed);
+                            if (st != COND_FAILED)
+                                st = testTreeAt64Only(origin, &env, nullptr);
+                        }
+                        else
+                            st = testTreeAt(origin, &env, PASS_FULL_64, nullptr);
+                        if (st == COND_OK)
+                            report(s);
                     }
 
                     if (++lowidx >= len)
                     {
                         lowidx = 0;
                         if (++high >= 0x10000)
-                        {   // done
-                            break;
-                        }
+                            break; // done
                     }
-                }
-            }
-            else if (gpu)
-            {   // seed++, with the GPU removing seeds that fail for sure
-                uint64_t rem = ~(uint64_t)0 - sstart;
-                uint32_t cnt = rem < (uint64_t)(scnt - 1) ? (uint32_t)(rem + 1) : (uint32_t)scnt;
-                uint64_t start = sstart;
-                QElapsedTimer timer;
-                double cpuns = 0;
-                if (!gpucalibrated && !GpuClimateFilter::forced() && cnt > 4096)
-                {   // time some seeds on the CPU, to compare with the GPU
-                    uint32_t ncpu = 2048;
-                    timer.start();
-                    for (uint32_t i = 0; i < ncpu && !*env.stop; i++)
-                    {
-                        seed = start + i;
-                        env.setSeed(seed);
-                        if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
-                            reportResult(seed);
-                    }
-                    cpuns = (double) timer.nsecsElapsed() / ncpu;
-                    start += ncpu;
-                    cnt -= ncpu;
-                }
-                // while calibrating, the GPU gets a small batch first
-                uint32_t ngpu = cpuns > 0 ? std::min<uint32_t>(cnt, 8192) : cnt;
-                timer.start();
-                passed.clear();
-                if (gpu->filter(start, ngpu, passed))
-                {
-                    for (uint64_t s : passed)
-                    {
-                        seed = s;
-                        env.setSeed(seed);
-                        if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
-                            reportResult(seed);
-                        if (*env.stop)
-                            break;
-                    }
-                    start += ngpu;
-                    cnt -= ngpu;
-                    if (cpuns > 0)
-                    {   // keep the GPU only if it is faster
-                        double gpuns = (double) timer.nsecsElapsed() / ngpu;
-                        gpucalibrated = true;
-                        if (gpuns >= cpuns)
-                            gpu.reset();
-                    }
-                    if (cnt == 0 || *env.stop)
-                        continue;
-                    passed.clear();
-                    if (gpu && gpu->filter(start, cnt, passed))
-                    {
-                        for (uint64_t s : passed)
-                        {
-                            seed = s;
-                            env.setSeed(seed);
-                            if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
-                                reportResult(seed);
-                            if (*env.stop)
-                                break;
-                        }
-                        continue;
-                    }
-                }
-                gpu.reset(); // the GPU is off or failed: test the seeds on the CPU
-                seed = start;
-                for (uint32_t i = 0; i < cnt && !*env.stop; i++)
-                {
-                    seed = start + i;
-                    env.setSeed(seed);
-                    if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
-                        reportResult(seed);
                 }
             }
             else
             {   // seed++
-                seed = sstart;
+                uint64_t s = sstart;
                 for (int i = 0; i < scnt; i++)
                 {
-                    env.setSeed(seed);
-                    if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
-                    {
-                        reportResult(seed);
-                    }
-
-                    if (seed == ~(uint64_t)0)
-                    {   // done
-                        break;
-                    }
-                    seed++;
+                    if (testSeed(s) == COND_OK)
+                        report(s);
+                    if (s == ~(uint64_t)0)
+                        break; // done
+                    s++;
                 }
             }
+            flushResults();
         }
         break;
 
@@ -1409,20 +1537,22 @@ void SearchWorker::run()
                     scanns = scantimer.nsecsElapsed();
                     continue;
                 }
-                // seed = (high << 48) | low, for the assigned highs
+                // seed = (high << 48) | low, for the assigned highs of a low
+                // that passed the 48-bit pass
                 uint64_t high = (sstart >> 48) & 0xffff;
                 uint64_t low = sstart & MASK48;
                 for (int i = 0; i < scnt; i++)
                 {
-                    seed = (high << 48) | low;
-                    env.setSeed(seed);
-                    if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
-                    {
-                        reportResult(seed);
-                    }
+                    uint64_t s = (high << 48) | low;
+                    env.setSeed(s);
+                    int st = skipfast ? testTreeAt64Only(origin, &env, nullptr)
+                                      : testTreeAt(origin, &env, PASS_FULL_64, nullptr);
+                    if (st == COND_OK)
+                        report(s);
                     if (++high >= 0x10000)
                         break; // done
                 }
+                flushResults();
             }
             break;
         }
@@ -1448,18 +1578,18 @@ void SearchWorker::run()
 
             for (int i = 0; i < scnt; i++)
             {
-                seed = (high << 48) | low;
-
-                env.setSeed(seed);
-                if (testTreeAt(origin, &env, PASS_FULL_64, nullptr) == COND_OK)
-                {
-                    reportResult(seed);
-                }
-
+                uint64_t s = (high << 48) | low;
+                env.setSeed(s);
+                int st = skipfast ? testTreeAt64Only(origin, &env, nullptr)
+                                  : testTreeAt(origin, &env, PASS_FULL_64, nullptr);
+                if (st == COND_OK)
+                    report(s);
                 if (++high >= 0x10000)
                     break; // done
             }
+            flushResults();
         }
         break;
     }
+    flushResults();
 }

@@ -60,6 +60,7 @@ public:
     static bool forced();
     // The user setting (the GPU is used by default).
     static void setAllowed(bool allowed);
+    static bool allowed();
 
     GpuClimateFilter();
     ~GpuClimateFilter();

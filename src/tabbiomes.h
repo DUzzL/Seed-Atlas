@@ -25,6 +25,10 @@ public:
     virtual void run() override;
     void runStatistics(Generator *g);
     bool runLocate(Generator *g);
+    // the biome counts of one seed (257 entries, the last is the number of
+    // biomes); parallel: over all workers, else in the calling thread
+    QVector<uint64_t> countBiomes(uint64_t seed, bool parallel);
+    void runSeedsParallel();
 
 signals:
     void seedDone(uint64_t seed, QVector<uint64_t> cnt);

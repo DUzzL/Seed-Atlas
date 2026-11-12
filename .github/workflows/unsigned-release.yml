@@ -5,14 +5,13 @@ name: Unsigned release (Windows + Linux + macOS)
 on:
   push:
     branches:
-      - release-4.3.dev0
+      - 'release-*'
   workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  SEED_ATLAS_VERSION: 4.3.dev0
+# The version comes from VERSION.txt (the step after each checkout).
 
 jobs:
   windows:
@@ -20,6 +19,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Read the version from VERSION.txt
+        shell: bash
+        run: echo "SEED_ATLAS_VERSION=$(tr -d '[:space:]' < VERSION.txt)" >> "$GITHUB_ENV"
       - name: Install Qt 6.8.3 with MinGW 13.1
         shell: pwsh
         run: |
@@ -90,6 +92,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+      - name: Read the version from VERSION.txt
+        shell: bash
+        run: echo "SEED_ATLAS_VERSION=$(tr -d '[:space:]' < VERSION.txt)" >> "$GITHUB_ENV"
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
@@ -113,6 +118,9 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
+      - name: Read the version from VERSION.txt
+        shell: bash
+        run: echo "SEED_ATLAS_VERSION=$(tr -d '[:space:]' < VERSION.txt)" >> "$GITHUB_ENV"
       - name: Install Qt 6.8.3 universal SDK
         run: |
           python3 -m venv "$RUNNER_TEMP/aqt-venv"

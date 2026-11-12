@@ -69,7 +69,7 @@ ConfigDialog::~ConfigDialog()
 void ConfigDialog::setupCategories()
 {
     QTabWidget *tabs = new QTabWidget(this);
-    const auto addCategory = [tabs, this](const QString& title) {
+    const auto addCategory = [tabs](const QString& title) {
         QScrollArea *scroll = new QScrollArea(tabs);
         scroll->setWidgetResizable(true);
         scroll->setFrameShape(QFrame::NoFrame);

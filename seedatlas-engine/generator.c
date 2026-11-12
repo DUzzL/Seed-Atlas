@@ -625,6 +625,18 @@ int mapApproxHeight(float *y, int *ids, const Generator *g, const SurfaceNoise *
         if (g->bn.nptype != -1 && g->bn.nptype != NP_DEPTH)
             return 1;
         int64_t i, j;
+        if (!ids && g->bn.nptype == -1)
+        {   // the depth only: no temperature, humidity or biome lookup
+            for (j = 0; j < h; j++)
+            {
+                for (i = 0; i < w; i++)
+                {
+                    int64_t d = sampleBiomeNoiseDepth(&g->bn, x+i, 0, z+j, 0);
+                    y[j*w+i] = d / 76.0;
+                }
+            }
+            return 0;
+        }
         for (j = 0; j < h; j++)
         {
             for (i = 0; i < w; i++)

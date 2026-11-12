@@ -303,6 +303,11 @@ int getClimateBoundParas(const BiomeClimateBounds *b, int paras[NP_MAX]);
 /// Can the biome at a 1:4 position, as sampleBiomeNoise() with the sample
 /// flags, be within the bounds? Tests only the given parameters; the noise
 /// has to be initialized for them and the shift.
+/// The depth parameter that sampleBiomeNoise() (with the same sample flags,
+/// apart from SAMPLE_NO_DEPTH) stores in np[NP_DEPTH], without the temperature,
+/// humidity and biome lookup. Requires the full climate initialization.
+int64_t sampleBiomeNoiseDepth(const BiomeNoise *bn, int x, int y, int z,
+    uint32_t sample_flags);
 int climateMayBeWithin(const BiomeNoise *bn, const BiomeClimateBounds *b,
     const int *paras, int npara, int x, int z, uint32_t sample_flags);
 int sampleBiomeNoiseBeta(const BiomeNoiseBeta *bnb, int64_t *np, double *nv,

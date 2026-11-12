@@ -2,6 +2,8 @@
 
 #include "message.h"
 #include "util.h"
+#include "config.h"
+#include "gpufilter.h"
 
 #include <QApplication>
 #include <QDateTime>
@@ -49,6 +51,12 @@ Headless::Headless(QString sessionpath, QString resultspath, bool reset, QObject
 
     QSettings settings(appSettingsId(), appSettingsId());
     g_extgen.load(settings);
+    // the processor and GPU settings of the application apply here as well
+    // (read only: the settings are not written)
+    setConfiguredCpuUsagePercent(
+        settings.value("config/cpuUsagePercent", 80).toInt());
+    GpuClimateFilter::setAllowed(
+        settings.value("config/useGpu", GpuClimateFilter::allowed()).toBool());
 
     if (!loadSession(sessionpath, reset))
         return;
@@ -56,7 +64,7 @@ Headless::Headless(QString sessionpath, QString resultspath, bool reset, QObject
     if (!sthread.set(nullptr, session))
         return;
 
-    connect(&sthread, &SearchMaster::searchResult, this, &Headless::searchResult, Qt::QueuedConnection);
+    connect(&sthread, &SearchMaster::searchResults, this, &Headless::searchResults, Qt::QueuedConnection);
     connect(&sthread, &SearchMaster::searchFinish, this, &Headless::searchFinish, Qt::QueuedConnection);
     connect(&timer, &QTimer::timeout, this, QOverload<>::of(&Headless::progressTimeout));
 
@@ -99,15 +107,23 @@ bool Headless::loadSession(QString sessionpath, bool reset)
     }
 
     QTextStream stream(&file);
+    // lines the file does not contain keep the application settings
+    session.sc.extgen = g_extgen;
     if (!session.load(nullptr, stream, false))
     {
         return false;
     }
+    // search with the world generation settings the session was made with
+    applyExtGen(session.sc.extgen);
 
     if (reset)
         session.sc.startseed = 0;
     else
-        results = session.slist;
+    {
+        for (uint64_t s : session.slist)
+            if (resultset.insert(s).second)
+                results.push_back(s);
+    }
 
     if (session.cv.empty())
     {
@@ -172,10 +188,8 @@ void Headless::run()
         }
 
         for (uint64_t s : results)
-        {
             resultstream << (int64_t) s << "\n";
-            resultstream.flush();
-        }
+        resultstream.flush();
 
         qOut() << "\n\n\n\n\n\n\n";
         qOut().flush();
@@ -186,11 +200,19 @@ void Headless::run()
     elapsed.start();
 }
 
-void Headless::searchResult(uint64_t seed)
+void Headless::searchResults(QVector<uint64_t> seeds)
 {
-    results.push_back(seed);
-    resultstream << (int64_t) seed << "\n";
-    resultstream.flush();
+    bool added = false;
+    for (uint64_t seed : seeds)
+    {
+        if (!resultset.insert(seed).second)
+            continue; // found again after a resume
+        results.push_back(seed);
+        resultstream << (int64_t) seed << "\n";
+        added = true;
+    }
+    if (added)
+        resultstream.flush(); // once per batch
 }
 
 void Headless::searchFinish(bool done)

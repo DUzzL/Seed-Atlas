@@ -111,12 +111,9 @@
         </layout>
        </item>
        <item row="1" column="0">
-        <widget class="ResultTree" name="treeStructs">
+        <widget class="StructureResultView" name="treeStructs">
          <property name="editTriggers">
           <set>QAbstractItemView::NoEditTriggers</set>
-         </property>
-         <property name="sortingEnabled">
-          <bool>true</bool>
          </property>
          <property name="animated">
           <bool>true</bool>
@@ -124,36 +121,6 @@
          <property name="expandsOnDoubleClick">
           <bool>false</bool>
          </property>
-         <column>
-          <property name="text">
-           <string>seed</string>
-          </property>
-         </column>
-         <column>
-          <property name="text">
-           <string>structure</string>
-          </property>
-         </column>
-         <column>
-          <property name="text">
-           <string>count</string>
-          </property>
-         </column>
-         <column>
-          <property name="text">
-           <string>x</string>
-          </property>
-         </column>
-         <column>
-          <property name="text">
-           <string>z</string>
-          </property>
-         </column>
-         <column>
-          <property name="text">
-           <string>details</string>
-          </property>
-         </column>
         </widget>
        </item>
       </layout>
@@ -462,6 +429,11 @@
   </layout>
  </widget>
  <customwidgets>
+  <customwidget>
+   <class>StructureResultView</class>
+   <extends>QTreeView</extends>
+   <header>src/tabstructures.h</header>
+  </customwidget>
   <customwidget>
    <class>ResultTree</class>
    <extends>QTreeWidget</extends>

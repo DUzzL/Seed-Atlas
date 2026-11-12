@@ -4,9 +4,14 @@
 #include <QDialog>
 #include <QString>
 
-#define VERS_MAJOR 4
-#define VERS_MINOR 3
-#define VERS_PATCH -1  // negative patch number designates a development version
+// The version comes from the file VERSION.txt through the build (seed-atlas.pro).
+// A negative patch number designates a development version (-1 - N: devN).
+#if !defined(SEED_ATLAS_VERS_MAJOR) || !defined(SEED_ATLAS_VERS_MINOR) || !defined(SEED_ATLAS_VERS_PATCH)
+#error "Build with seed-atlas.pro, which defines the version from the file VERSION.txt."
+#endif
+#define VERS_MAJOR (SEED_ATLAS_VERS_MAJOR)
+#define VERS_MINOR (SEED_ATLAS_VERS_MINOR)
+#define VERS_PATCH (SEED_ATLAS_VERS_PATCH)
 
 // returns +1 if newer, -1 if older  and 0 if equal
 inline int cmpVers(int major, int minor, int patch)

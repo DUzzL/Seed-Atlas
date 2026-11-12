@@ -1155,6 +1155,74 @@ int64_t sampleBiomeNoisePara(const BiomeNoise *bn, int nptype, double px, double
     return (int64_t)(10000.0F*v);
 }
 
+// The climate of a 1.18+ biome sample apart from the depth: all of it is
+// sampled at y = 0, so it is the same for every y of a column.
+typedef struct
+{
+    float t, h, c, e, w;
+    float off; // offset spline + 0.015 (unset with SAMPLE_NO_DEPTH)
+} ColumnClimate;
+
+enum { COLUMN_NO_TEMP_HUMID = 0x100 };
+
+static void sampleColumnClimate(const BiomeNoise *bn, ColumnClimate *cc,
+    int x, int z, uint32_t sample_flags)
+{
+    double px, pz;
+    getBiomeNoisePos(bn, x, z, sample_flags, &px, &pz);
+
+    cc->c = sampleDoublePerlin(&bn->climate[NP_CONTINENTALNESS], px, 0, pz);
+    cc->e = sampleDoublePerlin(&bn->climate[NP_EROSION], px, 0, pz);
+    cc->w = sampleDoublePerlin(&bn->climate[NP_WEIRDNESS], px, 0, pz);
+    cc->off = 0;
+
+    if (!(sample_flags & SAMPLE_NO_DEPTH))
+    {
+        float np_param[] = {
+            cc->c, cc->e,
+            -3.0F * ( fabsf( fabsf(cc->w) - 0.6666667F ) - 0.33333334F ), cc->w,
+        };
+        cc->off = getSpline(bn->sp, np_param) + 0.015F;
+    }
+
+    cc->t = cc->h = 0;
+    if (!(sample_flags & COLUMN_NO_TEMP_HUMID))
+    {
+        cc->t = sampleDoublePerlin(&bn->climate[NP_TEMPERATURE], px, 0, pz);
+        cc->h = sampleDoublePerlin(&bn->climate[NP_HUMIDITY], px, 0, pz);
+    }
+}
+
+static inline float columnDepth(const ColumnClimate *cc, int y)
+{
+    double off = cc->off;
+    //double py = y + sampleDoublePerlin(&bn->shift, y, z, x) * 4.0;
+    float d = 1.0 - (y * 4) / 128.0 - 83.0/160.0 + off;
+    return d;
+}
+
+static int columnBiome(const BiomeNoise *bn, const ColumnClimate *cc, int y,
+    int64_t *np, uint64_t *dat, uint32_t sample_flags)
+{
+    float d = 0;
+    if (!(sample_flags & SAMPLE_NO_DEPTH))
+        d = columnDepth(cc, y);
+
+    int64_t l_np[6];
+    int64_t *p_np = np ? np : l_np;
+    p_np[0] = (int64_t)(10000.0F*cc->t);
+    p_np[1] = (int64_t)(10000.0F*cc->h);
+    p_np[2] = (int64_t)(10000.0F*cc->c);
+    p_np[3] = (int64_t)(10000.0F*cc->e);
+    p_np[4] = (int64_t)(10000.0F*d);
+    p_np[5] = (int64_t)(10000.0F*cc->w);
+
+    int id = none;
+    if (!(sample_flags & SAMPLE_NO_BIOME))
+        id = climateToBiome(bn->mc, (const uint64_t*)p_np, dat);
+    return id;
+}
+
 /// Biome sampler for MC 1.18
 int sampleBiomeNoise(const BiomeNoise *bn, int64_t *np, int x, int y, int z,
     uint64_t *dat, uint32_t sample_flags)
@@ -1167,41 +1235,19 @@ int sampleBiomeNoise(const BiomeNoise *bn, int64_t *np, int x, int y, int z,
         return (int) id;
     }
 
-    float t = 0, h = 0, c = 0, e = 0, d = 0, w = 0;
-    double px, pz;
-    getBiomeNoisePos(bn, x, z, sample_flags, &px, &pz);
+    ColumnClimate cc;
+    sampleColumnClimate(bn, &cc, x, z, sample_flags & ~COLUMN_NO_TEMP_HUMID);
+    return columnBiome(bn, &cc, y, np, dat, sample_flags);
+}
 
-    c = sampleDoublePerlin(&bn->climate[NP_CONTINENTALNESS], px, 0, pz);
-    e = sampleDoublePerlin(&bn->climate[NP_EROSION], px, 0, pz);
-    w = sampleDoublePerlin(&bn->climate[NP_WEIRDNESS], px, 0, pz);
-
-    if (!(sample_flags & SAMPLE_NO_DEPTH))
-    {
-        float np_param[] = {
-            c, e, -3.0F * ( fabsf( fabsf(w) - 0.6666667F ) - 0.33333334F ), w,
-        };
-        double off = getSpline(bn->sp, np_param) + 0.015F;
-
-        //double py = y + sampleDoublePerlin(&bn->shift, y, z, x) * 4.0;
-        d = 1.0 - (y * 4) / 128.0 - 83.0/160.0 + off;
-    }
-
-    t = sampleDoublePerlin(&bn->climate[NP_TEMPERATURE], px, 0, pz);
-    h = sampleDoublePerlin(&bn->climate[NP_HUMIDITY], px, 0, pz);
-
-    int64_t l_np[6];
-    int64_t *p_np = np ? np : l_np;
-    p_np[0] = (int64_t)(10000.0F*t);
-    p_np[1] = (int64_t)(10000.0F*h);
-    p_np[2] = (int64_t)(10000.0F*c);
-    p_np[3] = (int64_t)(10000.0F*e);
-    p_np[4] = (int64_t)(10000.0F*d);
-    p_np[5] = (int64_t)(10000.0F*w);
-
-    int id = none;
-    if (!(sample_flags & SAMPLE_NO_BIOME))
-        id = climateToBiome(bn->mc, (const uint64_t*)p_np, dat);
-    return id;
+int64_t sampleBiomeNoiseDepth(const BiomeNoise *bn, int x, int y, int z,
+    uint32_t sample_flags)
+{
+    ColumnClimate cc;
+    sampleColumnClimate(bn, &cc, x, z,
+        (sample_flags & ~SAMPLE_NO_DEPTH) | COLUMN_NO_TEMP_HUMID);
+    float d = columnDepth(&cc, y);
+    return (int64_t)(10000.0F*d);
 }
 
 // Note: Climate noise is sampled at a 1:1 scale.
@@ -1459,11 +1505,12 @@ int get_resulting_node(const uint64_t np[6], const BiomeTree *bt, int idx,
 typedef struct
 {
     const BiomeTree *bt;
+    int last; // leaf of the previous lookup in this thread, or -1
     uint16_t cnt[6];
     uint8_t idx[6][256];
 } BiomeTreeDims;
 
-static const BiomeTreeDims *get_tree_dims(const BiomeTree *bt)
+static BiomeTreeDims *get_tree_dims(const BiomeTree *bt)
 {
     enum { NTREES = 8 };
     static BT_THREAD_LOCAL BiomeTreeDims dims[NTREES];
@@ -1495,6 +1542,7 @@ static const BiomeTreeDims *get_tree_dims(const BiomeTree *bt)
         }
     }
     bd->bt = bt;
+    bd->last = -1;
     return bd;
 }
 
@@ -1559,15 +1607,20 @@ int get_resulting_node_tab(const NodeDistTable *tab, const BiomeTree *bt, int id
         if (ds_inner < ds)
         {
             int leaf2 = get_resulting_node_tab(tab, bt, inner, leaf, ds, depth);
-            uint64_t ds_leaf2;
-            if (inner == leaf2)
-                ds_leaf2 = ds_inner;
-            else
-                ds_leaf2 = get_np_dist_tab(tab, bt, leaf2);
-            if (ds_leaf2 < ds)
+            // An unchanged leaf is no improvement. (Without this test a bound
+            // above the distance of the current leaf would be lowered to it.)
+            if (leaf2 != leaf)
             {
-                ds = ds_leaf2;
-                leaf = leaf2;
+                uint64_t ds_leaf2;
+                if (inner == leaf2)
+                    ds_leaf2 = ds_inner;
+                else
+                    ds_leaf2 = get_np_dist_tab(tab, bt, leaf2);
+                if (ds_leaf2 < ds)
+                {
+                    ds = ds_leaf2;
+                    leaf = leaf2;
+                }
             }
         }
 
@@ -1690,7 +1743,7 @@ int climateToBiome(int mc, const uint64_t np[6], uint64_t *dat)
     const BiomeTree *bt = getBiomeTree(mc);
     int idx;
 
-    const BiomeTreeDims *bd = get_tree_dims(bt);
+    BiomeTreeDims *bd = get_tree_dims(bt);
     if (bd)
     {
         NodeDistTable tab;
@@ -1704,7 +1757,16 @@ int climateToBiome(int mc, const uint64_t np[6], uint64_t *dat)
         }
         else
         {
-            idx = get_resulting_node_tab(&tab, bt, 0, 0, -1, 0);
+            // The search returns the first leaf of minimal distance (in
+            // search order) among the leaves closer than its start bound. The
+            // leaf of the previous lookup bounds that distance, so starting
+            // from its distance + 1 prunes more and finds the same leaf. The
+            // root (0) serves as the start leaf: it is never returned.
+            uint64_t ds = (uint64_t) -1;
+            if (bd->last >= 0)
+                ds = get_np_dist_tab(&tab, bt, bd->last) + 1;
+            idx = get_resulting_node_tab(&tab, bt, 0, 0, ds, 0);
+            bd->last = idx;
         }
     }
     else if (dat)
@@ -1843,6 +1905,44 @@ static void genBiomeNoise3D(const BiomeNoise *bn, int *out, Range r, int opt)
     int *p = out;
     int scale = r.scale > 4 ? r.scale / 4 : 1;
     int mid = scale / 2;
+
+    if (r.sy > 1 && bn->nptype < 0)
+    {   // Only the depth varies with y: sample the climate of each column
+        // once. The samples keep their order, which matters with the
+        // previous-result hint (opt).
+        enum { NSTACK = 256 };
+        ColumnClimate stack_cc[NSTACK];
+        ColumnClimate *cc = stack_cc;
+        size_t ncol = (size_t)r.sx * r.sz;
+        if (ncol > NSTACK)
+            cc = (ColumnClimate*) malloc(ncol * sizeof(*cc));
+        if (cc)
+        {
+            for (j = 0; j < r.sz; j++)
+            {
+                int zj = (r.z+j)*scale + mid;
+                for (i = 0; i < r.sx; i++)
+                {
+                    int xi = (r.x+i)*scale + mid;
+                    sampleColumnClimate(bn, &cc[(size_t)j*r.sx + i], xi, zj, flags);
+                }
+            }
+            for (k = 0; k < r.sy; k++)
+            {
+                int yk = (r.y+k);
+                for (j = 0; j < r.sz; j++)
+                {
+                    const ColumnClimate *row = cc + (size_t)j*r.sx;
+                    for (i = 0; i < r.sx; i++)
+                        *p++ = columnBiome(bn, &row[i], yk, NULL, p_dat, flags);
+                }
+            }
+            if (cc != stack_cc)
+                free(cc);
+            return;
+        }
+    }
+
     for (k = 0; k < r.sy; k++)
     {
         int yk = (r.y+k);

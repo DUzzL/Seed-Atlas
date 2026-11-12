@@ -24,7 +24,9 @@
 #include <QByteArray>
 #include <QDataStream>
 #include <QDateTime>
+#include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QFileDialog>
 #include <QFontDatabase>
 #include <QDebug>
@@ -148,7 +150,8 @@ constexpr int SIDE_PANEL_DEFAULT_WIDTH = 560;
 } // namespace
 
 
-MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent)
+MainWindow::MainWindow(QString sessionpath, QString resultspath, QString opensession,
+                       QWidget *parent)
     : QMainWindow(parent)
     , ui()
     , dock()
@@ -160,6 +163,7 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QWidget *parent
     , config()
     , mconfig(false)
     , sessionpath(sessionpath)
+    , opensession(opensession)
     , prevdir(".")
     , autosaveTimer()
     , tabidx(-1)
@@ -611,6 +615,23 @@ void MainWindow::closeEvent(QCloseEvent *event)
     formControl->stopSearch();
     QThreadPool::globalInstance()->clear();
     saveSettings();
+
+    if (config.restoreSession)
+    {
+        QString error;
+        if (!saveSession(sessionpath, true, &error))
+        {
+            int button = warn(this, tr("Session not saved"),
+                tr("The current session (filters, matching seeds and search progress) "
+                   "could not be saved:\n%1\n\nThe previous session file was kept.").arg(error),
+                tr("Quit anyway?"), QMessageBox::Yes | QMessageBox::No);
+            if (button != QMessageBox::Yes)
+            {
+                event->ignore();
+                return;
+            }
+        }
+    }
     QMainWindow::closeEvent(event);
 }
 
@@ -879,6 +900,14 @@ bool MainWindow::setSeed(WorldInfo wi, int dim)
         ui->comboY->addItem(QString::number(wi.y));
     ui->comboY->setCurrentIndex(i);
 
+    // A version that the list hides (e.g. 1.16.1 without experimental
+    // versions) has to be listed, otherwise the box keeps the old version and
+    // everything that reads it back (search, results, saving) uses that one.
+    if (ui->comboBoxMC->findText(mc2str(wi.mc)) < 0)
+    {
+        setMCList(g_extgen.experimentalVers, wi.mc);
+        ui->comboBoxMC->setEnabled(false);
+    }
     ui->comboBoxMC->setCurrentText(mc2str(wi.mc));
     ui->seedEdit->setText(QString::asprintf("%" PRId64, (int64_t)wi.seed));
     updateTerrainAvailability(wi.mc);
@@ -976,8 +1005,7 @@ void MainWindow::saveSettings()
 
     g_extgen.save(settings);
 
-    on_tabContainer_currentChanged(-1);
-    on_tabContainerSearch_currentChanged(-1);
+    saveTabs(settings);
 
     WorldInfo wi;
     getSeed(&wi, false);
@@ -996,10 +1024,21 @@ void MainWindow::saveSettings()
         QString s = QString("map/show_") + mapopt2str(stype);
         settings.setValue(s, getMapView()->getShow(stype));
     }
+    // the session is saved by closeEvent(), which can report a failure
+}
 
-    if (config.restoreSession && !ui->seedEdit->text().isEmpty())
+void MainWindow::saveTabs(QSettings& settings)
+{
+    for (QTabWidget *tabs : {ui->tabContainer, ui->tabContainerSearch})
     {
-        saveSession(sessionpath, true);
+        for (int i = 0; i < tabs->count(); i++)
+        {
+            // a tab that never read its settings would overwrite them with
+            // its defaults
+            ISaveTab *tab = dynamic_cast<ISaveTab*>(tabs->widget(i));
+            if (tab && loadedTabs.contains(tab))
+                tab->save(settings);
+        }
     }
 }
 
@@ -1079,24 +1118,65 @@ void MainWindow::loadSettings()
         getMapView()->update(2);
     }
 
-    if (config.restoreSession && hasStoredSeed && QFile::exists(sessionpath))
+    // The session does not depend on the map seed: a search can run with an
+    // empty seed field (as on the first start).
+    if (!opensession.isEmpty())
+    {
+        if (QFile::exists(opensession))
+            loadSession(opensession, false);
+        else
+            qWarning("Session file not found: %s", qUtf8Printable(opensession));
+    }
+    else if (config.restoreSession && QFile::exists(sessionpath))
     {
         loadSession(sessionpath, false);
     }
 }
 
-bool MainWindow::saveSession(QString path, bool quiet)
+bool MainWindow::saveSession(QString path, bool quiet, QString *error)
 {
-    QFile file(path);
+    // Write to a temporary file and replace the old session only when the new
+    // one is complete: a full disk or a crash must not destroy the last good
+    // session. The replaced session is kept as a backup ("<file>.bak").
+    QString err;
+    QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly))
     {
-        if (!quiet)
-            warn(this, tr("Failed to open file:\n\"%1\"").arg(path));
-        return false;
+        err = file.errorString();
+    }
+    else
+    {
+        QTextStream stream(&file);
+        const bool written = saveSession(stream);
+        stream.flush();
+        if (!written || stream.status() != QTextStream::Ok || file.error() != QFileDevice::NoError)
+        {
+            err = file.errorString();
+            if (err.isEmpty() || file.error() == QFileDevice::NoError)
+                err = tr("The file could not be written completely.");
+            file.cancelWriting(); // discarded, the old session stays
+        }
+        else
+        {
+            const QString backup = path + ".bak";
+            if (QFile::exists(path))
+            {
+                QFile::remove(backup);
+                QFile::copy(path, backup);
+            }
+            if (!file.commit())
+                err = file.errorString();
+        }
     }
 
-    QTextStream stream(&file);
-    return saveSession(stream);
+    if (err.isEmpty())
+        return true;
+    if (error)
+        *error = QString("\"%1\": %2").arg(QDir::toNativeSeparators(path), err);
+    if (!quiet)
+        warn(this, tr("Failed to save the session to:\n\"%1\"\n%2")
+            .arg(QDir::toNativeSeparators(path), err));
+    return false;
 }
 
 bool MainWindow::loadSession(QString fnam, bool keepresults)
@@ -1137,7 +1217,39 @@ bool MainWindow::loadSession(QTextStream& stream, bool keepresults, bool quiet)
     if (!session.load(this, stream, quiet))
         return false;
 
-    setSeed(session.wi);
+    // The world generation settings the session was made with (structure
+    // salts, terrain estimate) belong to its filters and results like the
+    // version does. Lines the file does not contain keep the current values.
+    if (!session.sc.extgen.sameGeneration(g_extgen))
+    {
+        applyExtGen(session.sc.extgen);
+        getMapView()->deleteWorld(); // regenerate with the new settings
+        if (!quiet)
+        {
+            info(this, tr("This session was made with other world generation settings "
+                "(structure salt overrides or the terrain estimate). They have been "
+                "applied, so that the search continues as before."));
+        }
+    }
+
+    if (ui->seedEdit->text().trimmed().isEmpty())
+    {   // A session has no map seed: keep the field empty instead of showing
+        // seed 0, but take over the version and the world type.
+        const QString mcs = mc2str(session.wi.mc);
+        if (ui->comboBoxMC->findText(mcs) < 0)
+            setMCList(g_extgen.experimentalVers, session.wi.mc);
+        {
+            const QSignalBlocker blockVersion(ui->comboBoxMC);
+            const QSignalBlocker blockLarge(ui->checkLarge);
+            ui->comboBoxMC->setCurrentText(mcs);
+            ui->checkLarge->setChecked(session.wi.large);
+        }
+        updateMapSeed();
+    }
+    else
+    {
+        setSeed(session.wi);
+    }
 
     formCond->clearConditions();
     for (Condition &c : session.cv)
@@ -1216,7 +1328,7 @@ void MainWindow::setDockable(bool dockable)
     }
 }
 
-void MainWindow::setMCList(bool experimental)
+void MainWindow::setMCList(bool experimental, int extramc)
 {
     WorldInfo wi;
     if (ui->comboBoxMC->count())
@@ -1226,7 +1338,7 @@ void MainWindow::setMCList(bool experimental)
     QStringList mclist;
     for (int mc = MC_NEWEST; mc > MC_UNDEF; mc--)
     {
-        if (!experimental && mc != wi.mc)
+        if (!experimental && mc != wi.mc && mc != extramc)
         {
             if (mc <= MC_1_0 || mc == MC_1_16_1 || mc == MC_1_19_2)
                 continue;
@@ -1476,6 +1588,7 @@ void MainWindow::on_actionExtGen_triggered()
     dialog->setWindowModality(Qt::WindowModal);
     connect(dialog, &QDialog::accepted, [=] {
         g_extgen = dialog->getSettings();
+        publishExtGen(); // the copy that worker threads read
         // invalidate the map world, forcing an update
         getMapView()->deleteWorld();
         setMCList(g_extgen.experimentalVers);
@@ -1543,24 +1656,28 @@ void MainWindow::on_actionLayerDisplay_triggered()
     dialog->show();
 }
 
-static int tab_switch(QTabWidget *tabs, int idxprev, int idxnext)
+int MainWindow::switchTab(QTabWidget *tabs, int idxprev, int idxnext)
 {
     QSettings settings(appSettingsId(), appSettingsId());
     ISaveTab *tabold = dynamic_cast<ISaveTab*>(tabs->widget(idxprev));
     ISaveTab *tabnew = dynamic_cast<ISaveTab*>(tabs->widget(idxnext));
-    if (tabold) tabold->save(settings);
-    if (tabnew) tabnew->load(settings);
+    if (tabold && loadedTabs.contains(tabold)) tabold->save(settings);
+    if (tabnew)
+    {
+        tabnew->load(settings);
+        loadedTabs.insert(tabnew);
+    }
     return idxnext;
 }
 
 void MainWindow::on_tabContainer_currentChanged(int index)
 {
-    tabidx = tab_switch(ui->tabContainer, tabidx, index);
+    tabidx = switchTab(ui->tabContainer, tabidx, index);
 }
 
 void MainWindow::on_tabContainerSearch_currentChanged(int index)
 {
-    tabsearch = tab_switch(ui->tabContainerSearch, tabsearch, index);
+    tabsearch = switchTab(ui->tabContainerSearch, tabsearch, index);
 }
 
 void MainWindow::on_actionSearch_seed_list_triggered()
@@ -1577,8 +1694,18 @@ void MainWindow::onAutosaveTimeout()
 {
     if (config.autosaveCycle)
     {
-        QString path = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-        saveSession(path + "/session.save", true);
+        QString error;
+        if (saveSession(sessionpath, true, &error))
+        {
+            autosaveFailed = false;
+        }
+        else if (!autosaveFailed)
+        {   // report once, not every cycle, until a save succeeds again
+            autosaveFailed = true;
+            warn(this, tr("Autosave failed"),
+                tr("The session could not be saved automatically:\n%1\n\n"
+                   "The previous session file was kept.").arg(error));
+        }
     }
 }
 

@@ -1,5 +1,9 @@
+; build-installer.ps1 passes both versions, read from VERSION.txt
 #ifndef MyAppVersion
-  #define MyAppVersion "4.3.dev0"
+  #error "Run installer/windows/build-installer.ps1, which defines MyAppVersion"
+#endif
+#ifndef MyAppNumericVersion
+  #define MyAppNumericVersion "0.0.0.0"
 #endif
 
 #define MyAppName "Seed Atlas"
@@ -33,11 +37,11 @@ CloseApplications=yes
 CloseApplicationsFilter=seed-atlas.exe
 RestartApplications=no
 AppMutex=SeedAtlas_9EA88549_5B8A_493B_AD00_AA2FB6BE7D02
-VersionInfoVersion=4.3.0.0
+VersionInfoVersion={#MyAppNumericVersion}
 VersionInfoCompany=Seed Atlas Project
 VersionInfoDescription=Seed Atlas Windows Installer
 VersionInfoProductName=Seed Atlas
-VersionInfoProductVersion=4.3.0.0
+VersionInfoProductVersion={#MyAppNumericVersion}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

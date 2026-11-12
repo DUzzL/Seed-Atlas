@@ -23,6 +23,162 @@ jobs:
       - name: Run version tests with the app's engine flags
         run: ./seedatlas-engine/test-versions
 
+  engine-other-os:
+    name: Engine tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            shell: bash
+          # MSYS2 MinGW: the engine needs C11 VLAs
+          - os: windows-2025
+            shell: msys2 {0}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up MinGW (C11 VLA support)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc make
+      - name: Version tests with the app's engine flags
+        run: |
+          make -C seedatlas-engine test-versions CFLAGS="-O3 -DSTRUCT_CONFIG_OVERRIDE=1"
+          ./seedatlas-engine/test-versions
+
+  app:
+    name: App build and headless tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            qt_host: linux
+            qt_arch: linux_gcc_64
+            qt_dir: gcc_64
+          - os: macos-15
+            qt_host: mac
+            qt_arch: clang_64
+            qt_dir: macos
+          - os: windows-2025
+            qt_host: windows
+            qt_arch: win64_mingw
+            qt_dir: mingw_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Linux libraries for Qt
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev \
+            libfontconfig1-dev libdbus-1-3
+      - name: Install Qt 6.8.3 (and MinGW 13.1 on Windows)
+        shell: bash
+        run: |
+          tmp="$RUNNER_TEMP"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            tmp="$(cygpath -u "$RUNNER_TEMP")"
+            python -m venv "$tmp/aqt"
+            aqt_python="$tmp/aqt/Scripts/python.exe"
+          else
+            python3 -m venv "$tmp/aqt"
+            aqt_python="$tmp/aqt/bin/python"
+          fi
+          "$aqt_python" -m pip install --quiet aqtinstall==3.3.0
+          "$aqt_python" -m aqt install-qt ${{ matrix.qt_host }} desktop 6.8.3 ${{ matrix.qt_arch }} \
+            --outputdir "$RUNNER_TEMP/Qt"
+          qt_bin="$tmp/Qt/6.8.3/${{ matrix.qt_dir }}/bin"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            "$aqt_python" -m aqt install-tool windows desktop tools_mingw1310 --outputdir "$RUNNER_TEMP/Qt"
+            cygpath -w "$tmp/Qt/Tools/mingw1310_64/bin" >> "$GITHUB_PATH"
+            qt_bin="$(cygpath -w "$qt_bin")"
+          fi
+          echo "$qt_bin" >> "$GITHUB_PATH"
+      - name: Build the app
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir build
+          cd build
+          qmake ../seed-atlas.pro CONFIG+=release
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            make -j"$(sysctl -n hw.logicalcpu)"
+          else
+            make -j"$(nproc)"
+          fi
+      # PowerShell, as in the release workflow: mingw32-make switches to sh
+      # syntax when it finds the sh.exe of Git Bash in the PATH.
+      - name: Build the app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path build | Out-Null
+          Set-Location build
+          qmake ..\seed-atlas.pro CONFIG+=release
+          if ($LASTEXITCODE -ne 0) { throw "qmake failed" }
+          mingw32-make -j4
+          if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+      - name: Headless tests (known seeds, session round trip, closed stdin)
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) app="$PWD/build/release/seed-atlas.exe" ;;
+            macOS)   app="$PWD/build/seed-atlas.app/Contents/MacOS/seed-atlas" ;;
+            *)       app="$PWD/build/seed-atlas" ;;
+          esac
+          "$app" --version
+          bash .github/workflows/app-tests.sh "$app" "$RUNNER_TEMP/app-tests"
+      - name: Keep the test files of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-tests-${{ matrix.os }}
+          path: ${{ runner.temp }}/app-tests
+          if-no-files-found: ignore
+
+  app-sanitizers:
+    name: App headless tests with AddressSanitizer and UBSan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Linux libraries for Qt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev \
+            libfontconfig1-dev libdbus-1-3
+      - name: Install Qt 6.8.3
+        run: |
+          python3 -m venv "$RUNNER_TEMP/aqt"
+          "$RUNNER_TEMP/aqt/bin/python" -m pip install --quiet aqtinstall==3.3.0
+          "$RUNNER_TEMP/aqt/bin/python" -m aqt install-qt linux desktop 6.8.3 linux_gcc_64 \
+            --outputdir "$RUNNER_TEMP/Qt"
+          echo "$RUNNER_TEMP/Qt/6.8.3/gcc_64/bin" >> "$GITHUB_PATH"
+      - name: Build the app with sanitizers
+        run: |
+          mkdir build
+          cd build
+          qmake ../seed-atlas.pro CONFIG+=release CONFIG+=sanitizer \
+            CONFIG+=sanitize_address CONFIG+=sanitize_undefined
+          make -j"$(nproc)"
+      - name: Headless tests
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: bash .github/workflows/app-tests.sh "$PWD/build/seed-atlas" "$RUNNER_TEMP/app-tests"
+      - name: Keep the test files of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-tests-sanitizers
+          path: ${{ runner.temp }}/app-tests
+          if-no-files-found: ignore
+
   sax-abi:
     name: Mod ABI (seedatlas-sax) tests
     strategy:
@@ -69,4 +225,17 @@ jobs:
           png = Path("rc/icons/logo.png").read_bytes()
           assert png[:8] == b"\x89PNG\r\n\x1a\n"
           assert unpack(">II", png[16:24]) == (128, 128)
+          PY
+      - name: Verify the version source and the AppStream release
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          version = Path("VERSION.txt").read_text().strip()
+          assert re.fullmatch(r"\d+\.\d+\.(dev)?\d+", version), version
+          metainfo = Path("etc/org.seedatlas.SeedAtlas.metainfo.xml").read_text()
+          first = re.search(r'<release version="([^"]+)"', metainfo)
+          assert first and first.group(1) == version, (
+              "the newest <release> in the metainfo must be VERSION.txt", version)
           PY

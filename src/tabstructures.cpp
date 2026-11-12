@@ -14,7 +14,17 @@
 #include <QIntValidator>
 #include <QTextStream>
 #include <QTreeWidgetItem>
+#include <QMetaMethod>
+#include <QClipboard>
+#include <QContextMenuEvent>
+#include <QGuiApplication>
+#include <QHeaderView>
+#include <QItemSelectionModel>
+#include <QKeyEvent>
+#include <QMenu>
+#include <QTimer>
 
+#include <functional>
 #include <map>
 #include <iterator>
 #include <mutex>
@@ -57,6 +67,601 @@ public:
     }
 };
 
+// ---------------------------------------------------------------------------
+// StructureResultModel
+
+namespace {
+
+enum : quintptr { INSTANCE_LEVEL = quintptr(1) << 63 };
+
+// Sort keys with the semantics of the other result lists: empty cells first,
+// numbers by value, then text in locale order.
+struct SortKey
+{
+    enum Kind { Empty, Number, Text } kind = Empty;
+    long double number = 0;
+    QString text;
+};
+
+static int compareKeys(const SortKey& a, const SortKey& b)
+{
+    if (a.kind != b.kind)
+        return a.kind < b.kind ? -1 : 1;
+    if (a.kind == SortKey::Number)
+        return a.number < b.number ? -1 : a.number > b.number ? 1 : 0;
+    if (a.kind == SortKey::Text)
+        return QString::localeAwareCompare(a.text, b.text);
+    return 0;
+}
+
+static SortKey numberKey(long double v) { SortKey k; k.kind = SortKey::Number; k.number = v; return k; }
+static SortKey textKey(const QString& t) { SortKey k; k.kind = SortKey::Text; k.text = t; return k; }
+
+template <class Index, class KeyOf>
+static void sortOrder(std::vector<Index>& order, size_t count, Qt::SortOrder dir, KeyOf keyOf)
+{
+    if (order.size() != count)
+    {
+        order.resize(count);
+        for (size_t i = 0; i < count; i++)
+            order[i] = Index(i);
+    }
+    std::vector<std::pair<SortKey, Index>> keys;
+    keys.reserve(count);
+    for (Index i : order)
+        keys.push_back({keyOf(i), i});
+    std::stable_sort(keys.begin(), keys.end(), [dir](const auto& a, const auto& b) {
+        const int c = compareKeys(a.first, b.first);
+        return dir == Qt::AscendingOrder ? c < 0 : c > 0;
+    });
+    for (size_t i = 0; i < count; i++)
+        order[i] = keys[i].second;
+}
+
+} // namespace
+
+StructureResultModel::StructureResultModel(QObject *parent)
+    : QAbstractItemModel(parent)
+{
+}
+
+int StructureResultModel::level(const QModelIndex& index) const
+{
+    if (!index.isValid())
+        return -1;
+    const quintptr id = index.internalId();
+    return id == 0 ? 0 : (id & INSTANCE_LEVEL) ? 2 : 1;
+}
+
+QModelIndex StructureResultModel::index(int row, int column, const QModelIndex& parent) const
+{
+    if (row < 0 || column < 0 || column >= columnCount())
+        return {};
+    switch (level(parent))
+    {
+    case -1:
+        if (row >= int(seeds.size()))
+            return {};
+        return createIndex(row, column, quintptr(0));
+    case 0:
+    {
+        const int s = seedOrder[parent.row()];
+        if (row >= int(seeds[s].seed->groups.size()))
+            return {};
+        return createIndex(row, column, quintptr(s) + 1);
+    }
+    case 1:
+    {
+        const int s = int(parent.internalId() - 1);
+        const int g = seeds[s].groupOrder[parent.row()];
+        if (row >= int(seeds[s].seed->groups[g].items.size()))
+            return {};
+        return createIndex(row, column, INSTANCE_LEVEL | (quintptr(s) << 16) | quintptr(g));
+    }
+    }
+    return {};
+}
+
+QModelIndex StructureResultModel::parent(const QModelIndex& index) const
+{
+    switch (level(index))
+    {
+    case 1:
+    {
+        const int s = int(index.internalId() - 1);
+        return createIndex(seedRow[s], 0, quintptr(0));
+    }
+    case 2:
+    {
+        const int s = int((index.internalId() & ~INSTANCE_LEVEL) >> 16);
+        const int g = int(index.internalId() & 0xffff);
+        return createIndex(seeds[s].groupRow[g], 0, quintptr(s) + 1);
+    }
+    }
+    return {};
+}
+
+int StructureResultModel::rowCount(const QModelIndex& parent) const
+{
+    if (parent.isValid() && parent.column() != 0)
+        return 0;
+    switch (level(parent))
+    {
+    case -1:
+        return int(seeds.size());
+    case 0:
+        return int(seeds[seedOrder[parent.row()]].seed->groups.size());
+    case 1:
+    {
+        const int s = int(parent.internalId() - 1);
+        const StructGroup& group = seeds[s].seed->groups[seeds[s].groupOrder[parent.row()]];
+        return int(std::min<size_t>(group.items.size(), INT_MAX));
+    }
+    }
+    return 0;
+}
+
+int StructureResultModel::columnCount(const QModelIndex&) const
+{
+    return headers.size();
+}
+
+QVariant StructureResultModel::headerData(int section, Qt::Orientation orientation, int role) const
+{
+    if (orientation == Qt::Horizontal && role == Qt::DisplayRole &&
+            section >= 0 && section < headers.size())
+        return headers[section];
+    return {};
+}
+
+QString StructureResultModel::detail(const StructGroup& group, size_t item) const
+{
+    const StructInstance& in = group.items[item];
+    if (in.detail >= 0)
+        return group.details.value(in.detail);
+    if (group.stype < 0)
+        return QString();
+    VarPos vp(in.p, group.stype);
+    vp.v = in.v;
+    return vp.detail().join(":");
+}
+
+QString StructureResultModel::text(const QModelIndex& index, int column) const
+{
+    switch (level(index))
+    {
+    case 0:
+    {
+        const StructSeedResult& r = *seeds[seedOrder[index.row()]].seed;
+        if (column != C_SEED)
+            return QString();
+        QString t = QString::asprintf("%" PRId64, (int64_t)r.seed);
+        if (r.incomplete)
+            t += " (incomplete)";
+        return t;
+    }
+    case 1:
+    {
+        const int s = int(index.internalId() - 1);
+        const StructGroup& g = seeds[s].seed->groups[seeds[s].groupOrder[index.row()]];
+        switch (column)
+        {
+        case C_SEED: return "-";
+        case C_STRUCT: return g.name;
+        case C_COUNT: return QString::number(g.count);
+        case C_X: return g.single ? QString::number(g.pos.x) : QString();
+        case C_Z: return g.single ? QString::number(g.pos.z) : QString();
+        }
+        return QString();
+    }
+    case 2:
+    {
+        const int s = int((index.internalId() & ~INSTANCE_LEVEL) >> 16);
+        const int gi = int(index.internalId() & 0xffff);
+        const Node& node = seeds[s];
+        const StructGroup& g = node.seed->groups[gi];
+        const std::vector<uint32_t>& order = node.itemOrder[gi];
+        const size_t item = order.empty() ? size_t(index.row()) : order[index.row()];
+        switch (column)
+        {
+        case C_SEED: return "-";
+        case C_X: return QString::number(g.items[item].p.x);
+        case C_Z: return QString::number(g.items[item].p.z);
+        case C_DETAIL: return detail(g, item);
+        }
+        return QString();
+    }
+    }
+    return QString();
+}
+
+QVariant StructureResultModel::data(const QModelIndex& index, int role) const
+{
+    if (!index.isValid())
+        return {};
+    if (role == Qt::DisplayRole)
+    {
+        const QString t = text(index, index.column());
+        if (t.isEmpty())
+            return {};
+        return t;
+    }
+    return {};
+}
+
+bool StructureResultModel::position(const QModelIndex& index, uint64_t *seed, int *dim, Pos *pos) const
+{
+    switch (level(index))
+    {
+    case 1:
+    {
+        const int s = int(index.internalId() - 1);
+        const StructGroup& g = seeds[s].seed->groups[seeds[s].groupOrder[index.row()]];
+        if (!g.single)
+            return false;
+        *seed = seeds[s].seed->seed;
+        *dim = g.dim;
+        *pos = g.pos;
+        return true;
+    }
+    case 2:
+    {
+        const int s = int((index.internalId() & ~INSTANCE_LEVEL) >> 16);
+        const int gi = int(index.internalId() & 0xffff);
+        const Node& node = seeds[s];
+        const StructGroup& g = node.seed->groups[gi];
+        const std::vector<uint32_t>& order = node.itemOrder[gi];
+        const size_t item = order.empty() ? size_t(index.row()) : order[index.row()];
+        *seed = node.seed->seed;
+        *dim = g.dim;
+        *pos = g.items[item].p;
+        return true;
+    }
+    }
+    return false;
+}
+
+void StructureResultModel::append(const std::vector<StructSeedResultPtr>& added)
+{
+    if (added.empty())
+        return;
+    const int first = int(seeds.size());
+    beginInsertRows(QModelIndex(), first, first + int(added.size()) - 1);
+    for (const StructSeedResultPtr& r : added)
+    {
+        Node node;
+        node.seed = r;
+        const size_t n = r->groups.size();
+        node.groupOrder.resize(n);
+        node.groupRow.resize(n);
+        for (size_t g = 0; g < n; g++)
+            node.groupOrder[g] = node.groupRow[g] = int(g);
+        node.itemOrder.resize(n);
+        seedOrder.push_back(int(seeds.size()));
+        seedRow.push_back(int(seeds.size()));
+        seeds.push_back(std::move(node));
+    }
+    endInsertRows();
+}
+
+void StructureResultModel::clear()
+{
+    beginResetModel();
+    seeds.clear();
+    seedOrder.clear();
+    seedRow.clear();
+    endResetModel();
+}
+
+void StructureResultModel::sortRows(int column, Qt::SortOrder dir)
+{
+    if (column < 0 || seeds.empty())
+        return;
+    emit layoutAboutToBeChanged();
+    const QModelIndexList persistent = persistentIndexList();
+    std::vector<std::pair<QModelIndex, std::pair<quintptr, size_t>>> keep;
+    // remember persistent indexes by their data, not their row
+    for (const QModelIndex& i : persistent)
+    {
+        size_t key = 0;
+        switch (level(i))
+        {
+        case 0: key = size_t(seedOrder[i.row()]); break;
+        case 1: key = size_t(seeds[i.internalId() - 1].groupOrder[i.row()]); break;
+        case 2:
+        {
+            const int s = int((i.internalId() & ~INSTANCE_LEVEL) >> 16);
+            const int g = int(i.internalId() & 0xffff);
+            const std::vector<uint32_t>& order = seeds[s].itemOrder[g];
+            key = order.empty() ? size_t(i.row()) : order[i.row()];
+            break;
+        }
+        }
+        keep.push_back({i, {i.internalId(), key}});
+    }
+
+    for (Node& node : seeds)
+    {
+        const StructSeedResult& r = *node.seed;
+        for (size_t g = 0; g < r.groups.size(); g++)
+        {
+            const StructGroup& group = r.groups[g];
+            if (group.items.size() < 2)
+                continue;
+            sortOrder(node.itemOrder[g], group.items.size(), dir, [&](uint32_t i) {
+                const StructInstance& in = group.items[i];
+                switch (column)
+                {
+                case C_SEED: return numberKey((long double)(int64_t)r.seed);
+                case C_X: return numberKey(in.p.x);
+                case C_Z: return numberKey(in.p.z);
+                case C_DETAIL:
+                {
+                    const QString d = detail(group, i);
+                    return d.isEmpty() ? SortKey() : textKey(d);
+                }
+                }
+                return SortKey();
+            });
+        }
+        sortOrder(node.groupOrder, r.groups.size(), dir, [&](int g) {
+            const StructGroup& group = r.groups[g];
+            switch (column)
+            {
+            case C_SEED: return group.single
+                ? numberKey((long double)(int64_t)r.seed) : textKey("-");
+            case C_STRUCT: return textKey(group.name);
+            case C_COUNT: return numberKey((long double)group.count);
+            case C_X: return group.single ? numberKey(group.pos.x) : SortKey();
+            case C_Z: return group.single ? numberKey(group.pos.z) : SortKey();
+            }
+            return SortKey();
+        });
+        for (size_t row = 0; row < node.groupOrder.size(); row++)
+            node.groupRow[node.groupOrder[row]] = int(row);
+    }
+    sortOrder(seedOrder, seeds.size(), dir, [&](int s) {
+        if (column != C_SEED)
+            return SortKey();
+        return numberKey((long double)(int64_t)seeds[s].seed->seed);
+    });
+    for (size_t row = 0; row < seedOrder.size(); row++)
+        seedRow[seedOrder[row]] = int(row);
+
+    for (const auto& k : keep)
+    {
+        const QModelIndex& from = k.first;
+        int row = 0;
+        switch (level(from))
+        {
+        case 0: row = seedRow[k.second.second]; break;
+        case 1: row = seeds[k.second.first - 1].groupRow[k.second.second]; break;
+        case 2:
+        {
+            const int s = int((k.second.first & ~INSTANCE_LEVEL) >> 16);
+            const int g = int(k.second.first & 0xffff);
+            const std::vector<uint32_t>& order = seeds[s].itemOrder[g];
+            row = order.empty() ? int(k.second.second) : int(std::find(order.begin(),
+                order.end(), uint32_t(k.second.second)) - order.begin());
+            break;
+        }
+        }
+        changePersistentIndex(from, createIndex(row, from.column(), k.second.first));
+    }
+    emit layoutChanged();
+}
+
+// ---------------------------------------------------------------------------
+// StructureResultView
+
+StructureResultView::StructureResultView(QWidget *parent)
+    : QTreeView(parent)
+    , model(new StructureResultModel(this))
+{
+    model->setHeaders({ TabStructures::tr("seed"), TabStructures::tr("structure"),
+        TabStructures::tr("count"), TabStructures::tr("x"), TabStructures::tr("z"),
+        TabStructures::tr("details") });
+    setModel(model);
+    setUniformRowHeights(true);
+    setAnimated(false);
+    setSortingEnabled(false);
+    setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    setSelectionMode(QAbstractItemView::ExtendedSelection);
+    header()->setSortIndicatorShown(false);
+    header()->setSectionsClickable(true);
+    connect(header(), &QHeaderView::sectionClicked, this, [this](int section) {
+        // descending, ascending, then unsorted (the rows keep their order)
+        if (sortColumn != section)
+        {
+            sortColumn = section;
+            sortOrder = Qt::DescendingOrder;
+        }
+        else if (sortOrder == Qt::DescendingOrder)
+            sortOrder = Qt::AscendingOrder;
+        else
+            sortColumn = -1;
+        header()->setSortIndicatorShown(sortColumn >= 0);
+        if (sortColumn >= 0)
+        {
+            header()->setSortIndicator(sortColumn, sortOrder);
+            model->sortRows(sortColumn, sortOrder);
+        }
+    });
+    connect(this, &QTreeView::clicked, this, [this](const QModelIndex& index) {
+        uint64_t seed;
+        int dim;
+        Pos pos;
+        if (model->position(index, &seed, &dim, &pos))
+            emit positionClicked(seed, dim, pos);
+        else if (index.isValid() && !index.parent().isValid())
+        {   // a seed row selects the seed
+            const QString t = model->text(index.siblingAtColumn(0), 0);
+            emit positionClicked(uint64_t(t.section(' ', 0, 0).toLongLong()), DIM_UNDEF,
+                Pos{INT_MIN, INT_MIN});
+        }
+    });
+}
+
+void StructureResultView::post(const StructSeedResultPtr& seed)
+{
+    bool schedule = false;
+    {
+        QMutexLocker locker(&mutex);
+        pending.push_back(seed);
+        schedule = !flushQueued;
+        flushQueued = true;
+    }
+    if (schedule)
+    {   // collect what arrives in the meantime and add it in one batch
+        QMetaObject::invokeMethod(this, [this]() {
+            QTimer::singleShot(150, this, &StructureResultView::flush);
+        }, Qt::QueuedConnection);
+    }
+}
+
+void StructureResultView::flush()
+{
+    std::vector<StructSeedResultPtr> items;
+    {
+        QMutexLocker locker(&mutex);
+        items.swap(pending);
+        flushQueued = false;
+    }
+    if (items.empty())
+        return;
+    model->append(items);
+    if (!sized)
+    {   // size the columns once from the first rows
+        sized = true;
+        for (int c = 0, n = model->columnCount(); c < n; c++)
+            resizeColumnToContents(c);
+    }
+}
+
+void StructureResultView::finish()
+{
+    flush();
+    if (sortColumn >= 0)
+        model->sortRows(sortColumn, sortOrder);
+}
+
+void StructureResultView::clearResults()
+{
+    {
+        QMutexLocker locker(&mutex);
+        pending.clear();
+    }
+    model->clear();
+    sized = false;
+}
+
+void StructureResultView::collectRows(const QModelIndex& parent, QStringList& lines, bool all) const
+{
+    QItemSelectionModel *sel = selectionModel();
+    for (int row = 0, n = model->rowCount(parent); row < n; row++)
+    {
+        const QModelIndex index = model->index(row, 0, parent);
+        if (all || (sel && sel->isRowSelected(row, parent)))
+        {
+            QStringList fields;
+            for (int c = 0, nc = model->columnCount(); c < nc; c++)
+            {
+                const QString t = model->text(index, c);
+                fields.append(t == "-" ? QString() : t);
+            }
+            lines.append(fields.join('\t'));
+        }
+        if (model->rowCount(index) && (all || isExpanded(index)))
+            collectRows(index, lines, all);
+    }
+}
+
+void StructureResultView::copyRows(bool all)
+{
+    QStringList lines;
+    collectRows(QModelIndex(), lines, all);
+    if (!lines.isEmpty())
+        QGuiApplication::clipboard()->setText(lines.join('\n') + '\n');
+}
+
+void StructureResultView::contextMenuEvent(QContextMenuEvent *event)
+{
+    QMenu menu(this);
+    QAction *copy = menu.addAction(QIcon::fromTheme("edit-copy"), TabStructures::tr("Copy selected rows"),
+        QKeySequence::Copy, this, [this]() { copyRows(false); });
+    copy->setEnabled(selectionModel() && selectionModel()->hasSelection());
+    QAction *copyAll = menu.addAction(TabStructures::tr("Copy all rows"), this, [this]() { copyRows(true); });
+    copyAll->setEnabled(topLevelItemCount() > 0);
+    menu.addSeparator();
+    QAction *save = menu.addAction(QIcon::fromTheme("document-save"), TabStructures::tr("Export..."),
+        this, &StructureResultView::exportRequested);
+    save->setEnabled(topLevelItemCount() > 0);
+    menu.exec(event->globalPos());
+}
+
+void StructureResultView::keyPressEvent(QKeyEvent *event)
+{
+    if (event->matches(QKeySequence::Copy))
+        copyRows(false);
+    else
+        QTreeView::keyPressEvent(event);
+}
+
+// ---------------------------------------------------------------------------
+
+void AnalysisStructures::emitStructs(const StructSeedResultPtr& result)
+{
+    emit structsDone(result);
+    if (!isSignalConnected(QMetaMethod::fromSignal(&AnalysisStructures::itemDone)))
+        return;
+    // the same rows as a tree of items, for listeners that want one
+    QTreeWidgetItem *seeditem = new TreeIntItem();
+    QString seedText = QString::asprintf("%" PRId64, (int64_t)result->seed);
+    if (result->incomplete)
+        seedText += " (incomplete)";
+    seeditem->setText(0, seedText);
+    seeditem->setData(0, Qt::UserRole+0, QVariant::fromValue(result->seed));
+    seeditem->setData(0, Qt::UserRole+1, QVariant::fromValue((int)DIM_UNDEF));
+    for (const StructGroup& group : result->groups)
+    {
+        QTreeWidgetItem* stitem = new QTreeWidgetItem(seeditem);
+        stitem->setText(C_SEED, "-");
+        stitem->setText(C_STRUCT, group.name);
+        stitem->setData(C_COUNT, Qt::DisplayRole,
+            QVariant::fromValue(static_cast<qulonglong>(group.count)));
+        if (group.single)
+        {
+            stitem->setData(C_X, Qt::DisplayRole, QVariant::fromValue(group.pos.x));
+            stitem->setData(C_Z, Qt::DisplayRole, QVariant::fromValue(group.pos.z));
+            stitem->setData(0, Qt::UserRole+0, QVariant::fromValue(result->seed));
+            stitem->setData(0, Qt::UserRole+1, QVariant::fromValue(group.dim));
+            stitem->setData(0, Qt::UserRole+2, QVariant::fromValue(group.pos));
+        }
+        for (const StructInstance& in : group.items)
+        {
+            QTreeWidgetItem* item = new QTreeWidgetItem(stitem);
+            item->setText(C_SEED, "-");
+            item->setData(C_X, Qt::DisplayRole, QVariant::fromValue(in.p.x));
+            item->setData(C_Z, Qt::DisplayRole, QVariant::fromValue(in.p.z));
+            item->setData(0, Qt::UserRole+0, QVariant::fromValue(result->seed));
+            item->setData(0, Qt::UserRole+1, QVariant::fromValue(group.dim));
+            item->setData(0, Qt::UserRole+2, QVariant::fromValue(in.p));
+            QString detail;
+            if (in.detail >= 0)
+                detail = group.details.value(in.detail);
+            else if (group.stype >= 0)
+            {
+                VarPos vp(in.p, group.stype);
+                vp.v = in.v;
+                detail = vp.detail().join(":");
+            }
+            if (!detail.isEmpty())
+                item->setText(C_DETAIL, detail);
+        }
+    }
+    emit itemDone(seeditem);
+}
+
 void AnalysisStructures::run()
 {
     workers.reset();
@@ -77,7 +682,7 @@ void AnalysisStructures::run()
     if (seeds.size() >= hw)
     {
         idx = 0;
-        struct Result { size_t order; QTreeWidgetItem *item; int kind; };
+        struct Result { size_t order; QTreeWidgetItem *item; int kind; StructSeedResultPtr structs; };
         std::atomic_size_t next(0);
         std::mutex resultsMutex;
         std::vector<Result> results;
@@ -116,29 +721,29 @@ void AnalysisStructures::run()
                 std::copy(std::begin(mapshow), std::end(mapshow), std::begin(task.mapshow));
                 task.stop = false;
                 task.cancel = &stop;
-                QObject::connect(&task, &AnalysisStructures::itemDone,
+                QObject::connect(&task, &AnalysisStructures::structsDone,
                     &task,
-                    [&](QTreeWidgetItem *item) {
+                    [&](StructSeedResultPtr r) {
                         std::lock_guard<std::mutex> lock(resultsMutex);
-                        results.push_back({order, item, false});
+                        results.push_back({order, nullptr, 0, r});
                     }, Qt::DirectConnection);
                 QObject::connect(&task, &AnalysisStructures::quadDone,
                     &task,
                     [&](QTreeWidgetItem *item) {
                         std::lock_guard<std::mutex> lock(resultsMutex);
-                        results.push_back({order, item, true});
+                        results.push_back({order, item, 1, {}});
                     }, Qt::DirectConnection);
                 QObject::connect(&task, &AnalysisStructures::densityDone,
                     &task,
                     [&](QTreeWidgetItem *item) {
                         std::lock_guard<std::mutex> lock(resultsMutex);
-                        results.push_back({order, item, 2});
+                        results.push_back({order, item, 2, {}});
                     }, Qt::DirectConnection);
                 QObject::connect(&task, &AnalysisStructures::fortressDone,
                     &task,
                     [&](QTreeWidgetItem *item) {
                         std::lock_guard<std::mutex> lock(resultsMutex);
-                        results.push_back({order, item, 3});
+                        results.push_back({order, item, 3, {}});
                     }, Qt::DirectConnection);
 
                 if (fortress)
@@ -190,7 +795,7 @@ void AnalysisStructures::run()
             else if (result.kind)
                 emit quadDone(result.item);
             else
-                emit itemDone(result.item);
+                emitStructs(result.structs);
         }
         return;
     }
@@ -216,10 +821,8 @@ void AnalysisStructures::run()
 
 void AnalysisStructures::runStructs(Generator *g)
 {
-    QTreeWidgetItem *seeditem = new TreeIntItem();
-    seeditem->setText(0, QString::asprintf("%" PRId64, wi.seed));
-    seeditem->setData(0, Qt::UserRole+0, QVariant::fromValue(wi.seed));
-    seeditem->setData(0, Qt::UserRole+1, QVariant::fromValue((int)DIM_UNDEF));
+    StructSeedResultPtr seedResult(new StructSeedResult);
+    seedResult->seed = wi.seed;
 
     struct StructResult
     {
@@ -228,7 +831,9 @@ void AnalysisStructures::runStructs(Generator *g)
         int dim = DIM_UNDEF;
         StructureConfig config = {};
         uint64_t count = 0;
-        std::vector<VarPos> positions;
+        int shipResult = -1; // End cities: also fills this result with the ships
+        bool scan = true;    // false: filled by another result's scan
+        StructGroup group;
     };
     std::vector<StructResult> results;
     for (int sopt = D_DESERT; sopt < D_SPAWN; sopt++)
@@ -248,6 +853,21 @@ void AnalysisStructures::runStructs(Generator *g)
         result.config = sconf;
         results.push_back(result);
     }
+    // End cities with and without a ship come from the same generation:
+    // generate them once and split them
+    for (size_t i = 0; i < results.size(); i++)
+    {
+        if (results[i].sopt != D_ENDCITY)
+            continue;
+        for (size_t j = 0; j < results.size(); j++)
+        {
+            if (results[j].sopt == D_ENDCITYSHIP)
+            {
+                results[i].shipResult = int(j);
+                results[j].scan = false;
+            }
+        }
+    }
 
     struct ScanTask
     {
@@ -259,6 +879,8 @@ void AnalysisStructures::runStructs(Generator *g)
     const size_t targetTasksPerType = parallelInner ? hardwareThreads * 8 : 1;
     for (size_t resultIndex = 0; resultIndex < results.size(); resultIndex++)
     {
+        if (!results[resultIndex].scan)
+            continue;
         const int scale = results[resultIndex].config.regionSize * 16;
         const int si0 = floordiv(area.x1, scale);
         const int sj0 = floordiv(area.z1, scale);
@@ -290,6 +912,25 @@ void AnalysisStructures::runStructs(Generator *g)
         }
     }
 
+    // the compact form of the instances; details that need the generated
+    // pieces (End cities, fortresses) are kept as text
+    const auto addInstances = [](StructGroup& group, std::vector<VarPos>& positions) {
+        for (VarPos& vp : positions)
+        {
+            StructInstance in = {vp.p, vp.v, -1};
+            if (!vp.pieces.empty())
+            {
+                const QStringList detail = vp.detail();
+                if (!detail.isEmpty())
+                {
+                    in.detail = int(group.details.size());
+                    group.details.append(detail.join(":"));
+                }
+            }
+            group.items.push_back(in);
+        }
+    };
+
     const bool scanSpawn = mapshow[D_SPAWN] && (dim == DIM_UNDEF || dim == DIM_OVERWORLD);
     const bool scanStrongholds = mapshow[D_STRONGHOLD] && (dim == DIM_UNDEF || dim == DIM_OVERWORLD);
     workTotal = tasks.size() + scanSpawn + scanStrongholds;
@@ -303,22 +944,42 @@ void AnalysisStructures::runStructs(Generator *g)
                 break;
             ScanTask& task = tasks[index];
             StructResult& result = results[task.resultIndex];
+            const bool split = result.shipResult >= 0;
             std::vector<VarPos> positions;
-            const uint64_t count = getStructs(collect ? &positions : nullptr,
+            std::vector<VarPos> ships;
+            uint64_t count = getStructs((collect || split) ? &positions : nullptr,
                 result.config, wi, result.dim,
                 task.x1, task.z1, task.x2, task.z2, false,
                 cancel ? cancel : &stop,
-                result.sopt == D_ENDCITYSHIP ? 1 : result.sopt == D_ENDCITY ? -1 : 0);
+                split ? 0 : result.sopt == D_ENDCITYSHIP ? 1 : result.sopt == D_ENDCITY ? -1 : 0);
+            uint64_t shipCount = 0;
+            if (split)
+            {   // the positions with a ship go to the ship result
+                std::vector<VarPos> without;
+                for (VarPos& vp : positions)
+                {
+                    bool ship = false;
+                    for (const Piece& piece : vp.pieces)
+                        ship |= piece.type == END_SHIP;
+                    (ship ? ships : without).push_back(std::move(vp));
+                }
+                positions.swap(without);
+                count = positions.size();
+                shipCount = ships.size();
+            }
             if (!shouldStop())
             {
                 std::lock_guard<std::mutex> lock(mergeMutex);
                 result.count += count;
-                resultCount.fetch_add(count, std::memory_order_relaxed);
+                resultCount.fetch_add(count + shipCount, std::memory_order_relaxed);
                 if (collect)
+                    addInstances(result.group, positions);
+                if (split)
                 {
-                    result.positions.insert(result.positions.end(),
-                        std::make_move_iterator(positions.begin()),
-                        std::make_move_iterator(positions.end()));
+                    StructResult& shipResult = results[result.shipResult];
+                    shipResult.count += shipCount;
+                    if (collect)
+                        addInstances(shipResult.group, ships);
                 }
             }
             workDone.fetch_add(1, std::memory_order_relaxed);
@@ -335,46 +996,19 @@ void AnalysisStructures::runStructs(Generator *g)
         scanTasks();
 
     if (shouldStop())
-    {
-        delete seeditem;
         return;
-    }
 
-    for (const StructResult& result : results)
+    for (StructResult& result : results)
     {
-        if (shouldStop())
-            break;
-        const std::vector<VarPos>& st = result.positions;
         if (!result.count)
             continue;
-
-        QTreeWidgetItem* stitem = new QTreeWidgetItem(seeditem);
-        stitem->setText(C_SEED, "-");
-        stitem->setText(C_STRUCT, mapopt2display(result.sopt));
-        stitem->setData(C_COUNT, Qt::DisplayRole,
-            QVariant::fromValue(static_cast<qulonglong>(result.count)));
-        if (!collect)
-            continue;
-
-        for (size_t i = 0; i < st.size(); i++)
-        {
-            if (!(i & 63) && shouldStop())
-            {
-                delete seeditem;
-                return;
-            }
-            const VarPos& vp = st[i];
-            QTreeWidgetItem* item = new QTreeWidgetItem(stitem);
-            item->setText(C_SEED, "-");
-            item->setData(C_X, Qt::DisplayRole, QVariant::fromValue(vp.p.x));
-            item->setData(C_Z, Qt::DisplayRole, QVariant::fromValue(vp.p.z));
-            item->setData(0, Qt::UserRole+0, QVariant::fromValue(wi.seed));
-            item->setData(0, Qt::UserRole+1, QVariant::fromValue(result.dim));
-            item->setData(0, Qt::UserRole+2, QVariant::fromValue(vp.p));
-            QStringList sinfo = vp.detail();
-            if (!sinfo.empty())
-                item->setText(C_DETAIL, sinfo.join(":"));
-        }
+        StructGroup& group = result.group;
+        group.sopt = result.sopt;
+        group.stype = result.stype;
+        group.dim = result.dim;
+        group.name = mapopt2display(result.sopt);
+        group.count = result.count;
+        seedResult->groups.push_back(std::move(group));
     }
 
     if (!shouldStop() && scanSpawn)
@@ -383,15 +1017,14 @@ void AnalysisStructures::runStructs(Generator *g)
         Pos pos = getSpawn(g);
         if (pos.x >= area.x1 && pos.x <= area.x2 && pos.z >= area.z1 && pos.z <= area.z2)
         {
-            QTreeWidgetItem* item = new QTreeWidgetItem(seeditem);
-            item->setText(C_SEED, "-");
-            item->setText(C_STRUCT, "spawn");
-            item->setData(C_COUNT, Qt::DisplayRole, QVariant::fromValue(1));
-            item->setData(C_X, Qt::DisplayRole, QVariant::fromValue(pos.x));
-            item->setData(C_Z, Qt::DisplayRole, QVariant::fromValue(pos.z));
-            item->setData(0, Qt::UserRole+0, QVariant::fromValue(wi.seed));
-            item->setData(0, Qt::UserRole+1, QVariant::fromValue((int)DIM_OVERWORLD));
-            item->setData(0, Qt::UserRole+2, QVariant::fromValue(pos));
+            StructGroup group;
+            group.sopt = D_SPAWN;
+            group.dim = DIM_OVERWORLD;
+            group.name = "spawn";
+            group.count = 1;
+            group.single = true;
+            group.pos = pos;
+            seedResult->groups.push_back(std::move(group));
             resultCount.fetch_add(1, std::memory_order_relaxed);
         }
         workDone.fetch_add(1, std::memory_order_relaxed);
@@ -425,36 +1058,23 @@ void AnalysisStructures::runStructs(Generator *g)
         if (!shp.empty())
         {
             resultCount.fetch_add(shp.size(), std::memory_order_relaxed);
-            QTreeWidgetItem* stitem = new QTreeWidgetItem(seeditem);
-            stitem->setText(C_SEED, "-");
-            stitem->setText(C_STRUCT, "stronghold");
-            stitem->setData(C_COUNT, Qt::DisplayRole, QVariant::fromValue(shp.size()));
-
+            StructGroup group;
+            group.sopt = D_STRONGHOLD;
+            group.dim = DIM_OVERWORLD;
+            group.name = "stronghold";
+            group.count = shp.size();
             if (collect)
-            {
                 for (Pos pos : shp)
-                {
-                    QTreeWidgetItem* item = new QTreeWidgetItem(stitem);
-                    item->setText(C_SEED, "-");
-                    item->setData(C_X, Qt::DisplayRole, QVariant::fromValue(pos.x));
-                    item->setData(C_Z, Qt::DisplayRole, QVariant::fromValue(pos.z));
-                    item->setData(0, Qt::UserRole+0, QVariant::fromValue(wi.seed));
-                    item->setData(0, Qt::UserRole+1, QVariant::fromValue((int)DIM_OVERWORLD));
-                    item->setData(0, Qt::UserRole+2, QVariant::fromValue(pos));
-                }
-            }
+                    group.items.push_back({pos, StructureVariant(), -1});
+            seedResult->groups.push_back(std::move(group));
         }
         workDone.fetch_add(1, std::memory_order_relaxed);
     }
 
-    if (seeditem->childCount() == 0)
-    {
-        delete seeditem;
+    if (seedResult->groups.empty())
         return;
-    }
-    if (shouldStop())
-        seeditem->setText(0, QString::asprintf("%" PRId64, wi.seed) + " " + "(incomplete)");
-    emit itemDone(seeditem);
+    seedResult->incomplete = shouldStop();
+    emitStructs(seedResult);
 }
 
 void AnalysisStructures::runQuads(Generator *g)
@@ -1042,8 +1662,9 @@ TabStructures::TabStructures(MainWindow *parent)
 
     // The analysis thread hands its rows straight to the lists, which add
     // them in a few batches without holding up the thread.
-    connect(&thread, &AnalysisStructures::itemDone, ui->treeStructs,
-        [this](QTreeWidgetItem *item) { ui->treeStructs->post(item); }, Qt::DirectConnection);
+    qRegisterMetaType<StructSeedResultPtr>();
+    connect(&thread, &AnalysisStructures::structsDone, ui->treeStructs,
+        [this](StructSeedResultPtr result) { ui->treeStructs->post(result); }, Qt::DirectConnection);
     connect(&thread, &AnalysisStructures::quadDone, this,
         [](QTreeWidgetItem *item) { delete item; }, Qt::DirectConnection);
     connect(&thread, &AnalysisStructures::densityDone, ui->treeDensity,
@@ -1051,10 +1672,12 @@ TabStructures::TabStructures(MainWindow *parent)
     connect(&thread, &AnalysisStructures::fortressDone, ui->treeFortresses,
         [this](QTreeWidgetItem *item) { ui->treeFortresses->post(item); }, Qt::DirectConnection);
     connect(&thread, &AnalysisStructures::finished, this, &TabStructures::onAnalysisFinished);
-    for (ResultTree *tree : {ui->treeStructs, ui->treeDensity, ui->treeFortresses})
+    for (ResultTree *tree : {ui->treeDensity, ui->treeFortresses})
         connect(tree, &ResultTree::exportRequested, this, &TabStructures::on_pushExport_clicked);
-
-    connect(ui->treeStructs, &QTreeWidget::itemClicked, this, &TabStructures::onTreeItemClicked);
+    connect(ui->treeStructs, &StructureResultView::exportRequested,
+        this, &TabStructures::on_pushExport_clicked);
+    connect(ui->treeStructs, &StructureResultView::positionClicked,
+        this, &TabStructures::onPositionClicked);
     connect(ui->treeDensity, &QTreeWidget::itemClicked, this, &TabStructures::onTreeItemClicked);
     connect(ui->treeFortresses, &QTreeWidget::itemClicked,
         this, &TabStructures::onTreeItemClicked);
@@ -1153,9 +1776,12 @@ void TabStructures::refreshFortressTab()
 
 void TabStructures::onAnalysisFinished()
 {
-    ResultTree *resultTree = thread.fortress ? ui->treeFortresses
-        : thread.density ? ui->treeDensity : ui->treeStructs;
-    resultTree->finish();
+    if (thread.fortress)
+        ui->treeFortresses->finish();
+    else if (thread.density)
+        ui->treeDensity->finish();
+    else
+        ui->treeStructs->finish();
     const bool hasResults = thread.fortress
         ? ui->treeFortresses->topLevelItemCount() > 0
         : thread.density ? ui->treeDensity->topLevelItemCount() > 0
@@ -1226,6 +1852,16 @@ void TabStructures::onTreeItemClicked(QTreeWidgetItem *item, int column)
             parent->getMapView()->setShapes({circle});
         }
     }
+}
+
+void TabStructures::onPositionClicked(uint64_t seed, int dim, Pos pos)
+{
+    WorldInfo wi;
+    parent->getSeed(&wi);
+    wi.seed = seed;
+    parent->setSeed(wi, dim);
+    if (pos.x != INT_MIN)
+        parent->getMapView()->setView(pos.x+0.5, pos.z+0.5);
 }
 
 void TabStructures::on_pushStart_clicked()
@@ -1338,22 +1974,37 @@ void TabStructures::exportResults(CsvWriter& csv)
     if (ui->tabWidget->currentWidget() == ui->tabStructures)
     {
         area(dats);
+        // the rows in display order, as the tree shows them
+        const StructureResultModel *model = ui->treeStructs->resultModel();
+        std::function<void(const QModelIndex&, const std::function<void(const QModelIndex&)>&)> walk =
+            [&](const QModelIndex& parent, const std::function<void(const QModelIndex&)>& visit) {
+                for (int row = 0, n = model->rowCount(parent); row < n; row++)
+                {
+                    const QModelIndex index = model->index(row, 0, parent);
+                    visit(index);
+                    walk(index, visit);
+                }
+            };
         if (ui->checkCollect->isChecked())
         {
             csv.row({ tr("seed"), tr("structure"), tr("x"), tr("z"), tr("details") });
             QString seed;
             QString structure;
-            for (QTreeWidgetItemIterator it(ui->treeStructs); *it; ++it)
-            {
-                QTreeWidgetItem *item = *it;
-                if (item->text(C_SEED) != "-")
-                    seed = item->text(C_SEED);
-                if (!item->text(C_STRUCT).isEmpty())
-                    structure = item->text(C_STRUCT);
-                if (!item->data(0, Qt::UserRole+2).isValid())
-                    continue;
-                csv.row({ seed, structure, item->text(C_X), item->text(C_Z), item->text(C_DETAIL) });
-            }
+            walk(QModelIndex(), [&](const QModelIndex& index) {
+                const QString seedText = model->text(index, C_SEED);
+                if (seedText != "-")
+                    seed = seedText;
+                const QString structText = model->text(index, C_STRUCT);
+                if (!structText.isEmpty())
+                    structure = structText;
+                uint64_t s;
+                int d;
+                Pos p;
+                if (!model->position(index, &s, &d, &p))
+                    return;
+                csv.row({ seed, structure, model->text(index, C_X),
+                    model->text(index, C_Z), model->text(index, C_DETAIL) });
+            });
         }
         else
         {
@@ -1362,16 +2013,16 @@ void TabStructures::exportResults(CsvWriter& csv)
 
             uint64_t seed = 0;
             QString structure;
-            for (QTreeWidgetItemIterator it(ui->treeStructs); *it; ++it)
-            {
-                QTreeWidgetItem *item = *it;
-                if (item->data(0, Qt::UserRole).isValid())
-                    seed = item->data(0, Qt::UserRole).toLongLong();
-                if (!item->text(C_STRUCT).isEmpty())
-                    structures.insert((structure = item->text(C_STRUCT)));
-                if (!item->text(C_COUNT).isEmpty())
-                    cnt[seed][structure] = item->text(C_COUNT);
-            }
+            walk(QModelIndex(), [&](const QModelIndex& index) {
+                if (!index.parent().isValid())
+                    seed = uint64_t(model->text(index, C_SEED).section(' ', 0, 0).toLongLong());
+                const QString structText = model->text(index, C_STRUCT);
+                if (!structText.isEmpty())
+                    structures.insert((structure = structText));
+                const QString count = model->text(index, C_COUNT);
+                if (!count.isEmpty())
+                    cnt[seed][structure] = count;
+            });
 
             QStringList header = { tr("seed") };
             for (auto& sit : structures)

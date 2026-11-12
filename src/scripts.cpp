@@ -1,4 +1,5 @@
 #include "scripts.h"
+#include "config.h"
 
 #include "search.h"
 #include "util.h"
@@ -53,7 +54,7 @@ static inline uint64_t murmur64(const void *key, int len, uint64_t h = 0)
 
 QString getLuaDir()
 {
-    QString luadir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/lua";
+    QString luadir = appConfigDir() + "/lua";
     QDir dir(luadir);
     if (!dir.exists())
         dir.mkpath(".");
@@ -155,10 +156,9 @@ static int l_getStructures(lua_State *L)
     int rz1 = (int) ceil(z1 / blocksPerRegion);
     int i, j;
 
-    // TODO: process abort signals
     std::vector<Pos> inst;
 
-    for (j = rz0; j <= rz1; j++)
+    for (j = rz0; j <= rz1 && !(env->stop && *env->stop); j++)
     {
         for (i = rx0; i <= rx1; i++)
         {   // check the structure generation attempt in region (i, j)
@@ -197,6 +197,21 @@ static int l_getStructures(lua_State *L)
     return 1;
 }
 
+// The stop flag of the search that runs a script lives in the extra space
+// of its Lua state; a count hook polls it, so that a long running or endless
+// script ends when the search stops.
+static std::atomic_bool *&stopFlagOf(lua_State *L)
+{
+    return *(std::atomic_bool**) lua_getextraspace(L);
+}
+
+static void stopHook(lua_State *L, lua_Debug *)
+{
+    std::atomic_bool *stop = stopFlagOf(L);
+    if (stop && *stop)
+        luaL_error(L, "search stopped");
+}
+
 lua_State *loadScript(QString path, QString *err)
 {
     lua_State *L = luaL_newstate();
@@ -206,6 +221,7 @@ lua_State *loadScript(QString path, QString *err)
             *err = QApplication::translate("Filter", "failed to create Lua state");
         return nullptr;
     }
+    stopFlagOf(L) = nullptr;
     bool ok = false;
     do
     {
@@ -362,9 +378,18 @@ int runCheckScript(
         lua_seti(L, -2, i+1);
     }
 
+    // the hook ends the script when the search stops
+    stopFlagOf(L) = env->stop;
+    lua_sethook(L, stopHook, LUA_MASKCOUNT, 1000);
+
     // call: pos = check(seed, area{x1,z1,x2,z2}, branches[b..]{x,z})
     if (lua_pcallk(L, 3, LUA_MULTRET, 0, 0, NULL) != 0)
     {
+        if (env->stop && *env->stop)
+        {   // not an error of the script
+            lua_settop(L, top);
+            return COND_FAILED;
+        }
         QString err = lua_tostring(L, -1);
         //qDebug() << err;
         g_lua_output[cond->save].set(cond->hash, env->seed, func, at, err);

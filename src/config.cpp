@@ -7,10 +7,15 @@
 #include <QThread>
 #include <QCoreApplication>
 #include <QApplication>
+#include <QDir>
 #include <QFontDatabase>
+#include <QMutex>
+#include <QRegularExpression>
+#include <QStandardPaths>
 
 #include <atomic>
 #include <cmath>
+#include <memory>
 
 /// globals
 
@@ -42,6 +47,74 @@ void setConfiguredCpuUsagePercent(int percent)
 }
 
 
+QString appConfigDir()
+{
+    QString path;
+    const QByteArray testDir = qgetenv("SEED_ATLAS_TEST_SETTINGS_DIR");
+    const QByteArray testId = qgetenv("SEED_ATLAS_TEST_SETTINGS_ID");
+    if (!testDir.isEmpty())
+    {
+        path = QDir::fromNativeSeparators(QString::fromLocal8Bit(testDir));
+    }
+    else
+    {
+        path = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+        if (!testId.isEmpty())
+        {   // a sibling of the real folder, named after the test settings
+            QString name = QString::fromLocal8Bit(testId);
+            name.replace(QRegularExpression("[^A-Za-z0-9._-]"), "_");
+            path = QDir::cleanPath(path + "/../" + name);
+        }
+    }
+    QDir dir(path);
+    if (!dir.exists())
+        dir.mkpath(".");
+    return path;
+}
+
+// Published copies of g_extgen. A copy is never modified or freed once it is
+// published, so a thread can keep using the reference it got.
+static std::atomic<const ExtGenConfig*> g_extgenActive{nullptr};
+
+void publishExtGen()
+{
+    static QMutex mutex;
+    static std::vector<std::unique_ptr<ExtGenConfig>> published;
+    QMutexLocker locker(&mutex);
+    published.push_back(std::make_unique<ExtGenConfig>(g_extgen));
+    g_extgenActive.store(published.back().get(), std::memory_order_release);
+}
+
+const ExtGenConfig& activeExtGen()
+{
+    static const ExtGenConfig defaults;
+    const ExtGenConfig *p = g_extgenActive.load(std::memory_order_acquire);
+    return p ? *p : defaults;
+}
+
+void applyExtGen(const ExtGenConfig& extgen)
+{
+    const bool experimental = g_extgen.experimentalVers;
+    g_extgen = extgen;
+    g_extgen.experimentalVers = experimental;
+    publishExtGen();
+}
+
+bool ExtGenConfig::sameGeneration(const ExtGenConfig& o) const
+{
+    if (estimateTerrain != o.estimateTerrain)
+        return false;
+    // an override without any valid salt changes nothing
+    for (int i = 0; i < FEATURE_NUM; i++)
+    {
+        const bool a = saltOverride && salts[i] <= MASK48;
+        const bool b = o.saltOverride && o.salts[i] <= MASK48;
+        if (a != b || (a && salts[i] != o.salts[i]))
+            return false;
+    }
+    return true;
+}
+
 void ExtGenConfig::reset()
 {
     experimentalVers = false;
@@ -61,6 +134,8 @@ void ExtGenConfig::load(QSettings& settings)
         QVariant v = QVariant::fromValue(~(qulonglong)0);
         salts[st] = settings.value(QString("world/salt_") + struct2str(st), v).toULongLong();
     }
+    if (this == &g_extgen)
+        publishExtGen();
 }
 
 void ExtGenConfig::save(QSettings& settings)
@@ -634,6 +709,8 @@ void SearchConfig::reset()
     stoponres = true;
     smin = 0;
     smax = ~(uint64_t)0;
+    extgen = g_extgen;
+    extgenSaltsRead = false;
 }
 
 bool SearchConfig::read(const QString& line)
@@ -641,6 +718,30 @@ bool SearchConfig::read(const QString& line)
     QByteArray ba = line.toLocal8Bit();
     const char *p = ba.data();
     int tmp;
+    if (sscanf(p, "#EstTerrain: %d", &tmp) == 1)
+    {
+        extgen.estimateTerrain = tmp != 0;
+        return true;
+    }
+    char name[64];
+    uint64_t salt;
+    if (sscanf(p, "#StructSalt: %63s %" PRIu64, name, &salt) == 2)
+    {
+        if (!extgenSaltsRead)
+        {   // the salts of the session replace the current ones as a whole
+            extgenSaltsRead = true;
+            extgen.saltOverride = true;
+            for (int st = 0; st < FEATURE_NUM; st++)
+                extgen.salts[st] = ~(uint64_t)0;
+        }
+        for (int st = 0; st < FEATURE_NUM; st++)
+        {
+            const char *s = struct2str(st);
+            if (s && strcmp(s, name) == 0 && salt <= MASK48)
+                extgen.salts[st] = salt;
+        }
+        return true;
+    }
     if (sscanf(p, "#Search:   %d", &searchtype) == 1)       return true;
     if (line.startsWith("#List64:   "))                     { slist64path = line.mid(11).trimmed(); return true; }
     if (sscanf(p, "#Threads:  %d", &threads) == 1)          return true;
@@ -663,5 +764,17 @@ void SearchConfig::write(QTextStream& stream)
         stream << "#SMin:     " << smin << "\n";
     if (smax != ~(uint64_t)0)
         stream << "#SMax:     " << smax << "\n";
+    // only values that differ from the defaults, see SearchConfig::extgen
+    if (!extgen.estimateTerrain)
+        stream << "#EstTerrain: 0\n";
+    if (extgen.saltOverride)
+    {
+        for (int st = 0; st < FEATURE_NUM; st++)
+        {
+            const char *s = struct2str(st);
+            if (s && *s && !strchr(s, ' ') && extgen.salts[st] <= MASK48)
+                stream << "#StructSalt: " << s << " " << extgen.salts[st] << "\n";
+        }
+    }
     stream.flush();
 }

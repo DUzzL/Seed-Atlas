@@ -830,7 +830,12 @@ int isStrongholdBiome(int mc, int id)
         return mc <= MC_1_15 || mc >= MC_1_18;
     case mangrove_swamp:
     case deep_dark:
+    // not in the stronghold_biased_to tag of 26.3
+    case dappled_forest:
         return 0;
+    case cherry_grove:
+        // added to stronghold_biased_to in 1.21.9 (absent in 1.20 - 1.21.8)
+        return mc >= MC_1_21_9;
     default:
         return 1;
     }
@@ -984,6 +989,21 @@ uint64_t calcFitness(const Generator *g, int x, int z)
     return q;
 }
 
+// The part of calcFitness() that depends only on the distance from the origin:
+// a lower bound of the fitness (the climate part ds >= 0 is added to it).
+static
+uint64_t fitnessDistTerm(const Generator *g, int x, int z)
+{
+    uint64_t a = (int64_t)x*x;
+    uint64_t b = (int64_t)z*z;
+    if (g->mc <= MC_1_21_1)
+    {
+        double s = (double)(a + b) / (2500 * 2500);
+        return (uint64_t)(s*s * 1e8);
+    }
+    return a + b;
+}
+
 static
 void findFittest(const Generator *g, Pos *pos, uint64_t *fitness, double maxrad, double step)
 {
@@ -995,6 +1015,10 @@ void findFittest(const Generator *g, Pos *pos, uint64_t *fitness, double maxrad,
         {
             int x = p.x + (int)(sin(ang) * rad);
             int z = p.z + (int)(cos(ang) * rad);
+            // the climate part of the fitness is never negative: when the
+            // distance part alone is no improvement, skip the noise sampling
+            if (fitnessDistTerm(g, x, z) >= *fitness)
+                continue;
             uint64_t fit = calcFitness(g, x, z);
             // Then update pos and fitness if combined total is lower/better
             if (fit < *fitness)
@@ -1878,6 +1902,8 @@ L_feature:
         else
         {   // In 1.18 village types are checked separtely...
             const int vv[] = { plains, desert, savanna, taiga, snowy_tundra };
+            // the variants often share their sample position
+            int memo_x[5], memo_z[5], memo_id[5], nmemo = 0, k;
             size_t i;
             for (i = 0; i < sizeof(vv)/sizeof(int); i++) {
                 if (flags && flags != (uint32_t) vv[i])
@@ -1887,7 +1913,17 @@ L_feature:
                 sampleX = (chunkX*32 + 2*sv.x + sv.sx-1) / 2 >> 2;
                 sampleZ = (chunkZ*32 + 2*sv.z + sv.sz-1) / 2 >> 2;
                 sampleY = 319 >> 2;
-                id = getBiomeAt(g, 0, sampleX, sampleY, sampleZ);
+                for (k = 0; k < nmemo; k++)
+                    if (memo_x[k] == sampleX && memo_z[k] == sampleZ)
+                        break;
+                if (k < nmemo) {
+                    id = memo_id[k];
+                } else {
+                    id = getBiomeAt(g, 0, sampleX, sampleY, sampleZ);
+                    memo_x[nmemo] = sampleX;
+                    memo_z[nmemo] = sampleZ;
+                    memo_id[nmemo++] = id;
+                }
                 if (id == vv[i] || (id == meadow && vv[i] == plains)) {
                     viable = vv[i];
                     goto L_viable;
@@ -4898,7 +4934,7 @@ int floodFillGen(struct locate_info_t *info, int i, int j, Pos *p)
         info->ids[k] = INT_MAX;
         int x = info->r.x + i;
         int z = info->r.z + j;
-        if (info->g->mc >= MC_1_18)
+        if (id == -1) // not generated yet (1.18+); -2: cannot be the biome
             id = getBiomeAt(info->g, info->r.scale, x, info->r.y, z);
         if (id == info->match)
         {
@@ -4956,8 +4992,107 @@ int floodFillGen(struct locate_info_t *info, int i, int j, Pos *p)
 }
 
 
-int getBiomeCentersEx(Pos *pos, int *siz, int nmax, Generator *g, Range r,
-    int match, int minsiz, int tol, volatile char *stop, int *status)
+// Generates the biomes of r (its first y layer) into ids, in strips, so a stop
+// request is noticed and the cache stays small. Layers and noises are pure
+// functions of the position, so the strips give the same ids as one area.
+static int genBiomeStrips(Generator *g, int *ids, Range r, volatile char *stop)
+{
+    int rows = 65536 / r.sx;
+    if (rows < 16)
+        rows = 16;
+    if (rows > r.sz)
+        rows = r.sz;
+    Range s = r;
+    s.sy = 1;
+    s.sz = rows;
+    int *cache = allocCache(g, s);
+    if (!cache)
+        return -1;
+    int j, err = 0;
+    for (j = 0; j < r.sz && !err; j += rows)
+    {
+        if (stop && *stop)
+            break;
+        s.z = r.z + j;
+        s.sz = r.sz - j < rows ? r.sz - j : rows;
+        err = genBiomes(g, cache, s);
+        if (!err)
+            memcpy(ids + (size_t)j * r.sx, cache, (size_t)s.sx * s.sz * sizeof(int));
+    }
+    free(cache);
+    return err;
+}
+
+// 1.18+: marks the cells (-1 stays a candidate, -2 is ruled out) where the
+// biome 'match' cannot be, from its exact climate bounds at the noise positions
+// that getBiomeAt() samples for the cell (all four voronoi candidates at 1:1).
+static void markClimateCandidates(const Generator *g, int *ids, Range r,
+    int match, volatile char *stop)
+{
+    uint64_t set[4] = {0};
+    BiomeClimateBounds cb;
+    int paras[NP_MAX], npara, i, j;
+    if (match < 0 || match >= 256)
+        return;
+    set[match >> 6] |= 1ULL << (match & 63);
+    if (!getBiomeClimateBounds(&cb, g->mc, set))
+        return;
+    npara = getClimateBoundParas(&cb, paras);
+    if (npara == 0)
+        return;
+
+    if (r.scale == 1)
+    {   // the voronoi cell of a block is one of the 2x2 cells at (x-2)>>2
+        int qx = (r.x - 2) >> 2, qz = (r.z - 2) >> 2;
+        int qw = ((r.x - 2 + r.sx - 1) >> 2) - qx + 2;
+        int qh = ((r.z - 2 + r.sz - 1) >> 2) - qz + 2;
+        char *ok = (char*) malloc((size_t)qw * qh);
+        if (!ok)
+            return;
+        for (j = 0; j < qh; j++)
+        {
+            if (stop && *stop)
+                break;
+            for (i = 0; i < qw; i++)
+                ok[(size_t)j*qw + i] = (char) climateMayBeWithin(&g->bn, &cb,
+                    paras, npara, qx + i, qz + j, 0);
+        }
+        for (j = 0; j < r.sz; j++)
+        {
+            int cz = ((r.z + j - 2) >> 2) - qz;
+            for (i = 0; i < r.sx; i++)
+            {
+                int cx = ((r.x + i - 2) >> 2) - qx;
+                const char *c = ok + (size_t)cz*qw + cx;
+                if (!c[0] && !c[1] && !c[qw] && !c[qw+1])
+                    ids[(size_t)j*r.sx + i] = -2;
+            }
+        }
+        free(ok);
+        return;
+    }
+
+    // as in genBiomeNoise3D(): 1:4 samples directly, coarser scales sample
+    // the middle of the cell without the shift
+    int scale = r.scale > 4 ? r.scale / 4 : 1;
+    int mid = scale / 2;
+    uint32_t flags = r.scale > 4 ? SAMPLE_NO_SHIFT : 0;
+    for (j = 0; j < r.sz; j++)
+    {
+        if (stop && *stop)
+            break;
+        for (i = 0; i < r.sx; i++)
+        {
+            int x = (r.x + i) * scale + mid;
+            int z = (r.z + j) * scale + mid;
+            if (!climateMayBeWithin(&g->bn, &cb, paras, npara, x, z, flags))
+                ids[(size_t)j*r.sx + i] = -2;
+        }
+    }
+}
+
+static int getBiomeCentersImpl(Pos *pos, int *siz, int nmax, Generator *g, Range r,
+    int match, int minsiz, int tol, volatile char *stop, int *status, int prefilter)
 {
     if (status)
         *status = 0;
@@ -4970,7 +5105,7 @@ int getBiomeCentersEx(Pos *pos, int *siz, int nmax, Generator *g, Range r,
             *status = -1;
         return 0;
     }
-    int i, j, k, n = 0;
+    int i, j, n = 0;
     size_t cell_count = (size_t)r.sx * (size_t)r.sz;
     if (cell_count > (size_t)-1 / sizeof(int) ||
             cell_count > (size_t)-1 / sizeof(locate_entry_t))
@@ -5004,105 +5139,37 @@ int getBiomeCentersEx(Pos *pos, int *siz, int nmax, Generator *g, Range r,
     info.match = match;
     info.tol = tol;
 
-    if (g->dim != DIM_OVERWORLD)
-    {
-        genBiomes(g, ids, r);
-    }
-    else if (g->mc >= MC_1_18)
-    {
-        const int *lim = getBiomeParaLimits(g->mc, match);
-
-        int para[] = {
-            NP_TEMPERATURE,
-            NP_HUMIDITY,
-            NP_EROSION,
-            NP_CONTINENTALNESS,
-            NP_WEIRDNESS,
-        };
-        int npara = sizeof(para) / sizeof(para[0]);
-        for (j = 0; j < r.sz; j += step)
-        {
-            for (i = 0; i < r.sx; i += step)
-            {
-                if (stop && *stop)
-                    break;
-                for (k = 0; k < npara; k++)
-                {
-                    const int *plim = lim + 2*para[k];
-                    if (plim[0] == INT_MIN && plim[1] == INT_MAX)
-                        continue;
-                    DoublePerlinNoise *dpn = &g->bn.climate[para[k]];
-                    double px = (r.x+i) * r.scale / 4.0;
-                    double pz = (r.z+j) * r.scale / 4.0;
-                    int p = 10000 * sampleDoublePerlin(dpn, px, 0, pz);
-                    if (p < plim[0] || p > plim[1])
-                    {
-                        ids[j*r.sx + i] = -2;
-                        break;
-                    }
-                }
-            }
-        }
-        match = -1; // id entries that are still -1 are our candidates
-    }
-    else // 1.17-
-    {
-        int ts = 32 / r.scale;
-        if (r.sx + r.sz < 32)
-            ts = 8;
-
-        int tx = (int) floor(r.x / (double)ts);
-        int tz = (int) floor(r.z / (double)ts);
-        int tw = (int) ceil((r.x+r.sx) / (double)ts) - tx;
-        int th = (int) ceil((r.z+r.sz) / (double)ts) - tz;
-        int ti, tj;
-
-        BiomeFilter bf;
-        setupBiomeFilter(&bf, g->mc, 0, &match, 1, 0, 0, 0, 0);
-        //applySeed(g, 0, g->seed);
-
-        Range tr = { r.scale, 0, 0, ts, ts, 0, 1 };
-        int *cache = allocCache(g, r);
-
-        for (tj = 0; tj < th; tj++)
-        {
-            for (ti = 0; ti < tw; ti++)
-            {
-                if (stop && *stop)
-                    break;
-                tr.x = (tx+ti) * ts;
-                tr.z = (tz+tj) * ts;
-                if (checkForBiomes(g, cache, tr, g->dim, g->seed,
-                    &bf, stop) != 1)
-                {
-                    continue;
-                }
-                for (j = 0; j < ts; j++)
-                {
-                    int jj = tr.z + j - r.z;
-                    if (jj < 0 || jj >= r.sz)
-                        continue;
-                    for (i = 0; i < ts; i++)
-                    {
-                        int ii = tr.x + i - r.x;
-                        if (ii < 0 || ii >= r.sx)
-                            continue;
-                        ids[jj*r.sx + ii] = cache[j*tr.sx + i];
-                    }
-                }
-            }
-        }
-        free(cache);
-    }
-
     applySeed(g, g->dim, g->seed);
+    int lazy = (g->dim == DIM_OVERWORLD && g->mc >= MC_1_18);
+    if (lazy)
+    {
+        // 1.18+ cells are generated when needed (-1). Cells where the biome
+        // is impossible by its climate bounds are marked -2: they are neither
+        // generated nor do they start a fill, and as no fill starts at a cell
+        // of another biome, the result does not depend on this filter.
+        if (prefilter)
+            markClimateCandidates(g, ids, r, match, stop);
+    }
+    else if (genBiomeStrips(g, ids, r, stop) != 0)
+    {
+        if (status)
+            *status = -1;
+        goto L_end;
+    }
+
     for (j = 0; j < r.sz; j += step)
     {
         for (i = 0; i < r.sx; i += step)
         {
             if (stop && *stop)
                 break;
-            if (ids[j*r.sx + i] != match)
+            int id = ids[j*r.sx + i];
+            if (lazy && id == -1)
+            {
+                id = getBiomeAt(g, r.scale, r.x + i, r.y, r.z + j);
+                ids[j*r.sx + i] = id;
+            }
+            if (id != match)
                 continue;
             Pos center;
             int area = floodFillGen(&info, i, j, &center);
@@ -5131,6 +5198,22 @@ L_end:
     free(ids);
 
     return n;
+}
+
+int getBiomeCentersEx(Pos *pos, int *siz, int nmax, Generator *g, Range r,
+    int match, int minsiz, int tol, volatile char *stop, int *status)
+{
+    return getBiomeCentersImpl(pos, siz, nmax, g, r, match, minsiz, tol, stop,
+        status, 1);
+}
+
+// The 1.18+ search without the climate prefilter (every cell may start a
+// flood fill): the reference of the regression tests.
+int getBiomeCentersUnfiltered(Pos *pos, int *siz, int nmax, Generator *g, Range r,
+    int match, int minsiz, int tol, volatile char *stop, int *status)
+{
+    return getBiomeCentersImpl(pos, siz, nmax, g, r, match, minsiz, tol, stop,
+        status, 0);
 }
 
 

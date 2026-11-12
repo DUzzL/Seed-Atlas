@@ -22,16 +22,60 @@
 #include <QBuffer>
 #endif
 
+bool renderExportRange(unsigned char *rgb, const WorldInfo& wi, int dim,
+        uint64_t seed, Range r, int heightvis, const std::atomic_bool *stop)
+{
+    Generator g;
+    setupGenerator(&g, wi.mc, wi.large | FORCE_OCEAN_VARIANTS);
+    applySeed(&g, dim, seed);
+    std::unique_ptr<int, decltype(&free)> ids(allocCache(&g, r), &free);
+    if (!ids)
+        return false;
+    genBiomes(&g, ids.get(), r);
+    biomesToImage(rgb, g_biomeColors, ids.get(), r.sx, r.sz, 1, 1);
+
+    if (heightvis >= 0 && dim == DIM_OVERWORLD)
+    {
+        SurfaceNoise sn;
+        initSurfaceNoise(&sn, DIM_OVERWORLD, seed);
+        int stepbits = r.scale == 1 ? 2 : 0;
+        applyHeightShading(rgb, r, &g, &sn, stepbits, heightvis, true, stop);
+    }
+    return true;
+}
+
 bool ExportWorker::runWorkItem(const ExportWorkItem& work)
 {
     const ExportDialog *mt = parent;
     if (mt->stop)
         return true;
 
-    Generator g;
-    setupGenerator(&g, mt->wi.mc, mt->wi.large | FORCE_OCEAN_VARIANTS);
-    applySeed(&g, mt->dim, work.seed);
     Range r = {mt->scale, mt->x, mt->z, mt->w, mt->h, mt->y, 1};
+
+    if (work.image)
+    {   // a band of rows of a single image
+        ExportImage& image = *work.image;
+        r.z = mt->z + work.row0;
+        r.sz = work.rows;
+        unsigned char *pixels = mt->stop ? nullptr : image.data();
+        if (pixels)
+        {
+            unsigned char *band = pixels + size_t(3) * size_t(mt->w) * size_t(work.row0);
+            if (!renderExportRange(band, mt->wi, mt->dim, work.seed, r, mt->heightvis, &mt->stop))
+                image.failed = true;
+        }
+        if (image.remaining.fetch_sub(1) != 1)
+            return true;
+        // the last band: save the whole image
+        bool ok = !image.failed;
+        if (ok && !mt->stop)
+        {
+            QImage img(image.rgb.data(), mt->w, mt->h, 3*mt->w, QImage::Format_RGB888);
+            ok = !img.isNull() && img.save(work.fnam);
+        }
+        std::vector<unsigned char>().swap(image.rgb);
+        return ok || mt->stop;
+    }
 
     if (mt->tilesize > 0)
     {
@@ -48,23 +92,11 @@ bool ExportWorker::runWorkItem(const ExportWorkItem& work)
         width * height > std::numeric_limits<size_t>::max() / 3)
         return false;
 
-    std::unique_ptr<int, decltype(&free)> ids(allocCache(&g, r), &free);
-    if (!ids)
-        return false;
-    genBiomes(&g, ids.get(), r);
-
     std::unique_ptr<uchar[]> rgb(new (std::nothrow) uchar[width * height * 3]);
     if (!rgb)
         return false;
-    biomesToImage(rgb.get(), g_biomeColors, ids.get(), r.sx, r.sz, 1, 1);
-
-    if (mt->heightvis >= 0 && mt->dim == DIM_OVERWORLD)
-    {
-        SurfaceNoise sn;
-        initSurfaceNoise(&sn, DIM_OVERWORLD, work.seed);
-        int stepbits = mt->scale == 1 ? 2 : 0;
-        applyHeightShading(rgb.get(), r, &g, &sn, stepbits, mt->heightvis, true, &mt->stop);
-    }
+    if (!renderExportRange(rgb.get(), mt->wi, mt->dim, work.seed, r, mt->heightvis, &mt->stop))
+        return false;
 
     QImage img(rgb.get(), r.sx, r.sz, 3*r.sx, QImage::Format_RGB888);
     if (img.isNull())
@@ -490,12 +522,31 @@ void ExportDialog::on_buttonBox_clicked(QAbstractButton *button)
                 }
             }
 
+            // split each image into bands of rows for all workers
+            const size_t pixels = size_t(this->w) * size_t(this->h);
+            if (pixels > std::numeric_limits<size_t>::max() / 3)
+            {
+                warn(this, tr("The selected area is outside the supported coordinate range."));
+                return;
+            }
+            const int threads = std::max(1, mainwindow->config.mapThreads);
+            const int rows = std::max(16, (this->h + 4*threads - 1) / (4*threads));
             for (uint64_t seed : seeds)
             {
                 ExportWorkItem work;
                 existwarn |= initWork(&work, seed, 0, 0);
-                workitems.push_back(work);
                 paths.push_back(work.fnam);
+                std::shared_ptr<ExportImage> image = std::make_shared<ExportImage>();
+                image->bytes = pixels * 3;
+                image->remaining = (this->h + rows - 1) / rows;
+                for (int row0 = 0; row0 < this->h; row0 += rows)
+                {
+                    ExportWorkItem band = work;
+                    band.row0 = row0;
+                    band.rows = std::min(rows, this->h - row0);
+                    band.image = image;
+                    workitems.push_back(band);
+                }
             }
         }
 

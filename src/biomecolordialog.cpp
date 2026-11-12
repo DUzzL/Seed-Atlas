@@ -91,7 +91,7 @@ BiomeColorDialog::BiomeColorDialog(MainWindow *parent, QString initrc, int mc, i
     }
     ui->gridLayout->addWidget(separator, 256, 0, 1, 3);
 
-    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QString dir = appConfigDir();
     QDirIterator it(dir);
     while (it.hasNext())
     {
@@ -366,7 +366,7 @@ bool BiomeColorDialog::saveAsColormap(bool closeAfter)
 {
     QString rc;
     int n;
-    QString path = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QString path = appConfigDir();
     if (!QDir().mkpath(path))
     {
         warn(this, tr("Failed to create the configuration directory."));

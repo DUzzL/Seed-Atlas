@@ -16,7 +16,23 @@
 
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
+#elif defined(Q_OS_DARWIN)
+#include <pthread/qos.h>
 #endif
+
+// The map workers generate what the user is looking at, so they run above
+// the analyses and searches, which keep the default priority: a lower class
+// for those (e.g. utility on macOS, which favours the efficiency cores) made
+// them several times slower even when nothing else was running. Call at the
+// start of the thread.
+inline void setMapThreadPriority()
+{
+#ifdef Q_OS_WIN
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+#elif defined(Q_OS_DARWIN)
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
+#endif
+}
 
 // Mapping is explicitly a foreground, CPU-bound operation. On Windows the
 // normal priority class can leave logical processors to competing background

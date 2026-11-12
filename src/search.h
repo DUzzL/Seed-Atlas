@@ -750,6 +750,43 @@ struct SearchThreadEnv
 
     std::map<uint64_t, lua_State*> l_states;
 
+    // The order in which testTreeAt() evaluates the children of the root in
+    // the full 64-bit pass. They are combined with AND and each is tested at
+    // the origin without a path, so the order cannot change the result; the
+    // search measures the cost and the failure rate of each child and runs
+    // the cheapest rejections first (see orderRootChildren()).
+    struct ChildStat
+    {
+        double ns;          // measured time of the timed calls
+        double timed;       // number of timed calls
+        double calls;       // number of calls
+        double fails;       // number of calls that failed
+    };
+    std::vector<char> rootorder;
+    std::vector<ChildStat> rootstat;
+    uint64_t rootcalls;
+    bool adaptiveorder;
+
+    // Climate bounds of the required biomes of 1:4 overworld biome area
+    // conditions (1.18+), indexed by condition id; see areaMayHaveBiomes().
+    struct AreaBound
+    {
+        int para;           // climate parameter
+        double lo, hi;      // bounds, widened by the sampling margin
+    };
+    struct AreaCheck
+    {
+        int shift;          // largest biome shift (in quarts), rounded up
+        // the bounds of each required biome: it cannot occur in the area if
+        // any of its parameters stays outside of its bounds
+        std::vector<std::vector<AreaBound>> biomes;
+    };
+    std::vector<AreaCheck> areachecks;
+    void initRootOrder();
+    void initAreaChecks();
+    // false if a required biome of condition id cannot occur in the 1:4 area
+    bool areaMayHaveBiomes(int id, int x, int z, int w, int h);
+
     SearchThreadEnv();
     ~SearchThreadEnv();
 
@@ -790,6 +827,20 @@ int testTreeAt(
     int                         pass,           // search pass
     Pos                       * path            // ok trigger positions
 );
+
+/* As testTreeAt() for the full 64-bit pass, but without the fast 48-bit
+ * pass in front, for seeds whose lower 48 bits are known to pass it.
+ */
+int testTreeAt64Only(
+    Pos                         at,
+    SearchThreadEnv           * env,
+    Pos                       * path
+);
+
+/* Does the fast 48-bit pass of the tree depend on the lower 48 bits of the
+ * seed alone? (Lua scripts get the whole seed.)
+ */
+bool treeFast48IsPure(const ConditionTree& tree);
 
 int testCondAt(
     Pos                         at,             // relative origin

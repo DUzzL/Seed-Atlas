@@ -81,9 +81,11 @@ int getStructureConfig_override(int stype, int mc, StructureConfig *sconf)
     if unlikely(mc == INT_MAX) // check whether salt overrides are enabled in the engine
         mc = 0;
     int ok = getStructureConfig(stype, mc, sconf);
-    if (ok && g_extgen.saltOverride)
+    // worker threads call this: read the published copy, not g_extgen
+    const ExtGenConfig& extgen = activeExtGen();
+    if (ok && extgen.saltOverride && stype >= 0 && stype < FEATURE_NUM)
     {
-        uint64_t salt = g_extgen.salts[stype];
+        uint64_t salt = extgen.salts[stype];
         if (salt <= MASK48)
             sconf->salt = salt;
     }
@@ -1172,7 +1174,7 @@ int main(int argc, char *argv[])
         QSettings settings(appSettingsId(), appSettingsId());
         settings.clear();
 
-        QString path = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+        QString path = appConfigDir();
         QDir dir(path);
         if (dir.exists() && path.contains(APP_STRING))
         {
@@ -1180,17 +1182,15 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (sessionpath.isEmpty())
-    {
-        QString path = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-        QDir dir(path);
-        if (!dir.exists())
-            dir.mkpath(".");
-        sessionpath = path + "/session.save";
-    }
+    // The automatic session (restored at start, saved on quit and by the
+    // autosave). A session file named on the command line is opened in its
+    // place, but in the GUI it is not overwritten on quit.
+    const QString autoSessionPath = appConfigDir() + "/session.save";
 
     if (nogui)
     {
+        if (sessionpath.isEmpty())
+            sessionpath = autoSessionPath;
         QCoreApplication app(argc, argv);
         QThreadPool::globalInstance()->setMaxThreadCount(configuredThreadCount());
         Headless headless(sessionpath, resultspath, clear, &app);
@@ -1232,7 +1232,7 @@ int main(int argc, char *argv[])
                 qputenv("SEED_ATLAS_TEST_SETTINGS_ID", "seed-atlas-uitest");
         }
 
-        MainWindow mw(sessionpath, resultspath);
+        MainWindow mw(autoSessionPath, resultspath, sessionpath);
         mw.show();
 
         // Opt-in visual regression hook. It is intentionally environment-only

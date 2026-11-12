@@ -10,6 +10,9 @@
 #include <QDir>
 
 #include <atomic>
+#include <memory>
+#include <mutex>
+#include <vector>
 
 #include "config.h"
 
@@ -18,12 +21,41 @@ class ExportDialog;
 }
 class MainWindow;
 
+// A single (untiled) image is generated in bands of rows by all workers;
+// the worker that finishes the last band saves it.
+struct ExportImage
+{
+    std::mutex mutex;
+    std::vector<unsigned char> rgb; // 3 bytes per pixel, allocated by the first band
+    size_t bytes = 0;
+    std::atomic_int remaining{0};
+    std::atomic_bool failed{false};
+
+    unsigned char *data()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (rgb.size() != bytes && !failed)
+        {
+            try { rgb.resize(bytes); }
+            catch (const std::bad_alloc&) { failed = true; }
+        }
+        return failed ? nullptr : rgb.data();
+    }
+};
+
 struct ExportWorkItem
 {
     uint64_t seed;
     int tx, tz;
     QString fnam;
+    int row0 = 0, rows = 0; // band of an untiled image
+    std::shared_ptr<ExportImage> image;
 };
+
+// Colours the biomes of r into rgb (3 bytes per pixel, r.sx pixels per row)
+// as the export does, with optional height shading (heightvis >= 0).
+bool renderExportRange(unsigned char *rgb, const WorldInfo& wi, int dim,
+        uint64_t seed, Range r, int heightvis, const std::atomic_bool *stop);
 
 class ExportDialog;
 struct ExportWorker : QThread

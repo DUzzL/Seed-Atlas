@@ -1,4 +1,5 @@
 #include "formconditions.h"
+#include "config.h"
 #include "ui_formconditions.h"
 
 #include "aboutdialog.h"
@@ -594,7 +595,7 @@ void addMenuHeading(QMenu *menu, const QString& text)
 
 QString savedFilterFolder()
 {
-    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    return appConfigDir();
 }
 
 } // namespace

@@ -149,7 +149,7 @@ public slots:
     void pasteResults();
     int pasteList(bool dummy);
     void onBufferTimeout();
-    void searchResult(uint64_t seed);
+    void searchResults(QVector<uint64_t> seeds);
     int searchResultsAdd(std::vector<uint64_t> seeds, bool countonly);
     void searchProgressReset();
     void updateSearchProgress(uint64_t last, uint64_t end, int64_t seed);

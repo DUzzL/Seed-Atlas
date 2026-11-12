@@ -44,6 +44,9 @@ enum {
 void applyHeightShading(unsigned char *rgb, Range r,
         const Generator *g, const SurfaceNoise *sn, int stepbits, int mode,
         bool bicubic, const std::atomic_bool *abort);
+// Shades rgb from a height grid sampled with sampleHeightGrid() for r.
+void shadeHeights(unsigned char *rgb, Range r, const std::vector<float>& height,
+        int mode);
 
 struct Scheduled : public QRunnable
 {
@@ -62,7 +65,12 @@ struct Quad : public Scheduled
     ~Quad();
 
     void run();
-    void updateBiomeColor();
+    // Colours the generated biomes into a new image (nullptr if interrupted).
+    // The noise it needs besides the biomes is sampled once and kept, so
+    // later recolouring (e.g. a biome highlight) only redoes the colours.
+    QImage *renderImage();
+    // Replaces the image of a finished quad with a recoloured one (GUI thread).
+    void recolorImage();
 
     WorldInfo wi;
     int dim;
@@ -79,9 +87,13 @@ struct Quad : public Scheduled
     Range r;
 
     int *biomes;
-    uchar *rgb;
     std::vector<float> terrainHeight; // terrain map heights, sampled once
     bool terrainSampled = false;
+    std::vector<float> shadeHeight; // height layer grid, sampled once
+    bool shadeSampled = false;
+    std::vector<float> endHeight; // End land mask heights, sampled once
+    bool endSampled = false;
+    bool endValid = false;
     bool recolor = false; // colors changed while cached, update when reused
 
     // img and spos act as an atomic gate (with NULL or non-NULL indicating available results)
@@ -192,6 +204,8 @@ public:
     virtual ~QWorld();
 
     void setDim(int dim, LayerOpt lopt);
+    // Changes the y level, keeping all tiles that do not depend on it.
+    void setY(int y);
 
     void cleancache(std::vector<Quad*>& cache, unsigned int maxsize);
 
@@ -270,8 +284,9 @@ public:
     QImage slimeimg;
     long slimex, slimez;
 
-    // overlay (visual pixels) for geodes
+    // overlay (visual pixels) for geodes, transparent outside of imgdirty
     QImage imgbuf;
+    QRect imgdirty;
 
     // shapes to overlay
     std::vector<Shape> shapes;

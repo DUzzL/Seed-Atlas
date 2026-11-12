@@ -55,6 +55,11 @@ void GpuClimateFilter::setAllowed(bool allowed)
     g_allowed = allowed;
 }
 
+bool GpuClimateFilter::allowed()
+{
+    return g_allowed;
+}
+
 bool GpuClimateFilter::enabled()
 {
     const char *env = getenv("SEED_ATLAS_GPU");

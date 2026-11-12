@@ -13,8 +13,10 @@
 #include <QMessageBox>
 #include <QSemaphore>
 
+#include <atomic>
 #include <deque>
 #include <map>
+#include <memory>
 
 struct Session
 {
@@ -58,11 +60,12 @@ public:
     bool requestItem(SearchWorker *item);
 
 public slots:
-    void onWorkerResult(uint64_t seed);
+    void onWorkerResults(QVector<uint64_t> seeds);
     void onWorkerFinished();
 
 signals:
-    void searchResult(uint64_t seed);
+    // a batch of matching seeds, in the order of one worker
+    void searchResults(QVector<uint64_t> seeds);
     void searchFinish(bool done);
 
 public:
@@ -73,7 +76,7 @@ public:
 
     QMutex                      mutex;
     std::atomic_bool            stop;
-    QSemaphore                  resultSlots;
+    QSemaphore                  resultSlots;    // result batches in flight
 
     std::deque<TProg>           proghist;
     QElapsedTimer               progtimer;
@@ -107,6 +110,15 @@ public:
     // tests for the GPU prefilter (incremental searches only)
     GpuClimateFilter::Tests gputests;
 
+    // Incremental search with a 48-bit list: the fast 48-bit pass of each
+    // entry, which is the same for all upper 16 bits (0: not known yet,
+    // 1: passes, 2: fails). Only used when that pass depends on the lower
+    // 48 bits alone (see treeFast48IsPure()).
+    std::unique_ptr<std::atomic<uint8_t>[]> lowstate;
+    // Can a worker skip the fast 48-bit pass for a seed whose lower bits
+    // passed the 48-bit pass?
+    bool                        fast48pure;
+
     std::map<uint64_t, uint32_t> bcand;     // candidate low -> next high
     uint64_t                    bscan;      // next low to scan
     uint64_t                    bfirst;     // low that starts at bhigh0
@@ -117,6 +129,7 @@ public:
 private:
     bool requestBlockItem(SearchWorker *item);
     void updateBlockProgress();
+    void deleteWorkers(const std::vector<SearchWorker*>& list);
 };
 
 
@@ -128,11 +141,18 @@ public:
     ~SearchWorker();
 
     bool getNextItem();
-    bool reportResult(uint64_t seed);
+    // Collects a matching seed; the results go to the master in batches
+    // (immediately when the search stops on the first result).
+    void report(uint64_t seed);
+    // Hands the collected results to the master, at the end of each item
+    // (before the next item moves the progress on). False if the search
+    // stops: the batch is then dropped, and since the progress still points
+    // at the start of the item, found again on resume.
+    bool flushResults();
     virtual void run() override;
 
 signals:
-    void result(uint64_t seed);
+    void results(QVector<uint64_t> seeds);
 
 public:
     SearchMaster      * master;
@@ -145,16 +165,26 @@ public:
     int                 itemkind;   // kind of work item
     std::vector<uint64_t> found;    // (out) candidates of a scan item
     uint64_t            scanns;     // (out) duration of the last scan item
-    uint64_t            prog;       // search space progress
+    uint64_t            prog;       // search space progress (under the mutex)
     uint64_t            idx;        // current index in candidate buffer
     uint64_t            sstart;     // starting seed
     int                 scnt;       // number of seeds to process in this item
-    uint64_t            seed;       // (out) current seed while processing
+    bool                wantgpu;    // (in) the item is for the GPU prefilter
+    int                 gpuitemsize;// (in) seeds of such an item
+    // (out) the first seed of the item whose results have not been reported
+    // yet, read by getProgress() as the position to resume from
+    std::atomic<uint64_t> seed;
     // the end seed is the highest unsigned seed value in the search space
     // (or the last entry in the seed list)
 
 private:
     SearchThreadEnv     env;
+    QVector<uint64_t>   resbuf;     // results not reported yet
+    void runIncGpu(GpuClimateFilter *gpu);
+    int testSeed(uint64_t s);
+    // GPU against CPU: the measured time per seed of each (0: not measured)
+    double              cpunsps = 0, gpunsps = 0;
+    uint64_t            gpuitems = 0;
 };
 
 

@@ -7,6 +7,8 @@
 #include <QElapsedTimer>
 #include <QFile>
 
+#include <unordered_set>
+
 class Headless : public QThread
 {
     Q_OBJECT
@@ -19,7 +21,7 @@ public:
 
 public slots:
     void run();
-    void searchResult(uint64_t seed);
+    void searchResults(QVector<uint64_t> seeds);
     void searchFinish(bool done);
     void progressTimeout();
 
@@ -31,6 +33,9 @@ public:
     QString sessionpath;
     Session session;
     std::vector<uint64_t> results;
+    // the results so far: a resumed search finds the seeds again that
+    // were reported after its resume position
+    std::unordered_set<uint64_t> resultset;
     QFile resultfile;
     QTextStream resultstream;
     FILE *progressfp;

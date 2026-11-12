@@ -1,16 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:-4.3.dev0}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "$script_dir/../.." && pwd)"
 build_dir="$project_root/build-macos"
 dist_dir="$project_root/dist"
-build_id="${SEED_ATLAS_BUILD_ID:-$(git -C "$project_root" rev-parse --verify HEAD)}"
-if [[ ! "$build_id" =~ ^[0-9a-fA-F]{40}$ ]]; then
-  echo "Could not determine the Git commit used as the Seed Atlas build ID" >&2
-  exit 2
-fi
+# version (argument or VERSION.txt), build_id, build_time
+source "$script_dir/../release-info.sh" "$project_root" "${1:-}"
 if [[ -n "${QT_PREFIX:-}" ]]; then
   qt_prefix="$QT_PREFIX"
 else
@@ -70,7 +66,7 @@ else
   mkdir -p "$build_dir" "$dist_dir"
   cd "$build_dir"
 
-  qmake_args=(CONFIG+=release "SEED_ATLAS_BUILD_ID=$build_id")
+  qmake_args=(CONFIG+=release "SEED_ATLAS_BUILD_ID=$build_id" "SEED_ATLAS_BUILD_TIME=$build_time")
   if [[ "${SEED_ATLAS_UNIVERSAL:-0}" == "1" ]]; then
     qmake_args+=(QMAKE_APPLE_DEVICE_ARCHS="x86_64 arm64")
   fi
@@ -96,6 +92,8 @@ trap cleanup_package_dir EXIT
 ditto --norsrc --noextattr --noqtn --noacl \
   "$build_dir/seed-atlas.app" "$package_dir/seed-atlas.app"
 cd "$package_dir"
+# license texts and notices (LGPL for Qt, GPL for the app, third parties)
+copy_license_files seed-atlas.app/Contents/Resources/Licenses
 xattr -cr seed-atlas.app
 export COPYFILE_DISABLE=1
 
@@ -185,7 +183,7 @@ fi
 output_path="$dist_dir/Seed-Atlas-$version-macOS$output_suffix.dmg"
 mv -f seed-atlas.dmg "$output_path"
 
-printf '{\n  "buildId": "%s"\n}\n' "$build_id" > "$dist_dir/update.json"
+write_update_json "$dist_dir/update.json"
 
 echo "Created: $output_path"
 echo "Created: $dist_dir/update.json"

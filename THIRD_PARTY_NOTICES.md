@@ -6,21 +6,63 @@ identify the actual dependencies and are not product branding.
 ## cubiomes
 
 Copyright (c) 2020 Cubitect. Licensed under the MIT License. The complete
-license is included in the corresponding source archive at
+license is installed with the program as `cubiomes-LICENSE.txt` (next to the
+other license files listed below) and is part of the source archive at
 `seedatlas-engine/LICENSE`.
 
 ## Qt 6.8.3
 
 Qt Core, GUI, Widgets, Network, and SVG libraries are dynamically linked and
 distributed under the GNU Lesser General Public License version 3, as
-applicable. Users may replace the Qt DLLs with compatible modified builds.
-The LGPLv3 and GPLv3 texts are installed in the `Licenses` directory.
+applicable. Users may replace the Qt libraries with compatible modified builds.
+The LGPLv3 text (`LGPL-3.0.txt`) and the GPLv3 text (`LICENSE.txt`) are
+installed with the program:
+
+- Windows: the `Licenses` folder of the installation;
+- macOS: `Seed Atlas.app/Contents/Resources/Licenses`;
+- Linux Flatpak: `/app/share/doc/seed-atlas`.
+
 Qt licensing information: https://www.qt.io/licensing/
+
+`src/qzipwriter.h` is derived from the QZipWriter class of Qt (Copyright (C)
+2016 The Qt Company Ltd.), which is available under the LGPLv3 or the
+GPLv2/GPLv3; Seed Atlas uses it under the GPLv3.
 
 ## Lua 5.4
 
-Copyright (C) 1994-2022 Lua.org, PUC-Rio. Licensed under the MIT License. The
-complete notice is included in `lua/src/lua.h` in the source archive.
+Copyright (C) 1994-2022 Lua.org, PUC-Rio.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Vulkan API declarations
+
+`src/vkmini.h` repeats the types, values and function signatures of the few
+Vulkan API calls the GPU code uses, as declared in `vulkan_core.h` of the
+Khronos Vulkan-Headers. Copyright 2015-2025 The Khronos Group Inc., licensed
+under the Apache License 2.0 or the MIT License (SPDX: Apache-2.0 OR MIT);
+Seed Atlas uses them under the MIT License. Source:
+https://github.com/KhronosGroup/Vulkan-Headers
+
+## libwinsane (Windows builds)
+
+`src/libwinsane` by Christopher Wellons is free and unencumbered software
+released into the public domain (The Unlicense).
 
 ## QDarkStyleSheet
 

@@ -1,6 +1,6 @@
 # Seed Atlas legal notice
 
-Seed Atlas 4.3.dev0 is free software distributed under the GNU General Public
+Seed Atlas is free software distributed under the GNU General Public
 License version 3. See `LICENSE` for the complete license text.
 
 Seed Atlas is a modified version of Cubiomes Viewer by Cubitect. The original

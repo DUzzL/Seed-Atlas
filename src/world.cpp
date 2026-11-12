@@ -1,7 +1,9 @@
 #include "world.h"
+#include "config.h"
 
 #include "terrainmap.h"
 #include "util.h"
+#include "mappingworkers.h"
 
 #include <QPainterPath>
 #include <QSettings>
@@ -284,7 +286,7 @@ QStringList VarPos::detail() const
 Quad::Quad(const Level* l, int64_t i, int64_t j)
     : wi(l->wi),dim(l->dim),lopt(l->lopt),g(&l->g),sn(&l->sn),highres(l->highres),scale(l->scale)
     , ti(i),tj(j),blocks(l->blocks),pixs(l->pixs),sopt(l->sopt),biomeHighlights(l->world->biomeHighlights)
-    , biomes(),rgb(),img(),spos()
+    , biomes(),img(),spos()
 {
     isdel = l->isdel;
     setAutoDelete(false);
@@ -301,7 +303,6 @@ Quad::~Quad()
     if (biomes) free(biomes);
     delete img;
     delete spos;
-    delete [] rgb;
 }
 
 uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
@@ -322,6 +323,11 @@ uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
         setupGenerator(&g, wi.mc, wi.large);
         applySeed(&g, dim, wi.seed);
     }
+    // the terrain test of End cities needs the End surface noise, which does
+    // not depend on the position
+    SurfaceNoise endsn;
+    if (!nogen && sconf.structType == End_City)
+        initSurfaceNoise(&endsn, DIM_END, wi.seed);
 
     for (int i = si0; i <= si1; i++)
     {
@@ -361,9 +367,7 @@ uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
                     int y = 0;
                     if (!nogen)
                     {
-                        SurfaceNoise sn;
-                        initSurfaceNoise(&sn, DIM_END, wi.seed);
-                        y = isViableEndCityTerrain(&g, &sn, p.x, p.z);
+                        y = isViableEndCityTerrain(&g, &endsn, p.x, p.z);
                         if (!y)
                             continue;
                     }
@@ -399,7 +403,7 @@ uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
                 }
                 else if (!nogen && g.mc >= MC_1_18)
                 {
-                    if (g_extgen.estimateTerrain &&
+                    if (activeExtGen().estimateTerrain &&
                         !isViableStructureTerrain(sconf.structType, &g, p.x, p.z))
                     {
                         continue;
@@ -422,10 +426,16 @@ void applyHeightShading(unsigned char *rgb, Range r,
         const Generator *g, const SurfaceNoise *sn, int stepbits, int mode,
         bool bicubic, const std::atomic_bool *abort)
 {
-    int w = r.sx, h = r.sz;
     std::vector<float> height;
     if (!sampleHeightGrid(height, r, g, sn, stepbits, bicubic, abort))
         return;
+    shadeHeights(rgb, r, height, mode);
+}
+
+void shadeHeights(unsigned char *rgb, Range r, const std::vector<float>& height,
+        int mode)
+{
+    int w = r.sx, h = r.sz;
     // apply shading based on height changes
     float mul = 0.25 / r.scale;
     float lout = 0.65;
@@ -479,10 +489,13 @@ void applyHeightShading(unsigned char *rgb, Range r,
     }
 }
 
-void Quad::updateBiomeColor()
+QImage *Quad::renderImage()
 {
-    if (!biomes || !rgb)
-        return;
+    if (!biomes)
+        return nullptr;
+    const size_t npix = size_t(r.sx) * size_t(r.sz);
+    std::vector<uchar> rgbbuf(npix * 3);
+    uchar *rgb = rgbbuf.data();
     int nptype = -1;
     if (g->mc >= MC_1_18) nptype = g->bn.nptype;
     if (g->mc <= MC_B1_7) nptype = g->bnb.nptype;
@@ -510,7 +523,7 @@ void Quad::updateBiomeColor()
                 bool fine = dim == DIM_OVERWORLD && r.scale == 1;
                 int stepbits = fine ? 2 : scale >= 16 ? 1 : 0;
                 if (!sampleHeightGrid(terrainHeight, r, g, sn, stepbits, fine, isdel))
-                    return;
+                    return nullptr;
             }
             terrainSampled = true;
             applyTerrainStyle(rgb, biomes, r, g->mc, dim, g->seed, terrainHeight);
@@ -544,15 +557,27 @@ void Quad::updateBiomeColor()
         // surface to reveal the main island and the shapes of outer islands.
         if (dim == DIM_END && r.scale <= 8 && lopt.mode != LOPT_TERRAIN)
         {
-            std::vector<float> height(r.sx * r.sz);
-            if (mapEndSurfaceHeight(height.data(), &g->en, sn,
-                    r.x, r.z, r.sx, r.sz, r.scale, 0) == 0)
+            if (!endSampled)
             {
-                mapEndIslandHeight(height.data(), &g->en, g->seed,
-                    r.x, r.z, r.sx, r.sz, r.scale);
+                endHeight.assign(npix, 0);
+                endValid = mapEndSurfaceHeight(endHeight.data(), &g->en, sn,
+                    r.x, r.z, r.sx, r.sz, r.scale, 0) == 0;
+                if (endValid)
+                {
+                    mapEndIslandHeight(endHeight.data(), &g->en, g->seed,
+                        r.x, r.z, r.sx, r.sz, r.scale);
+                }
+                else
+                {
+                    endHeight.clear();
+                }
+                endSampled = true;
+            }
+            if (endValid)
+            {
                 for (int i = 0; i < r.sx * r.sz; i++)
                 {
-                    if (height[i] <= 0)
+                    if (endHeight[i] <= 0)
                     {
                         uchar *col = rgb + 3*i;
                         col[0] = 7;
@@ -565,14 +590,41 @@ void Quad::updateBiomeColor()
 
         if (lopt.mode == LOPT_HEIGHT)
         {
-            int stepbits = 0; // interpolated_step = (1 << stepbits)
-            if (scale > 16)
+            if (!shadeSampled)
             {
-                stepbits = 1;
+                int stepbits = 0; // interpolated_step = (1 << stepbits)
+                if (scale > 16)
+                {
+                    stepbits = 1;
+                }
+                if (!sampleHeightGrid(shadeHeight, r, g, sn, stepbits, false, isdel))
+                    return nullptr;
+                shadeSampled = true;
             }
-            applyHeightShading(rgb, r, g, sn, stepbits, lopt.disp[lopt.mode], false, isdel);
+            shadeHeights(rgb, r, shadeHeight, lopt.disp[lopt.mode]);
         }
     }
+
+    // Tiles are kept as 32-bit images: the raster engine scales those
+    // directly, whereas 24-bit images go through a slow generic path on
+    // every paint.
+    QImage *image = new QImage(r.sx, r.sz, QImage::Format_RGB32);
+    for (int j = 0; j < r.sz; j++)
+    {
+        QRgb *line = reinterpret_cast<QRgb*>(image->scanLine(j));
+        const uchar *src = rgb + size_t(3) * size_t(j) * size_t(r.sx);
+        for (int i = 0; i < r.sx; i++, src += 3)
+            line[i] = qRgb(src[0], src[1], src[2]);
+    }
+    return image;
+}
+
+void Quad::recolorImage()
+{
+    if (!done || !img)
+        return;
+    if (QImage *image = renderImage())
+        delete img.fetchAndStoreOrdered(image);
 }
 
 void Quad::run()
@@ -612,17 +664,15 @@ void Quad::run()
                 biomes[i] = -1;
         }
 
-        rgb = new uchar[w*h * 3]();
-        updateBiomeColor();
-        if (*isdel)
+        QImage *image = renderImage();
+        if (*isdel || !image)
         {   // interrupted: drop the half-colored tile so that it is redone
-            delete [] rgb;
-            rgb = nullptr;
+            delete image;
             free(biomes);
             biomes = nullptr;
             return;
         }
-        img = new QImage(rgb, w, h, 3*w, QImage::Format_RGB888);
+        img = image;
     }
     else if (pixs < 0)
     {
@@ -868,7 +918,7 @@ void Level::resizeLevel(std::vector<Quad*>& cache, int64_t x, int64_t z, int64_t
     // finished quads are not touched by the workers, so the (possibly slow)
     // recoloring does not need to hold up the queue
     for (Quad *q : recolor)
-        q->updateBiomeColor();
+        q->recolorImage();
 }
 
 void Level::update(std::vector<Quad*>& cache, qreal bx0, qreal bz0, qreal bx1, qreal bz1,
@@ -903,6 +953,7 @@ void Level::setInactive(std::vector<Quad*>& cache)
 
 void MapWorker::run()
 {
+    setMapThreadPriority();
     while (Scheduled *q = world->requestQuad())
     {
         // Once run() has finished a quad, the GUI thread may delete it at any
@@ -1029,6 +1080,36 @@ void QWorld::setDim(int dim, LayerOpt lopt)
     lvb.resize(lcnt);
     for (int i = 0, scale = 1; i < lcnt; i++, scale *= 4)
         lvb[i].init4map(this, pixs, scale);
+}
+
+void QWorld::setY(int y)
+{
+    if (wi.y == y)
+        return;
+    clear();
+    // Only 1.18+ Overworld biomes and the height shading depend on the y
+    // level; structures, spawn and the other tiles are kept.
+    const bool allTiles = lopt.mode == LOPT_HEIGHT;
+    const bool overworld = wi.mc >= MC_1_18;
+    mutex.lock();
+    for (Quad *&q : cachedbiomes)
+    {
+        if (!q)
+            continue;
+        if (allTiles || (overworld && q->dim == DIM_OVERWORLD))
+        {
+            delete q;
+            q = nullptr;
+        }
+        else
+        {
+            q->wi.y = y;
+        }
+    }
+    rebuildCacheIndex(cachedbiomes);
+    mutex.unlock();
+    wi.y = y;
+    setDim(dim, lopt);
 }
 
 void QWorld::setSelectPos(QPoint pos)
@@ -1528,9 +1609,27 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
     //gridpix = painter.fontMetrics().boundingRect("-30000000,-30000000").width();
     // and sets the scale changes such that they align with the power of 4 tiles
 
+    // The finer level covers the coarser one completely once all of its tiles
+    // are done; painting the coarser level underneath is then wasted.
+    bool fineComplete = activelv >= 0 && activelv < (int)lvb.size() &&
+        !lvb[activelv].cells.empty();
+    if (fineComplete)
+    {
+        for (Quad *q : lvb[activelv].cells)
+        {
+            if (!q->img)
+            {
+                fineComplete = false;
+                break;
+            }
+        }
+    }
+
     for (int li = activelv+1; li >= activelv; --li)
     {
         if (li < 0 || li >= (int)lvb.size())
+            continue;
+        if (li == activelv+1 && fineComplete && !(sshow[D_GRID] && !gridspacing))
             continue;
         Level& l = lvb[li];
         for (Quad *q : l.cells)
@@ -1705,12 +1804,14 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
     }
 
     if (imgbuf.width() != vw || imgbuf.height() != vh)
-    {
-        imgbuf = QImage(vw, vh, QImage::Format_Indexed8);
-        imgbuf.setColor(0, qRgba(0, 0, 0, 0));
-        imgbuf.setColor(1, qRgba(255, 255, 255, 96));
-        imgbuf.setColor(2, qRgba(180, 64, 192, 255));
+    {   // kept fully transparent between frames, except for imgdirty
+        imgbuf = QImage(vw, vh, QImage::Format_ARGB32_Premultiplied);
+        imgbuf.fill(0);
+        imgdirty = QRect();
     }
+    // the geode dot colours: a translucent rim around an opaque centre
+    const QRgb geodeRim = qPremultiply(qRgba(255, 255, 255, 96));
+    const QRgb geodeCore = qRgba(180, 64, 192, 255);
 
     for (int sopt = D_DESERT; sopt < D_SPAWN; sopt++)
     {
@@ -1725,7 +1826,10 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
 
         std::map<const QPixmap*, std::vector<QPainter::PixmapFragment>> frags;
         QSet<quint64> oreCells;
-        bool imgbuf_used = false; // cleared on first use, only geodes draw into it
+        bool imgbuf_used = false; // only geodes draw into it
+        uchar *imgbits = nullptr;
+        qsizetype imgline = 0;
+        int dirtyx0 = INT_MAX, dirtyz0 = INT_MAX, dirtyx1 = INT_MIN, dirtyz1 = INT_MIN;
 
         for (Quad *q : l.cells)
         {
@@ -1828,14 +1932,20 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
                             if (q > r*r) continue;
                             int x = floor(d.x() + i);
                             int z = floor(d.y() + j);
-                            if (imgbuf.rect().contains(x, z))
+                            if (x >= 0 && x < vw && z >= 0 && z < vh)
                             {
-                                if (!imgbuf_used)
-                                {
-                                    imgbuf.fill(0);
-                                    imgbuf_used = true;
+                                if (!imgbits)
+                                {   // detach once, not for every pixel
+                                    imgbits = imgbuf.bits();
+                                    imgline = imgbuf.bytesPerLine();
                                 }
-                                imgbuf.setPixel(x, z, q >= 2 ? 1 : 2);
+                                QRgb *line = reinterpret_cast<QRgb*>(imgbits + z * imgline);
+                                line[x] = q >= 2 ? geodeRim : geodeCore;
+                                dirtyx0 = std::min(dirtyx0, x);
+                                dirtyz0 = std::min(dirtyz0, z);
+                                dirtyx1 = std::max(dirtyx1, x);
+                                dirtyz1 = std::max(dirtyz1, z);
+                                imgbuf_used = true;
                             }
                         }
                     }
@@ -1862,7 +1972,16 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
         }
 
         if (imgbuf_used)
-            painter.drawImage(QPoint(0, 0), imgbuf);
+        {   // only the part with dots, which is cleared again afterwards
+            imgdirty = QRect(QPoint(dirtyx0, dirtyz0), QPoint(dirtyx1, dirtyz1));
+            painter.drawImage(imgdirty.topLeft(), imgbuf, imgdirty);
+            for (int z = imgdirty.top(); z <= imgdirty.bottom(); z++)
+            {
+                QRgb *line = reinterpret_cast<QRgb*>(imgbuf.scanLine(z));
+                std::fill(line + imgdirty.left(), line + imgdirty.right() + 1, QRgb(0));
+            }
+            imgdirty = QRect();
+        }
         for (auto& it : frags)
             painter.drawPixmapFragments(it.second.data(), it.second.size(), *it.first);
     }
@@ -2004,8 +2123,10 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
     if (activelv >= (int)lvb.size()-1)
         activelv = lvb.size() - 1;
     int pixs = lvb[activelv].pixs;
-    // sizeof(RGB) + sizeof(biome_id), plus up to one float height per pixel for terrain tiles
-    unsigned int pixbytes = lopt.mode == LOPT_TERRAIN ? 3+4+4 : 3+4;
+    // 32-bit image + biome id, plus one float height per pixel for layers
+    // that keep heights (terrain, height shading, End land)
+    unsigned int pixbytes = (lopt.mode == LOPT_TERRAIN || lopt.mode == LOPT_HEIGHT ||
+        dim == DIM_END) ? 4+4+4 : 4+4;
     unsigned int cachesize = memlimit / pixs / pixs / pixbytes;
 
     cleancache(cachedbiomes, cachesize);

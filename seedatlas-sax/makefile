@@ -5,6 +5,7 @@
 CC ?= cc
 AR ?= ar
 ENGINE := ../seedatlas-engine
+# keep in line with SOURCES in ../seedatlas-engine/makefile
 ENGINE_SOURCES := finders.c generator.c layers.c biomenoise.c biomes.c noise.c util.c quadbase.c
 # the flags of the engine's makefile: wrapping signed arithmetic, no fused
 # multiply-adds (so every platform rounds alike)

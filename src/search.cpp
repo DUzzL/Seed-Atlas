@@ -17,6 +17,9 @@
 #include <QThread>
 
 #include <algorithm>
+#include <cmath>
+#include <memory>
+#include <chrono>
 
 #define MULTIPLY_CHAR QChar(0xD7)
 
@@ -242,6 +245,14 @@ bool Condition::readHex(const QString& hex)
             type >= 0 && type < FILTER_MAX;
     if (ok)
         ok = versionUpgrade();
+    if (ok)
+    {   // an area from a file can have its corners in either order, the
+        // search expects the lower corner first
+        if (x1 > x2)
+            std::swap(x1, x2);
+        if (z1 > z2)
+            std::swap(z1, z2);
+    }
     // Session, preset and clipboard data are not limited by the condition
     // editor. The instance count bounds the writes into the fixed position
     // buffers (except for temperatures, where it is a sum of categories) and
@@ -310,6 +321,11 @@ SearchThreadEnv::SearchThreadEnv()
 , searchpass(PASS_FAST_48)
 , stop()
 , l_states()
+, rootorder()
+, rootstat()
+, rootcalls()
+, adaptiveorder(true)
+, areachecks()
 {
     memset(&g, 0, sizeof(g));
     memset(&sn, 0, sizeof(sn));
@@ -345,6 +361,9 @@ QString SearchThreadEnv::init(int mc, bool large, const ConditionTree& condtree)
         lua_close(it.second);
     l_states.clear();
 
+    initRootOrder();
+    initAreaChecks();
+
     for (const Condition& c: condtree.condvec)
     {
         if (c.type != F_LUA)
@@ -365,6 +384,131 @@ QString SearchThreadEnv::init(int mc, bool large, const ConditionTree& condtree)
         l_states[c.hash] = L;
     }
     return "";
+}
+
+void SearchThreadEnv::initRootOrder()
+{
+    rootorder.clear();
+    if (!condtree.references.empty())
+        rootorder = condtree.references[0];
+    rootstat.assign(condtree.condvec.size(), ChildStat{0, 0, 0, 0});
+    rootcalls = 0;
+    // a switch for comparisons, the order cannot change the results
+    adaptiveorder = qgetenv("SEED_ATLAS_FIXED_ORDER").isEmpty();
+}
+
+// The climate gradient of a noise: a bound on how much its value (in the
+// units of the climate parameters) changes per quart. 3.75 bounds the
+// directional derivative of an improved Perlin octave in the xz-plane per
+// unit of its input: the derivative of each of the eight corner terms is at
+// most 0.46875 in any direction (fade slope 1.875 times the corner distance
+// plus the fade weight times |g|), which getParaRange() assumes as well.
+// Octave B samples at 337/331 times the frequency of octave A.
+static double climateGradient(const DoublePerlinNoise *dp)
+{
+    double g = 0;
+    for (int i = 0; i < dp->octA.octcnt; i++)
+        g += fabs(dp->octA.octaves[i].amplitude) * dp->octA.octaves[i].lacunarity;
+    for (int i = 0; i < dp->octB.octcnt; i++)
+        g += fabs(dp->octB.octaves[i].amplitude) * dp->octB.octaves[i].lacunarity * (337.0 / 331.0);
+    return 10000.0 * dp->amplitude * 3.75 * g;
+}
+
+// The largest absolute value of a double Perlin noise.
+static double noiseValueBound(const DoublePerlinNoise *dp)
+{
+    double a = 0;
+    for (int i = 0; i < dp->octA.octcnt; i++)
+        a += fabs(dp->octA.octaves[i].amplitude);
+    for (int i = 0; i < dp->octB.octcnt; i++)
+        a += fabs(dp->octB.octaves[i].amplitude);
+    return dp->amplitude * PERLIN_VALUE_BOUND * a;
+}
+
+void SearchThreadEnv::initAreaChecks()
+{
+    areachecks.clear();
+    areachecks.resize(condtree.condvec.size());
+    if (mc < MC_1_18)
+        return;
+
+    // the amplitudes and frequencies of the noises do not depend on the seed
+    std::unique_ptr<BiomeNoise> bn;
+    for (size_t id = 0; id < condtree.condvec.size(); id++)
+    {
+        const Condition& c = condtree.condvec[id];
+        if (c.type != F_BIOME || c.step != 4 || (c.flags & Condition::FLG_MATCH_ANY))
+            continue;
+        uint64_t req[2] = { c.bf.biomeToFind, c.bf.biomeToFindM };
+        if ((req[0] | req[1]) == 0)
+            continue;
+        if (!bn)
+        {
+            bn.reset(new BiomeNoise);
+            setBiomeSeedParts(bn.get(), 0, large, (1U << NP_MAX) - 1);
+        }
+        AreaCheck& ac = areachecks[id];
+        // A 1:4 cell samples the climate at its position plus the shift
+        // noise times 4, so the samples stay within this many quarts.
+        ac.shift = (int) ceil(4.0 * noiseValueBound(&bn->climate[NP_SHIFT])) + 1;
+        for (int k = 0; k < 2; k++)
+        {
+            for (uint64_t bits = req[k]; bits; bits &= bits - 1)
+            {
+                uint64_t set[4] = {0, 0, 0, 0};
+                set[2*k] = 1ULL << __builtin_ctzll(bits);
+                BiomeClimateBounds cb;
+                if (!getBiomeClimateBounds(&cb, mc, set))
+                    continue; // no bounds: the biome cannot be ruled out
+                int paras[NP_MAX];
+                int n = selectClimateParas(cb, paras);
+                std::vector<AreaBound> bounds;
+                for (int i = 0; i < n; i++)
+                {
+                    int p = paras[i];
+                    // The range search samples integer quart positions,
+                    // while a shifted position can lie up to sqrt(2)/2 from
+                    // the nearest one; the gradient turns that distance into
+                    // a value margin. sampleBiomeNoisePara() truncates the
+                    // value to an integer after a float conversion, which
+                    // the +2 covers.
+                    double margin = climateGradient(&bn->climate[p]) * 0.70711 + 2;
+                    bounds.push_back({p, cb.lo[p] - margin, cb.hi[p] + margin});
+                }
+                if (!bounds.empty())
+                    ac.biomes.push_back(bounds);
+            }
+        }
+    }
+}
+
+// Can every required biome of a 1:4 overworld biome area condition (1.18+)
+// occur somewhere in the area? checkForBiomes() only accepts a seed when it
+// finds each of them at a cell of the area, and a biome can only occur where
+// each of its climate parameters is within its bounds. A range search over
+// the area, grown by the largest shift, finds the climate at all integer
+// positions there; the margins of the bounds cover the shifted positions
+// between them. When that range cannot reach the bounds, the biome does not
+// occur and the condition fails, as checkForBiomes() would decide.
+bool SearchThreadEnv::areaMayHaveBiomes(int id, int x, int z, int w, int h)
+{
+    const AreaCheck& ac = areachecks[id];
+    for (const std::vector<AreaBound>& bounds : ac.biomes)
+    {
+        for (const AreaBound& b : bounds)
+        {
+            init4Climate(1U << b.para);
+            double pmin, pmax;
+            int err = getParaRangeGoal(&g.bn.climate[b.para], &pmin, &pmax,
+                x - ac.shift, z - ac.shift, w + 2*ac.shift, h + 2*ac.shift,
+                NULL, NULL, b.lo, b.hi);
+            if (err)
+                break; // no decision, this biome stays possible
+            if (pmin > b.hi || pmax < b.lo)
+                return false;
+        }
+    }
+    return true;
 }
 
 void SearchThreadEnv::setSeed(uint64_t seed)
@@ -955,6 +1099,107 @@ int _testTreeAt(
     }
 }
 
+// The expected cost of evaluating the root's children in an order, with the
+// measured cost and failure rate of each (the evaluation stops at the first
+// failure). Children that were never timed count as free, so that a new
+// order tries them early and measures them.
+static double expectedOrderCost(const SearchThreadEnv *env, const std::vector<char>& order)
+{
+    double cost = 0, reach = 1;
+    for (char b : order)
+    {
+        const SearchThreadEnv::ChildStat& cs = env->rootstat[(int)b];
+        double c = cs.timed > 0 ? cs.ns / cs.timed : 0;
+        double pfail = (cs.fails + 1) / (cs.calls + 2);
+        cost += reach * c;
+        reach *= 1 - pfail;
+    }
+    return cost;
+}
+
+// Sort the root's children by their measured cost per rejection, which
+// minimizes the expected cost for independent tests. The new order is only
+// taken when it promises to be clearly cheaper: the measurements of the
+// later children are conditional on the earlier ones passing, so small
+// differences are noise and swapping on them costs more than it saves.
+static void orderRootChildren(SearchThreadEnv *env)
+{
+    std::vector<char> order = env->rootorder;
+    auto key = [env](char b) {
+        const SearchThreadEnv::ChildStat& cs = env->rootstat[(int)b];
+        double c = cs.timed > 0 ? cs.ns / cs.timed : 0;
+        double pfail = (cs.fails + 1) / (cs.calls + 2);
+        return c / pfail;
+    };
+    std::stable_sort(order.begin(), order.end(),
+        [&](char a, char b) { return key(a) < key(b); });
+    if (order != env->rootorder &&
+        expectedOrderCost(env, order) < 0.85 * expectedOrderCost(env, env->rootorder))
+    {
+        env->rootorder = order;
+    }
+    for (SearchThreadEnv::ChildStat& cs : env->rootstat)
+    {   // older measurements count less, so the order can follow changes
+        cs.ns *= 0.5;
+        cs.timed *= 0.5;
+        cs.calls *= 0.5;
+        cs.fails *= 0.5;
+    }
+}
+
+// The full 64-bit pass at the root, with the children in the measured order.
+static int testRootChildren(Pos at, SearchThreadEnv *env)
+{
+    uint64_t n = env->rootcalls++;
+    // time the first calls and then every 16th
+    bool timed = n < 256 || (n & 15) == 0;
+    int st = COND_OK;
+    for (char b : env->rootorder)
+    {
+        SearchThreadEnv::ChildStat& cs = env->rootstat[(int)b];
+        std::chrono::steady_clock::time_point t0;
+        if (timed)
+            t0 = std::chrono::steady_clock::now();
+        int sta = _testTreeAt(at, env, NULL, b);
+        if (timed)
+        {
+            cs.ns += std::chrono::duration<double, std::nano>(
+                std::chrono::steady_clock::now() - t0).count();
+            cs.timed += 1;
+        }
+        cs.calls += 1;
+        if (*env->stop)
+            return COND_FAILED;
+        if (sta < st)
+            st = sta;
+        if (st == COND_FAILED)
+        {
+            cs.fails += 1;
+            break;
+        }
+    }
+    // reorder after 32, 64, ... 4096 calls and then every 4096 calls
+    n++;
+    if ((n & 4095) == 0 || (n >= 32 && n < 4096 && (n & (n - 1)) == 0))
+        orderRootChildren(env);
+    return st;
+}
+
+// The pass on the tree. The root (id 0) combines its children with AND at
+// the origin; in the full 64-bit pass without a path the children receive
+// nothing from each other (each is tested at the origin and writes no
+// positions), so they can be evaluated in any order.
+static int testTreePass(Pos at, SearchThreadEnv *env, int pass, Pos *path)
+{
+    env->searchpass = pass;
+    if (pass == PASS_FULL_64 && !path && env->adaptiveorder &&
+        env->rootorder.size() > 1 && env->condtree.condvec[0].type == F_SELECT)
+    {
+        return testRootChildren(at, env);
+    }
+    return _testTreeAt(at, env, path, 0);
+}
+
 int testTreeAt(
     Pos                         at,             // relative origin
     SearchThreadEnv           * env,            // thread-local environment
@@ -964,13 +1209,24 @@ int testTreeAt(
 {
     if (pass != PASS_FAST_48)
     {   // do a fast check before continuing with slower checks
-        env->searchpass = PASS_FAST_48;
-        int st = _testTreeAt(at, env, NULL, 0);
+        int st = testTreePass(at, env, PASS_FAST_48, NULL);
         if (st == COND_FAILED)
             return st;
     }
-    env->searchpass = pass;
-    return _testTreeAt(at, env, path, 0);
+    return testTreePass(at, env, pass, path);
+}
+
+int testTreeAt64Only(Pos at, SearchThreadEnv *env, Pos *path)
+{
+    return testTreePass(at, env, PASS_FULL_64, path);
+}
+
+bool treeFast48IsPure(const ConditionTree& tree)
+{
+    for (const Condition& c : tree.condvec)
+        if (c.type == F_LUA)
+            return false;
+    return true;
 }
 
 
@@ -1720,7 +1976,7 @@ L_qm_any:
                     }
                     if (env->mc >= MC_1_18)
                     {
-                        if (g_extgen.estimateTerrain &&
+                        if (activeExtGen().estimateTerrain &&
                             !isViableStructureTerrain(st, &env->g, pc.x, pc.z))
                         {
                             continue;
@@ -2005,12 +2261,51 @@ L_qm_any:
             initFirstStronghold(&sh, env->mc, env->seed);
             icnt = 0;
             xt = zt = 0;
-            env->init4Dim(DIM_OVERWORLD);
-            while (nextStronghold(&sh, &env->g) > 0)
+            // From 1.19.3 on, the biome search of a stronghold has its own
+            // random generator and the iterator advances the same without it.
+            // A stronghold ends up within 112 blocks of its approximate
+            // position (then moved within its chunk to (4,4)), so one whose
+            // approximate position is farther than 128 blocks from the area
+            // cannot be inside and needs no biome search.
+            const bool skipfar = env->mc > MC_1_19_2;
+            bool dimready = false;
+            while (true)
             {
+                bool far = false;
+                if (skipfar)
+                {
+                    const int m = 128;
+                    int ax = sh.nextapprox.x, az = sh.nextapprox.z;
+                    if (rmax)
+                    {   // nearest point of the box around the approximation
+                        int64_t dx = 0, dz = 0;
+                        if (at.x < ax - m) dx = ax - m - at.x;
+                        else if (at.x > ax + m) dx = at.x - (ax + m);
+                        if (at.z < az - m) dz = az - m - at.z;
+                        else if (at.z > az + m) dz = at.z - (az + m);
+                        far = dx*dx + dz*dz >= rmax;
+                    }
+                    else
+                    {
+                        far = ax + m < x1 || ax - m > x2 || az + m < z1 || az - m > z2;
+                    }
+                }
+                if (!far && !dimready)
+                {
+                    env->init4Dim(DIM_OVERWORLD);
+                    dimready = true;
+                }
+                if (nextStronghold(&sh, far ? NULL : &env->g) <= 0)
+                    break;
                 if (*env->stop)
                     break;
                 bool inside;
+                if (far)
+                {
+                    if (sh.ringnum > r)
+                        break;
+                    continue;
+                }
                 if (rmax)
                 {
                     int dx = sh.pos.x - at.x;
@@ -2289,6 +2584,13 @@ L_qm_any:
             int h = rz2 - rz1 + 1;
             int y = (s == 0 ? cond->y : cond->y >> 2);
             Range r = {1<<s, rx1, rz1, w, h, y, 1};
+            if (s == 2 && finfo.dim == DIM_OVERWORLD && env->mc >= MC_1_18 &&
+                cond->save >= 0 && cond->save < (int)env->areachecks.size() &&
+                !env->areachecks[cond->save].biomes.empty() &&
+                !env->areaMayHaveBiomes(cond->save, rx1, rz1, w, h))
+            {
+                return COND_FAILED;
+            }
             valid = checkForBiomes(&env->g, NULL, r, finfo.dim, env->seed,
                 &cond->bf, (volatile char*)env->stop) > 0;
         }

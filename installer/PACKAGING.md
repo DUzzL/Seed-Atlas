@@ -1,6 +1,8 @@
 # Seed Atlas packaging
 
-All commands below package the current source tree as version `4.3.dev0`.
+All commands below package the current source tree as the version in
+`VERSION.txt` (the one place that holds the app version; an optional version
+argument of the scripts overrides it).
 The generated files are written to `dist/`.
 
 For the complete unsigned three-platform build procedure and detailed manual
@@ -26,13 +28,13 @@ From the project root, build the DMG:
 ```bash
 export QT_PREFIX="$HOME/Qt/6.8.3/macos"
 export SEED_ATLAS_UNIVERSAL=1
-bash installer/macos/build-dmg.sh 4.3.dev0
+bash installer/macos/build-dmg.sh
 ```
 
 Output:
 
 ```text
-dist/Seed-Atlas-4.3.dev0-macOS-UNNOTARIZED.dmg
+dist/Seed-Atlas-<version>-macOS-UNNOTARIZED.dmg
 ```
 
 To explicitly build without a Developer ID certificate, notarization, or a DMG
@@ -49,7 +51,7 @@ or the background is missing. You can verify an existing image separately:
 ```sh
 SEED_ATLAS_REQUIRE_UNIVERSAL=1 \
   bash installer/macos/verify-dmg.sh \
-  dist/Seed-Atlas-4.3.dev0-macOS-UNNOTARIZED.dmg
+  dist/Seed-Atlas-<version>-macOS-UNNOTARIZED.dmg
 ```
 
 Without signing credentials the script creates an ad-hoc-signed local DMG and
@@ -62,11 +64,11 @@ export MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export APPLE_ID="developer@example.com"
 export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
 export APPLE_TEAM_ID="TEAMID"
-bash installer/macos/build-dmg.sh 4.3.dev0
+bash installer/macos/build-dmg.sh
 ```
 
 A successful notarized build uses the public release name
-`dist/Seed-Atlas-4.3.dev0-macOS.dmg`.
+`dist/Seed-Atlas-<version>-macOS.dmg`.
 
 As an alternative to the three Apple variables, store notary credentials with
 `xcrun notarytool store-credentials` and set `MACOS_NOTARY_PROFILE` to that
@@ -104,21 +106,21 @@ sudo apt install flatpak flatpak-builder
 Then run from the project root:
 
 ```bash
-bash installer/flatpak/build-flatpak.sh 4.3.dev0
+bash installer/flatpak/build-flatpak.sh
 ```
 
 The script installs the supported KDE/Qt 6.10 runtime for the current user and creates one
 of these, depending on the Linux machine's architecture:
 
 ```text
-dist/Seed-Atlas-4.3.dev0-Linux-x86_64.flatpak
-dist/Seed-Atlas-4.3.dev0-Linux-aarch64.flatpak
+dist/Seed-Atlas-<version>-Linux-x86_64.flatpak
+dist/Seed-Atlas-<version>-Linux-aarch64.flatpak
 ```
 
 Install and test the bundle locally with:
 
 ```bash
-flatpak install --user ./dist/Seed-Atlas-4.3.dev0-Linux-*.flatpak
+flatpak install --user ./dist/Seed-Atlas-*-Linux-*.flatpak
 flatpak run org.seedatlas.SeedAtlas
 ```
 
@@ -150,12 +152,15 @@ Setup installer in `dist/`.
 ## Publishing an update manually
 
 Each packaging script embeds the current Git commit as Seed Atlas' internal
-build ID and writes the matching `dist/update.json`. Commit the release source
-before building so all three platforms receive the same build ID.
+build ID and its commit time as the build time, and writes the matching
+`dist/update.json` (`buildId`, `buildTime`, `version`; builds before 4.3 read
+only `buildId`). Commit the release source before building so all three
+platforms receive the same build ID and time.
 For a source snapshot without a commit, all three scripts also accept
 `SEED_ATLAS_BUILD_ID` as a 40-character hexadecimal release identifier (not
-necessarily a content hash). Pass the exact same lowercase ID to every platform
-and use a new ID whenever the packaged application changes.
+necessarily a content hash) together with `SEED_ATLAS_BUILD_TIME` (seconds
+since 1970). Pass the exact same values to every platform and use a new ID and
+a later time whenever the packaged application changes.
 
 Replace the three installers in the existing GitHub release as usual. Upload
 `update.json` last, after every installer is available. Installed copies then
@@ -165,8 +170,9 @@ compare their embedded build ID with:
 https://github.com/DUzzL/Seed-Atlas/releases/latest/download/update.json
 ```
 
-When the IDs differ, Seed Atlas offers to open the latest GitHub release page.
-Choosing **Update** opens that page, removes the installed application while
-preserving user settings, and exits. Choosing **Not now** shows the prompt again
-on the next start. **Do not ask again** disables startup checks and can be
-reversed in Seed Atlas' general settings.
+When the published build is newer (a later `buildTime`; for manifests without
+it, whenever the IDs differ), Seed Atlas offers to open the latest GitHub
+release page. **Download** only opens that page; the installed copy stays in
+place until the new installer replaces it. **Not now** shows the prompt again on
+the next start. **Do not check for updates at start** disables startup checks
+and can be reversed in Seed Atlas' general settings.

@@ -4,26 +4,22 @@
 
 #include <QApplication>
 #include <QCheckBox>
-#include <QCoreApplication>
 #include <QDesktopServices>
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QProcess>
 #include <QPushButton>
 #include <QSettings>
-#include <QStandardPaths>
-#include <QTimer>
 #include <QUrl>
 
 #ifndef SEED_ATLAS_BUILD_ID
 #define SEED_ATLAS_BUILD_ID "development"
+#endif
+#ifndef SEED_ATLAS_BUILD_TIME
+#define SEED_ATLAS_BUILD_TIME 0
 #endif
 
 namespace {
@@ -39,6 +35,15 @@ QString currentBuildId()
     return overrideId.isEmpty()
         ? QStringLiteral(SEED_ATLAS_BUILD_ID)
         : QString::fromLatin1(overrideId);
+}
+
+// Commit time of this build in seconds since 1970 (0: unknown).
+qint64 currentBuildTime()
+{
+    const QByteArray overrideTime = qgetenv("SEED_ATLAS_UPDATE_BUILD_TIME");
+    if (!overrideTime.isEmpty())
+        return overrideTime.toLongLong();
+    return qint64(SEED_ATLAS_BUILD_TIME);
 }
 
 QUrl manifestUrl()
@@ -71,147 +76,37 @@ void setUpdateChecksEnabled(Config *config, bool enabled)
     settings.sync();
 }
 
-#ifdef Q_OS_WIN
-// The uninstaller that Inno Setup registered for the Seed Atlas AppId (see
-// installer/windows/SeedAtlas.iss), for per-user and for all-users installs.
-QString registeredUninstaller()
+// The update only opens the release page. The installers replace the
+// installed copy (the Windows setup upgrades in place, the DMG and the
+// Flatpak bundle replace the app), so this copy stays usable until then.
+void showUpdatePrompt(QWidget *parent, Config *config, const QString& version, bool ordered)
 {
-    const QString key = QStringLiteral(
-        "\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
-        "{9EA88549-5B8A-493B-AD00-AA2FB6BE7D02}_is1");
-    const struct { const char *root; QSettings::Format format; } views[] = {
-        { "HKEY_CURRENT_USER",  QSettings::NativeFormat },
-        { "HKEY_LOCAL_MACHINE", QSettings::Registry64Format },
-        { "HKEY_LOCAL_MACHINE", QSettings::Registry32Format },
-    };
-    for (const auto& view : views)
-    {
-        QSettings registry(QString::fromLatin1(view.root) + key, view.format);
-        QString command = registry.value(QStringLiteral("UninstallString")).toString().trimmed();
-        if (command.startsWith(QLatin1Char('"')))
-            command = command.mid(1, command.indexOf(QLatin1Char('"'), 1) - 1);
-        if (!command.isEmpty())
-            return QDir::cleanPath(QDir::fromNativeSeparators(command));
-    }
-    return QString();
-}
-#endif
+    QString text = ordered
+        ? QApplication::translate("UpdaterDialog", "A newer Seed Atlas build is available on GitHub.")
+        : QApplication::translate("UpdaterDialog", "A different Seed Atlas build is published on GitHub.");
+    if (!version.isEmpty())
+        text += "\n" + QApplication::translate("UpdaterDialog", "Published version: %1").arg(version);
+    text += "\n\n" + QApplication::translate("UpdaterDialog",
+        "Download opens the release page. Installing the new build replaces this copy; "
+        "until then this copy keeps working.");
 
-bool scheduleSelfRemoval(QString *error)
-{
-#ifdef Q_OS_WIN
-    // Only run the uninstaller registered for this installation: a portable
-    // copy can sit next to the uninstaller of an unrelated Inno Setup program.
-    const QDir installDir(QCoreApplication::applicationDirPath());
-    const QString registered = registeredUninstaller();
-    QString uninstaller;
-    const QStringList uninstallers = installDir.entryList(
-        QStringList() << QStringLiteral("unins???.exe"), QDir::Files, QDir::Name);
-    for (const QString& name : uninstallers)
-    {
-        const QString path = QDir::cleanPath(installDir.absoluteFilePath(name));
-        if (!registered.isEmpty() && path.compare(registered, Qt::CaseInsensitive) == 0)
-            uninstaller = path;
-    }
-    if (uninstaller.isEmpty())
-    {
-        *error = QApplication::translate(
-            "UpdaterDialog",
-            "Seed Atlas could not find its uninstaller. This portable copy was not deleted.");
-        return false;
-    }
-
-    const QStringList arguments = {
-        QStringLiteral("/VERYSILENT"),
-        QStringLiteral("/SUPPRESSMSGBOXES"),
-        QStringLiteral("/NORESTART")
-    };
-    if (!QProcess::startDetached(uninstaller, arguments, installDir.absolutePath()))
-    {
-        *error = QApplication::translate(
-            "UpdaterDialog", "Seed Atlas could not start its uninstaller.");
-        return false;
-    }
-    return true;
-#elif defined(Q_OS_MACOS)
-    QDir bundleDir(QCoreApplication::applicationDirPath());
-    if (bundleDir.dirName() != QStringLiteral("MacOS") || !bundleDir.cdUp() ||
-        bundleDir.dirName() != QStringLiteral("Contents") || !bundleDir.cdUp())
-    {
-        *error = QApplication::translate(
-            "UpdaterDialog", "Seed Atlas is not running from a macOS application bundle.");
-        return false;
-    }
-
-    const QFileInfo bundle(bundleDir.absolutePath());
-    if (!bundle.isDir() || !bundle.fileName().endsWith(QStringLiteral(".app"), Qt::CaseInsensitive) ||
-        !QFile::moveToTrash(bundle.absoluteFilePath()))
-    {
-        *error = QApplication::translate(
-            "UpdaterDialog",
-            "Seed Atlas could not move itself to the Trash. Please remove the application manually.");
-        return false;
-    }
-    return true;
-#elif defined(Q_OS_LINUX)
-    if (qEnvironmentVariable("FLATPAK_ID") == QStringLiteral("org.seedatlas.SeedAtlas"))
-    {
-        const QString flatpakSpawn = QStandardPaths::findExecutable(QStringLiteral("flatpak-spawn"));
-        const QStringList arguments = {
-            QStringLiteral("--host"),
-            QStringLiteral("flatpak"),
-            QStringLiteral("uninstall"),
-            QStringLiteral("--user"),
-            QStringLiteral("--noninteractive"),
-            QStringLiteral("org.seedatlas.SeedAtlas")
-        };
-        if (!flatpakSpawn.isEmpty() && QProcess::startDetached(flatpakSpawn, arguments))
-            return true;
-
-        *error = QApplication::translate(
-            "UpdaterDialog", "Seed Atlas could not start the Flatpak uninstaller.");
-        return false;
-    }
-
-    const QString executable = QCoreApplication::applicationFilePath();
-    if (!QFileInfo(executable).isFile() || !QFile::moveToTrash(executable))
-    {
-        *error = QApplication::translate(
-            "UpdaterDialog",
-            "Seed Atlas could not move its executable to the Trash. Please remove it manually.");
-        return false;
-    }
-    return true;
-#else
-    *error = QApplication::translate(
-        "UpdaterDialog", "Automatic removal is not supported on this operating system.");
-    return false;
-#endif
-}
-
-void showUpdatePrompt(QWidget *parent, Config *config)
-{
     QMessageBox message(QMessageBox::Information,
         QApplication::translate("UpdaterDialog", "Seed Atlas Update"),
-        QApplication::translate(
-            "UpdaterDialog",
-            "A new Seed Atlas update is available. Choosing Update opens the GitHub "
-            "download page and removes this installed copy."),
-        QMessageBox::NoButton, parent);
-    QPushButton *updateButton = message.addButton(
-        QApplication::translate("UpdaterDialog", "Update"), QMessageBox::AcceptRole);
+        text, QMessageBox::NoButton, parent);
+    QPushButton *downloadButton = message.addButton(
+        QApplication::translate("UpdaterDialog", "Download"), QMessageBox::AcceptRole);
     QPushButton *notNowButton = message.addButton(
         QApplication::translate("UpdaterDialog", "Not now"), QMessageBox::RejectRole);
     QCheckBox *doNotAskAgain = new QCheckBox(
-        QApplication::translate("UpdaterDialog", "Do not ask again"), &message);
+        QApplication::translate("UpdaterDialog", "Do not check for updates at start"), &message);
     message.setCheckBox(doNotAskAgain);
-    message.setDefaultButton(updateButton);
+    message.setDefaultButton(downloadButton);
     message.setEscapeButton(notNowButton);
     message.exec();
 
     if (doNotAskAgain->isChecked())
         setUpdateChecksEnabled(config, false);
-    if (message.clickedButton() != updateButton)
+    if (message.clickedButton() != downloadButton)
         return;
 
     if (!QDesktopServices::openUrl(kReleaseUrl))
@@ -219,26 +114,9 @@ void showUpdatePrompt(QWidget *parent, Config *config)
         QMessageBox::warning(parent,
             QApplication::translate("UpdaterDialog", "Seed Atlas Update"),
             QApplication::translate(
-                "UpdaterDialog", "The GitHub release page could not be opened."));
-        return;
+                "UpdaterDialog", "The GitHub release page could not be opened:\n%1")
+                .arg(kReleaseUrl.toString()));
     }
-
-    if (qEnvironmentVariableIsSet("SEED_ATLAS_UPDATE_DRY_RUN"))
-        return;
-
-    QString error;
-    if (!scheduleSelfRemoval(&error))
-    {
-        QMessageBox::warning(parent,
-            QApplication::translate("UpdaterDialog", "Seed Atlas Update"), error);
-        return;
-    }
-
-    // Closing the windows first preserves settings and the current session.
-    QTimer::singleShot(0, qApp, []() {
-        QApplication::closeAllWindows();
-        QCoreApplication::quit();
-    });
 }
 
 void showCheckError(QWidget *parent, const QString& message, bool quiet)
@@ -250,7 +128,39 @@ void showCheckError(QWidget *parent, const QString& message, bool quiet)
     }
 }
 
+void showInformation(QWidget *parent, const QString& message, bool quiet)
+{
+    if (!quiet)
+    {
+        QMessageBox::information(parent,
+            QApplication::translate("UpdaterDialog", "Seed Atlas Update"), message);
+    }
+}
+
 } // namespace
+
+UpdateDecision decideUpdate(const QString& localBuildId, qint64 localBuildTime,
+                            const QByteArray& manifest)
+{
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(manifest, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject())
+        return UpdateDecision::Invalid;
+    const QJsonObject object = document.object();
+    const QString remoteBuildId = object.value(QStringLiteral("buildId")).toString().trimmed();
+    if (!isValidBuildId(remoteBuildId))
+        return UpdateDecision::Invalid;
+    if (remoteBuildId.compare(localBuildId, Qt::CaseInsensitive) == 0)
+        return UpdateDecision::UpToDate;
+
+    // "buildTime" (commit time, added in 4.3) orders the builds; manifests
+    // without it can only tell that the builds differ.
+    const QJsonValue time = object.value(QStringLiteral("buildTime"));
+    const qint64 remoteBuildTime = time.isDouble() ? qint64(time.toDouble()) : 0;
+    if (remoteBuildTime <= 0 || localBuildTime <= 0)
+        return UpdateDecision::Different;
+    return remoteBuildTime > localBuildTime ? UpdateDecision::Newer : UpdateDecision::NotNewer;
+}
 
 void searchForUpdates(QWidget *parent, Config *config, bool quiet)
 {
@@ -263,6 +173,7 @@ void searchForUpdates(QWidget *parent, Config *config, bool quiet)
             quiet);
         return;
     }
+    const qint64 localBuildTime = currentBuildTime();
 
     // a repeated click while a check is pending would stack the prompts
     static bool checking = false;
@@ -274,6 +185,7 @@ void searchForUpdates(QWidget *parent, Config *config, bool quiet)
         ? static_cast<QObject *>(parent)
         : static_cast<QObject *>(qApp);
     QNetworkAccessManager *manager = new QNetworkAccessManager(owner);
+    QObject::connect(manager, &QObject::destroyed, []() { checking = false; });
     QNetworkRequest request(manifestUrl());
     request.setTransferTimeout(15000); // Qt does not time out stalled transfers by default
     request.setRawHeader("Accept", "application/json");
@@ -284,8 +196,7 @@ void searchForUpdates(QWidget *parent, Config *config, bool quiet)
 
     QNetworkReply *reply = manager->get(request);
     QObject::connect(reply, &QNetworkReply::finished, manager,
-        [config, manager, parent, quiet, reply, localBuildId]() {
-        checking = false;
+        [config, manager, parent, quiet, reply, localBuildId, localBuildTime]() {
         const QNetworkReply::NetworkError networkError = reply->error();
         const QByteArray response = reply->read(64 * 1024); // the manifest is tiny
         reply->deleteLater();
@@ -300,33 +211,32 @@ void searchForUpdates(QWidget *parent, Config *config, bool quiet)
             return;
         }
 
-        QJsonParseError parseError;
-        const QJsonDocument document = QJsonDocument::fromJson(response, &parseError);
-        const QString remoteBuildId = document.isObject()
-            ? document.object().value(QStringLiteral("buildId")).toString().trimmed()
-            : QString();
-        if (parseError.error != QJsonParseError::NoError ||
-            !isValidBuildId(remoteBuildId))
+        const UpdateDecision decision = decideUpdate(localBuildId, localBuildTime, response);
+        switch (decision)
         {
+        case UpdateDecision::Invalid:
             showCheckError(parent,
                 QApplication::translate(
                     "UpdaterDialog", "GitHub returned invalid update information."),
                 quiet);
             return;
-        }
-
-        if (remoteBuildId.compare(localBuildId, Qt::CaseInsensitive) == 0)
-        {
-            if (!quiet)
-            {
-                QMessageBox::information(parent,
-                    QApplication::translate("UpdaterDialog", "Seed Atlas Update"),
-                    QApplication::translate(
-                        "UpdaterDialog", "This Seed Atlas build is up to date."));
-            }
+        case UpdateDecision::UpToDate:
+            showInformation(parent,
+                QApplication::translate("UpdaterDialog", "This Seed Atlas build is up to date."),
+                quiet);
             return;
+        case UpdateDecision::NotNewer:
+            showInformation(parent,
+                QApplication::translate("UpdaterDialog",
+                    "This Seed Atlas build is newer than the published release."),
+                quiet);
+            return;
+        case UpdateDecision::Newer:
+        case UpdateDecision::Different:
+            break;
         }
-
-        showUpdatePrompt(parent, config);
+        const QJsonDocument document = QJsonDocument::fromJson(response);
+        const QString version = document.object().value(QStringLiteral("version")).toString().trimmed();
+        showUpdatePrompt(parent, config, version.left(32), decision == UpdateDecision::Newer);
     });
 }

@@ -8,6 +8,7 @@
 #include <QMessageBox>
 #include <QMutex>
 #include <QRunnable>
+#include <QSet>
 #include <QSettings>
 #include <QTableWidgetItem>
 #include <QTextStream>
@@ -39,6 +40,7 @@ class MapView;
 class QResizeEvent;
 class QToolButton;
 class QPropertyAnimation;
+class QTabWidget;
 
 class MainWindow : public QMainWindow
 {
@@ -46,7 +48,11 @@ class MainWindow : public QMainWindow
     Q_PROPERTY(int sidePanelAnimationWidth READ sidePanelAnimationWidth WRITE setSidePanelAnimationWidth)
 
 public:
-    explicit MainWindow(QString sessionpath, QString resultspath, QWidget *parent = 0);
+    // sessionpath: the automatic session (restored at start, saved on quit
+    // and by the autosave); opensession: a session file to open at start
+    // instead, which is never overwritten automatically
+    explicit MainWindow(QString sessionpath, QString resultspath,
+                        QString opensession = QString(), QWidget *parent = 0);
     virtual ~MainWindow();
     virtual void closeEvent(QCloseEvent *event) override;
     virtual void resizeEvent(QResizeEvent *event) override;
@@ -63,12 +69,17 @@ public:
 protected:
     void saveSettings();
     void loadSettings();
-    bool saveSession(QString path, bool quiet);
+    bool saveSession(QString path, bool quiet, QString *error = nullptr);
     bool saveSession(QTextStream& stream);
     bool loadSession(QTextStream& stream, bool keepresults, bool quiet);
     void updateMapSeed();
     void setDockable(bool dockable);
-    void setMCList(bool experimental);
+    // also lists the version extramc when it is one of the hidden ones
+    void setMCList(bool experimental, int extramc = MC_UNDEF);
+    // saves the tabs that have read their settings (all of them, not only the
+    // current one: analysis tabs keep working in the background)
+    void saveTabs(QSettings& settings);
+    int switchTab(QTabWidget *tabs, int idxprev, int idxnext);
 
 signals:
     void mapUpdated();
@@ -151,7 +162,10 @@ public:
     Config config;
     MapConfig mconfig;
     QString sessionpath;
+    QString opensession;
     QString prevdir;
+    QSet<ISaveTab*> loadedTabs; // tabs whose load() has run
+    bool autosaveFailed = false; // the failure was reported once
     QTimer autosaveTimer;
     int tabidx;
     int tabsearch;
