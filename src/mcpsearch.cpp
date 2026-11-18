@@ -14,6 +14,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonDocument>
 #include <QMutexLocker>
 #include <QSaveFile>
 #include <QTextStream>
