@@ -449,7 +449,16 @@ static void runWatched(McpCall *call, std::atomic_bool *stop, const std::functio
                 std::this_thread::sleep_for(std::chrono::milliseconds(25));
         }
     });
-    work();
+    try
+    {
+        work();
+    }
+    catch (...)
+    {   // a tool error: stop the watcher before it leaves this scope
+        finished = true;
+        watcher.join();
+        throw;
+    }
     finished = true;
     watcher.join();
 }

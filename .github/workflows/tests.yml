@@ -154,6 +154,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "qmake failed" }
           mingw32-make -j4
           if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+          # The runtime DLLs of the toolchain next to the program, as the
+          # installer deploys them: otherwise the Git Bash of the tests puts its
+          # own (UCRT) libstdc++ first in the PATH, and Qt (msvcrt) frees with
+          # another heap than the program allocates with.
+          windeployqt --release --compiler-runtime --no-translations release\seed-atlas.exe
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
       - name: Headless tests (known seeds, session round trip, closed stdin)
         shell: bash
         run: |
