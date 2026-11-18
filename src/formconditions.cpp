@@ -1,9 +1,11 @@
 #include "formconditions.h"
+#include "widgets.h"
 #include "config.h"
 #include "ui_formconditions.h"
 
 #include "aboutdialog.h"
 #include "conditiondialog.h"
+#include "conditiontext.h"
 #include "mainwindow.h"
 #include "message.h"
 #include "util.h"
@@ -20,6 +22,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -50,38 +53,63 @@ ItemDelegate::~ItemDelegate()
 {
 }
 
+// Each condition is a line with the icon of its type, a plain sentence that
+// wraps when the panel is narrow, and its "#id" at the right edge, which
+// other conditions use to be measured from it.
+static int tagWidth(const QFontMetrics& fm)
+{
+    return fm.horizontalAdvance("#00 off") + 10;
+}
+
 void ItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem& option, const QModelIndex& index) const
 {
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
+    opt.features |= QStyleOptionViewItem::WrapText;
 
     const QWidget *widget = option.widget;
     QStyle *style = widget ? widget->style() : QApplication::style();
-
-    // the tab separated columns of Condition::summary(true): name, count,
-    // reference and area, with widths in units of a digit-wide character
-    static const int widths[] = { 26, 4, 6 };
-    const int unit = txtWidth(option.fontMetrics);
     const QRect rect = opt.rect;
+    const int tagw = tagWidth(option.fontMetrics);
+    const bool off = index.data(DisabledRole).toBool();
 
-    const QStringList txts = index.data(Qt::DisplayRole).toString().split('\t');
-    int x = rect.left();
-    for (int i = 0, n = txts.size(); i < n && x <= rect.right(); i++)
+    // the background spans the whole line, the text leaves room for the tag
+    style->drawPrimitive(QStyle::PE_PanelItemViewItem, &opt, painter, widget);
+    opt.rect = rect.adjusted(0, 0, -tagw, 0);
+    if (off)
     {
-        int w = rect.right() + 1 - x;
-        if (i < n-1 && i < (int) std::size(widths))
-            w = std::min(w, widths[i] * unit);
-        opt.rect = QRect(x, rect.top(), w, rect.height());
-        opt.text = txts[i];
-        style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget);
-        x += w;
+        const QColor muted = opt.palette.color(QPalette::PlaceholderText);
+        opt.palette.setColor(QPalette::Text, muted);
+        opt.palette.setColor(QPalette::WindowText, muted);
+    }
+    style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget);
+
+    const QString tag = index.data(TagRole).toString();
+    if (!tag.isEmpty())
+    {
+        painter->save();
+        // the selection keeps the text color, so the muted tag stays legible
+        painter->setPen(opt.palette.color(QPalette::PlaceholderText));
+        QRect tagRect(rect.right() - tagw + 1, rect.top(), tagw - 6, rect.height());
+        painter->drawText(tagRect, Qt::AlignRight | Qt::AlignVCenter, tag);
+        painter->restore();
     }
 }
 
 QSize ItemDelegate::sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const
-{   // fonts with a large line gap, such as Calibri, need their full line height
-    QSize size = QStyledItemDelegate::sizeHint(option, index);
-    size.setHeight(std::max(size.height(), option.fontMetrics.lineSpacing() + 2));
+{
+    QStyleOptionViewItem opt = option;
+    initStyleOption(&opt, index);
+    opt.features |= QStyleOptionViewItem::WrapText;
+    // the sentence wraps within the visible width of the list
+    if (const QAbstractItemView *view = qobject_cast<const QAbstractItemView *>(option.widget))
+        opt.rect.setWidth(std::max(80, view->viewport()->width() - tagWidth(option.fontMetrics)));
+    const QWidget *widget = option.widget;
+    QStyle *style = widget ? widget->style() : QApplication::style();
+    QSize size = style->sizeFromContents(QStyle::CT_ItemViewItem, &opt, QSize(), widget);
+    // fonts with a large line gap, such as Calibri, need their full line height
+    size.setHeight(std::max(size.height(), option.fontMetrics.lineSpacing() + 8));
+    size.setWidth(opt.rect.width());
     return size;
 }
 
@@ -101,8 +129,13 @@ FormConditions::FormConditions(QWidget *parent)
     ui->setupUi(this);
 
     ui->listConditions->setItemDelegate(new ItemDelegate(this));
-    // room for a few filters below the filter controls
+    // room for a few conditions below the controls; the lines wrap, so they
+    // are laid out again when the width changes
     ui->listConditions->setMinimumHeight(ui->listConditions->fontMetrics().height() * 6);
+    ui->listConditions->setWordWrap(true);
+    ui->listConditions->setResizeMode(QListView::Adjust);
+    ui->listConditions->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    ui->listConditions->setIconSize(QSize(20, 20));
 
     if (!this->parent)
     {
@@ -118,6 +151,15 @@ FormConditions::FormConditions(QWidget *parent)
         // the full editor and "Saved filters" loads or stores whole lists
         setupQuickFilters();
         ui->layoutButtons->insertStretch(0);
+        setEmptyHint(ui->listConditions, tr("No conditions yet. Pick a structure or biome above "
+            "and press \"+ Add\", or use \"More options...\"."));
+        ui->buttonRemoveAll->setToolTip(tr("Remove every condition from the list"));
+        ui->buttonRemove->setToolTip(tr("Remove the selected conditions"));
+        ui->buttonDisable->setText(tr("Turn off"));
+        ui->buttonDisable->setToolTip(tr("Turn the selected conditions off or on without removing them; "
+            "the search ignores conditions that are off"));
+        ui->buttonEdit->setText(tr("Edit..."));
+        ui->buttonEdit->setToolTip(tr("Change the selected condition (or double-click it)"));
     }
 
 #if WASM
@@ -176,11 +218,11 @@ void FormConditions::updateSensitivity()
             disabled++;
     }
     if (disabled == 0)
-        ui->buttonDisable->setText(tr("Disable"));
+        ui->buttonDisable->setText(tr("Turn off"));
     else if (disabled == selected.size())
-        ui->buttonDisable->setText(tr("Enable"));
+        ui->buttonDisable->setText(tr("Turn on"));
     else
-        ui->buttonDisable->setText(tr("Toggle"));
+        ui->buttonDisable->setText(tr("Turn on/off"));
     ui->buttonDisable->setEnabled(!selected.empty());
 
     emit selectionUpdate(selcond);
@@ -247,14 +289,41 @@ void FormConditions::setItemCondition(QListWidget *list, QListWidgetItem *item, 
         cond->save = getIndex(cond->save);
     }
 
-    QString s = cond->summary(true);
-
     const FilterInfo& ft = g_filterinfo.list[cond->type];
     if (ft.cat == CAT_QUAD)
         item->setBackground(QColor(255, 255, 0, 80));
 
-    item->setText(s);
     item->setData(Qt::UserRole, QVariant::fromValue(*cond));
+    // the sentences name the conditions they are measured from
+    refreshItemTexts();
+}
+
+void FormConditions::setItemText(QListWidgetItem *item, const Condition& c,
+                                 const std::vector<Condition>& all) const
+{
+    const QString sentence = conditionSentence(c, quickMc, &all);
+    const bool off = c.meta & Condition::DISABLED;
+    item->setText(sentence);
+    const QString icon = filterIconName(c.type);
+    item->setIcon(icon.isEmpty() ? QIcon() : getIcon(icon, 20));
+    item->setData(ItemDelegate::TagRole, off ? tr("#%1 off").arg(c.save) : conditionTag(c));
+    item->setData(ItemDelegate::DisabledRole, off);
+    QString tip = sentence;
+    if (off)
+        tip += "\n" + tr("Turned off: the search ignores this condition.");
+    tip += "\n" + tr("Condition #%1 (%2). Other conditions can be measured from it. "
+        "Double-click to edit.").arg(c.save).arg(filterDisplayName(c.type));
+    item->setToolTip(tip);
+}
+
+void FormConditions::refreshItemTexts()
+{
+    const std::vector<Condition> all = getConditions();
+    for (int i = 0, n = ui->listConditions->count(); i < n; i++)
+    {
+        QListWidgetItem *item = ui->listConditions->item(i);
+        setItemText(item, itemCondition(item), all);
+    }
 }
 
 
@@ -284,7 +353,7 @@ void FormConditions::on_buttonRemoveAll_clicked()
 {
     if (ui->listConditions->count() == 0)
         return;
-    if (QMessageBox::question(this, tr("Remove All"), tr("Remove all conditions?"))
+    if (QMessageBox::question(this, tr("Remove all"), tr("Remove all conditions?"))
             != QMessageBox::Yes)
         return;
     clearConditions();
@@ -299,6 +368,7 @@ void FormConditions::clearConditions()
 void FormConditions::on_buttonRemove_clicked()
 {
     remove_selected(ui->listConditions);
+    refreshItemTexts();
     emit changed();
 }
 
@@ -309,9 +379,9 @@ void FormConditions::on_buttonDisable_clicked()
     {
         Condition c = itemCondition(item);
         c.meta ^= Condition::DISABLED;
-        item->setText(c.summary(true));
         item->setData(Qt::UserRole, QVariant::fromValue(c));
     }
+    refreshItemTexts();
     updateSensitivity();
     // listeners read the conditions, so notify after the toggle
     emit changed();
@@ -355,12 +425,12 @@ void FormConditions::on_listConditions_customContextMenuRequested(const QPoint &
     if (parent)
     {
         QAction *actadd = menu->addAction(QIcon::fromTheme("list-add"),
-            tr("Advanced filter..."), QKeySequence::New, this,
+            tr("Add condition..."), QKeySequence::New, this,
             &FormConditions::openConditionEditor);
         actadd->setEnabled(true);
 
         QAction *actedit = menu->addAction(QIcon(),
-            tr("Edit condition"), QKeySequence::Open, this,
+            tr("Edit condition..."), QKeySequence::Open, this,
             &FormConditions::conditionsEdit);
         actedit->setEnabled(n == 1);
 
@@ -611,16 +681,21 @@ void FormConditions::setupQuickFilters()
     quickWhat->setMinimumContentsLength(10);
     quickDistance = new QComboBox(this);
     quickDistance->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-    QPushButton *add = new QPushButton(QIcon::fromTheme("list-add"), tr("Add"), this);
-    add->setToolTip(tr("Add this filter to the list"));
+    QPushButton *add = new QPushButton(tr("+ Add"), this);
+    add->setObjectName("quickAdd");
+    add->setToolTip(tr("Add this condition to the list"));
     quickKind->setToolTip(tr("Look for a structure or a biome"));
-    quickDistance->setToolTip(tr("How far from the world center (0, 0), the spawn point is usually close to it.\n"
-        "Structures: the distance to the center. Biomes: ± blocks along x and z, a square area."));
+    quickWhat->setToolTip(tr("What the seed must have"));
+    quickDistance->setToolTip(tr("How far from the world origin (0, 0); players spawn close to it.\n"
+        "Structures: within this distance. Biomes: within a square of ± this many blocks."));
 
-    QPushButton *advanced = new QPushButton(tr("Advanced filter..."), this);
-    advanced->setToolTip(tr("All filter types and options, e.g. positions relative to other filters"));
+    QPushButton *advanced = new QPushButton(tr("More options..."), this);
+    advanced->setObjectName("buttonMoreOptions");
+    advanced->setToolTip(tr("Open the condition editor: every kind of condition, the exact area, "
+        "how many, and positions measured from other conditions"));
     QPushButton *saved = new QPushButton(tr("Saved filters"), this);
-    saved->setToolTip(tr("Load a saved or example filter, or save the current one"));
+    saved->setToolTip(tr("Load an example or one of your saved filters (a whole list of conditions), "
+        "or save the current list"));
     savedMenu = new QMenu(saved);
     savedMenu->setToolTipsVisible(true);
     savedMenu->installEventFilter(this); // right-click renames or deletes
@@ -649,7 +724,7 @@ void FormConditions::setupQuickFilters()
         if (goal < 0)
             return;
         const int radius = g_quickGoals[goal].radius;
-        const QString unit = g_quickGoals[goal].biome < 0 ? tr("within %1 blocks") : tr("within ±%1 blocks");
+        const QString unit = g_quickGoals[goal].biome < 0 ? tr("within %1 blocks") : tr("within ±%1 blocks (square)");
         const QSignalBlocker blocker(quickDistance);
         const int keep = quickDistance->currentData().toInt();
         quickDistance->clear();
@@ -675,6 +750,7 @@ void FormConditions::updateQuickFilters(int mc)
         return;
     quickMc = mc;
     fillQuickWhat();
+    refreshItemTexts(); // biome names depend on the version
 }
 
 void FormConditions::fillQuickWhat()
@@ -695,9 +771,9 @@ void FormConditions::fillQuickWhat()
             pix.fill(QColor(g_biomeColors[g.biome][0], g_biomeColors[g.biome][1], g_biomeColors[g.biome][2]));
             icon = QIcon(pix);
         }
-        else if (const char *name = g_filterinfo.list[g.type].icon)
+        else if (!filterIconName(g.type).isEmpty())
         {
-            icon = QIcon(getPix(name, 20));
+            icon = getIcon(filterIconName(g.type), 20);
         }
         quickWhat->addItem(icon, QApplication::translate("FormConditions", g.label), i);
     }
@@ -721,7 +797,7 @@ void FormConditions::fillSavedMenu()
 {
     savedMenu->clear();
     QAction *save = savedMenu->addAction(QIcon::fromTheme("document-save"),
-        tr("Save current filters..."), this, &FormConditions::saveCurrentFilters);
+        tr("Save current conditions as a filter..."), this, &FormConditions::saveCurrentFilters);
     save->setEnabled(ui->listConditions->count() > 0);
 
     const auto addEntry = [this](const QString& rc, QString title, QString desc, bool enabled) {
@@ -733,11 +809,11 @@ void FormConditions::fillSavedMenu()
             desc = filter.desc;
         QString rows;
         for (const Condition& c : filter.condvec)
-        {   // a table keeps the columns aligned in the proportional UI font
-            rows += "<tr>";
-            for (const QString& cell : c.summary(true).split('\t'))
-                rows += "<td style='padding-right:8px'>" + cell.trimmed().toHtmlEscaped() + "</td>";
-            rows += "</tr>";
+        {   // a table keeps the ids aligned in the proportional UI font
+            if (c.type <= 0)
+                continue;
+            rows += "<tr><td style='padding-right:8px'>" + conditionTag(c) + "</td><td>"
+                + conditionSentence(c, quickMc, &filter.condvec).toHtmlEscaped() + "</td></tr>";
         }
         QAction *action = savedMenu->addAction(title);
         action->setData(rc);
@@ -777,14 +853,14 @@ void FormConditions::saveCurrentFilters()
     }
     bool ok;
     SavedFilter filter;
-    filter.title = QInputDialog::getText(this, tr("Save Filters"), tr("Name:"),
+    filter.title = QInputDialog::getText(this, tr("Save filter"), tr("Name:"),
         QLineEdit::Normal, tr("My filter %1").arg(n), &ok).trimmed();
     if (!ok || filter.title.isEmpty())
         return;
     filter.condvec = getConditions();
     QDir().mkpath(savedFilterFolder());
     if (!writeSavedFilter(filter, rc))
-        warn(this, tr("Failed to save the filters to:\n\"%1\"").arg(rc));
+        warn(this, tr("Failed to save the filter to:\n\"%1\"").arg(rc));
 }
 
 bool FormConditions::eventFilter(QObject *watched, QEvent *event)
@@ -806,7 +882,7 @@ bool FormConditions::eventFilter(QObject *watched, QEvent *event)
         if (chosen == rename)
         {
             bool ok;
-            QString title = QInputDialog::getText(this, tr("Rename Filter"), tr("Name:"),
+            QString title = QInputDialog::getText(this, tr("Rename filter"), tr("Name:"),
                 QLineEdit::Normal, action->text(), &ok).trimmed();
             if (ok && !title.isEmpty())
             {
@@ -816,7 +892,7 @@ bool FormConditions::eventFilter(QObject *watched, QEvent *event)
         }
         else if (chosen == remove)
         {
-            if (QMessageBox::question(this, tr("Delete Filter"),
+            if (QMessageBox::question(this, tr("Delete filter"),
                     tr("Delete the saved filter \"%1\"?").arg(action->text())) == QMessageBox::Yes)
                 QFile::remove(rc);
         }
@@ -918,8 +994,8 @@ int FormConditions::ensureQuadDependencies(bool reenable)
                     if (cd.save == d.save && (cd.meta & Condition::DISABLED))
                     {
                         cd.meta &= ~Condition::DISABLED;
-                        it->setText(cd.summary(true));
                         it->setData(Qt::UserRole, QVariant::fromValue(cd));
+                        refreshItemTexts();
                         fixes++;
                         break;
                     }

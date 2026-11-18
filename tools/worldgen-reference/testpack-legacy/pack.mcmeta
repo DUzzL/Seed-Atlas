@@ -1,0 +1,10 @@
+{
+  "pack": {
+    "pack_format": 48,
+    "supported_formats": [
+      41,
+      48
+    ],
+    "description": "Seed Atlas worldgen test pack: legacy random source (Nether and End)"
+  }
+}

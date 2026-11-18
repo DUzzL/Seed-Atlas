@@ -1,6 +1,8 @@
 #include "maptoolsdialog.h"
 #include "ui_maptoolsdialog.h"
 
+#include "glyphs.h"
+
 #include <QCheckBox>
 #include <QDoubleValidator>
 #include <QLabel>
@@ -26,8 +28,16 @@ MapToolsDialog::MapToolsDialog(QWidget *parent)
         grid->addWidget(check, i, 0);
 
         QLabel *icon = new QLabel();
-        const QPixmap pixmap(QString(":/icons/") + mapopt2str(opt) + ".png");
-        icon->setPixmap(pixmap.scaled(20, 20, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        if (hasGlyph(mapopt2str(opt)))
+        {
+            icon->setPixmap(glyphPixmap(mapopt2str(opt),
+                palette().color(QPalette::PlaceholderText), 20, devicePixelRatioF()));
+        }
+        else
+        {
+            const QPixmap pixmap(QString(":/icons/") + mapopt2str(opt) + ".png");
+            icon->setPixmap(pixmap.scaled(20, 20, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        }
         icon->setFixedSize(24, 24);
         icon->setAlignment(Qt::AlignCenter);
         grid->addWidget(icon, i, 1);

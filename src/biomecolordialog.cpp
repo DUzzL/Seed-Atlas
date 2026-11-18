@@ -50,7 +50,7 @@ BiomeColorDialog::BiomeColorDialog(MainWindow *parent, QString initrc, int mc, i
 
     ui->gridLayout->setSpacing(2);
 
-    separator = new QLabel(tr("Currently inactive biomes:"), this);
+    separator = new QLabel(tr("Biomes not in the current version or dimension:"), this);
     separator->setVisible(false);
 
     QPushButton *button;
@@ -59,11 +59,11 @@ BiomeColorDialog::BiomeColorDialog(MainWindow *parent, QString initrc, int mc, i
     connect(button, &QPushButton::clicked, this, &BiomeColorDialog::onImport);
     ui->gridLayout->addWidget(button, 0, 0);
 
-    button = new QPushButton(getColorIcon(QColor(255,255,255,128)), tr("All to default"), this);
+    button = new QPushButton(getColorIcon(QColor(255,255,255,128)), tr("Reset all to default"), this);
     connect(button, &QPushButton::clicked, this, &BiomeColorDialog::onAllToDefault);
     ui->gridLayout->addWidget(button, 0, 1);
 
-    button = new QPushButton(getColorIcon(QColor(0,0,0,128)), tr("All to dimmed"), this);
+    button = new QPushButton(getColorIcon(QColor(0,0,0,128)), tr("Set all to dimmed"), this);
     connect(button, &QPushButton::clicked, this, &BiomeColorDialog::onAllToDimmed);
     ui->gridLayout->addWidget(button, 0, 2);
 
@@ -80,12 +80,12 @@ BiomeColorDialog::BiomeColorDialog(MainWindow *parent, QString initrc, int mc, i
         ui->gridLayout->addWidget(button, i+1, 0);
 
         col = QColor(coldefault[i][0], coldefault[i][1], coldefault[i][2]);
-        buttons[i][1] = button = new QPushButton(getColorIcon(col), tr("Default reset"), this);
+        buttons[i][1] = button = new QPushButton(getColorIcon(col), tr("Reset to default"), this);
         connect(button, &QPushButton::clicked, [=]() { this->setBiomeColor(i, col); });
         ui->gridLayout->addWidget(button, i+1, 1);
 
         col = QColor(coldefault[i][0] / DIM_DIVIDER, coldefault[i][1] / DIM_DIVIDER, coldefault[i][2] / DIM_DIVIDER);
-        buttons[i][2] = button = new QPushButton(getColorIcon(col), tr("Dimmed reset"), this);
+        buttons[i][2] = button = new QPushButton(getColorIcon(col), tr("Reset to dimmed"), this);
         connect(button, &QPushButton::clicked, [=]() { this->setBiomeColor(i, col); });
         ui->gridLayout->addWidget(button, i+1, 2);
     }
@@ -304,7 +304,7 @@ void BiomeColorDialog::on_comboColormaps_currentIndexChanged(int index)
     const QString requested = qvariant_cast<QString>(ui->comboColormaps->itemData(index));
     if (modified)
     {   // never write or drop the edited colors without asking
-        int button = QMessageBox::question(this, tr("Biome Colors"),
+        int button = QMessageBox::question(this, tr("Biome colors"),
             tr("The current biome colors were changed. Save them before switching?"),
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         if (button == QMessageBox::Cancel)
@@ -446,7 +446,7 @@ void BiomeColorDialog::onRemove()
     QString rc = qvariant_cast<QString>(ui->comboColormaps->currentData());
     if (!rc.isEmpty())
     {
-        if (QMessageBox::question(this, tr("Remove Biome Colors"),
+        if (QMessageBox::question(this, tr("Remove biome colors"),
                 tr("Delete the color map \"%1\"? This cannot be undone.")
                     .arg(ui->comboColormaps->currentText())) != QMessageBox::Yes)
             return;
@@ -482,7 +482,7 @@ void BiomeColorDialog::onAccept()
 
 void BiomeColorDialog::reject()
 {   // Cancel, Escape and the window's close button
-    if (modified && QMessageBox::question(this, tr("Biome Colors"),
+    if (modified && QMessageBox::question(this, tr("Biome colors"),
             tr("Discard the changed biome colors?")) != QMessageBox::Yes)
         return;
     QDialog::reject();
@@ -517,11 +517,10 @@ void BiomeColorDialog::onColorHelp()
     InfoPopup::toggle(helpButton, tr("Help: custom biome colors"),
         tr(
         "<html><head/><body><p>"
-        "<b>Custom biome colors</b> should be defined in an ASCII text file, "
-        "with one biome-color mapping per line. Each mapping should consist "
-        "of a biome ID or biome resource name followed by a color that can be "
-        "written as a hex code (prefixed with # or 0x) or as an RGB triplet. "
-        "Special characters are ignored."
+        "<b>Custom biome colors</b> are read from a plain text file "
+        "with one biome per line: a biome ID or biome resource name, followed "
+        "by a color written as a hex code (starting with # or 0x) or as three "
+        "numbers for red, green and blue. Special characters such as : [ ] are ignored."
         "</p><p>"
         "<b>Examples:</b>"
         "</p><p>"

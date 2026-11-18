@@ -67,9 +67,6 @@ QString getStartPieceName(int stype, const StructureVariant *sv);
 QString getBiomeDisplay(int mc, int id);
 
 int txtWidth(const QFontMetrics& fm, const QString& s);
-int txtWidth(const QFontMetrics& fm);
-int txtWidth(const QFont& f, const QString& s);
-int txtWidth(const QFont& f);
 
 struct RandGen
 {
@@ -98,6 +95,9 @@ struct IdCmp
 };
 
 QPixmap getPix(QString rc, int width = 0);
+// The icon of a condition type or layer by name: the theme-tinted glyph where
+// one exists (glyphs.h), the bitmap from rc/icons at that width otherwise.
+QIcon getIcon(const QString& name, int width);
 
 QIcon getColorIcon(const QColor& col, const QPen& pen = QPen(Qt::black, 1));
 

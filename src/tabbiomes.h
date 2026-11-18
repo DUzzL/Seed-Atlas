@@ -28,6 +28,8 @@ public:
     // the biome counts of one seed (257 entries, the last is the number of
     // biomes); parallel: over all workers, else in the calling thread
     QVector<uint64_t> countBiomes(uint64_t seed, bool parallel);
+    // the same in a datapack world (one entry per biome of it, and the number)
+    QVector<uint64_t> countBiomesDatapack(uint64_t seed, bool parallel);
     void runSeedsParallel();
 
 signals:
@@ -73,13 +75,19 @@ public:
 
     void insertIds(QSet<int>& ids);
     void insertSeeds(QList<uint64_t>& seeds);
-    void reset(int mc);
+    // @dp: the datapack world of the counts (ids are indices into its biomes)
+    void reset(int mc, std::shared_ptr<const DatapackWorld> dp = nullptr);
     qulonglong valueAt(int row, int column) const;
+    bool lessId(int a, int b);
 
     QList<int> ids; // biome column
     QList<uint64_t> seeds; // seed rows
     QMap<int, QMap<uint64_t, QVariant>> cnt; // cnt[id][seed]
     IdCmp cmp;
+    // the column of the number of biomes: 256, or the number of biomes of
+    // the datapack world
+    int countId = 256;
+    std::shared_ptr<const DatapackWorld> dp;
 };
 
 class BiomeSortProxy : public QSortFilterProxyModel
@@ -142,9 +150,12 @@ public:
     virtual void save(QSettings& settings) override;
     virtual void load(QSettings& settings) override;
     virtual void refresh() override { refreshBiomes(); }
+    void stopWork() override;
 
     void refreshBiomes(int activeid = -1);
     QVector<int> selectedBiomeList() const;
+    // the analysis works on a datapack world
+    bool datapack() const;
     void updateBiomeSelectionControls();
 
 private slots:
@@ -175,6 +186,12 @@ private:
     QMap<QString, int> str2biome;
     AnalysisBiomes::Dat dats, datl;
     QSet<int> selectedBiomes;
+    // in a datapack world: the selected biomes by id, and the world they
+    // were shown for
+    QStringList dpSelected;
+    std::shared_ptr<const DatapackWorld> dpShown;
+    class QLabel *labelDpDimension = nullptr;
+    void refreshDatapackBiomes();
 
     QElapsedTimer elapsed;
     uint64_t updt;

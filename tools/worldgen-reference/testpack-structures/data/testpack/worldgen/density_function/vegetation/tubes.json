@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:weird_scaled_sampler",
+  "rarity_value_mapper": "type_1",
+  "noise": "testpack:tube",
+  "input": {
+    "type": "minecraft:cache_all_in_cell",
+    "argument": {
+      "type": "minecraft:mul",
+      "argument1": 1.6,
+      "argument2": {
+        "type": "minecraft:noise",
+        "noise": "testpack:rough",
+        "xz_scale": 0.5,
+        "y_scale": 0.0
+      }
+    }
+  }
+}

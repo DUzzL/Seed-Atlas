@@ -42,7 +42,7 @@
       <item row="0" column="0" colspan="2">
        <widget class="QLabel" name="labelGen48Note">
         <property name="text">
-         <string>Advanced settings - usually you don't need to change anything here: the appropriate seed generator is selected automatically from your conditions (Auto).</string>
+         <string>Advanced settings. Usually there is nothing to change here: in Auto mode the right seed generator is picked from your conditions.</string>
         </property>
         <property name="wordWrap">
          <bool>true</bool>
@@ -74,7 +74,7 @@
           <item row="0" column="0">
            <widget class="QLabel" name="labelAutoDesc">
             <property name="text">
-             <string>Automatically select suitable options based on conditions.</string>
+             <string>Picks suitable settings from the Seed Finder conditions.</string>
             </property>
            </widget>
           </item>
@@ -107,10 +107,10 @@
           <item row="1" column="0">
            <widget class="QLabel" name="labelSalt">
             <property name="toolTip">
-             <string>Value (such as a structure salt) added to the 48-bit seeds</string>
+             <string>The salt of the structure type to search for: a fixed number that each structure type adds to the seed. Only used with &quot;Quad-feature (ideal, custom salt)&quot;.</string>
             </property>
             <property name="text">
-             <string>Add structure salt:</string>
+             <string>Structure salt:</string>
             </property>
            </widget>
           </item>
@@ -127,11 +127,11 @@
           <item row="0" column="0">
            <widget class="QLabel" name="labelLow20">
             <property name="toolTip">
-             <string>Selects a set of values for the lower 20-bits of the seed, corresponding to quad-feature constellations
-Applies only to feature-structures of region-size = 32 and chunk-gap = 8, in particular swamp-huts</string>
+             <string>Only search seeds whose lowest 20 bits place four structures close together, from ideal (closest) to barely.
+Applies to structures that are placed in 32-chunk regions with an 8-chunk gap, such as swamp huts.</string>
             </property>
             <property name="text">
-             <string>Restrict lower bits:</string>
+             <string>Quad layout:</string>
             </property>
            </widget>
           </item>
@@ -174,11 +174,10 @@ Applies only to feature-structures of region-size = 32 and chunk-gap = 8, in par
           <item>
            <widget class="QLabel" name="labelQM">
             <property name="toolTip">
-             <string>Number of planar spawning spaces inside monuments that are within 128 blocks of a center position
-(i.e. this is a measure quality, out of 4*58*58)</string>
+             <string>How good the four monuments are: the number of guardian spawning spaces (per layer) within 128 blocks of one AFK spot, out of 4 × 58 × 58.</string>
             </property>
             <property name="text">
-             <string>Min. monument area:</string>
+             <string>Minimum monument area:</string>
             </property>
            </widget>
           </item>
@@ -204,10 +203,10 @@ Applies only to feature-structures of region-size = 32 and chunk-gap = 8, in par
           <item row="0" column="0">
            <widget class="QLabel" name="labelPath">
             <property name="toolTip">
-             <string>Use a custom seed list as source for 48-bit seed candidates</string>
+             <string>Use your own list of structure seeds (the lower 48 bits of a seed) as candidates</string>
             </property>
             <property name="text">
-             <string>Load 48-bit seed list:</string>
+             <string>Structure seeds (lower 48 bits):</string>
             </property>
            </widget>
           </item>
@@ -228,7 +227,7 @@ Applies only to feature-structures of region-size = 32 and chunk-gap = 8, in par
           <item row="1" column="0">
            <widget class="QLabel" name="labelListSalt">
             <property name="toolTip">
-             <string>Value (such as a structure salt) added to the 48-bit seeds</string>
+             <string>A number added to every seed in the list, such as the salt of a structure type (a fixed number that each structure type adds to the seed)</string>
             </property>
             <property name="text">
              <string>Add structure salt:</string>
@@ -302,8 +301,11 @@ Applies only to feature-structures of region-size = 32 and chunk-gap = 8, in par
          </item>
          <item row="0" column="0">
           <widget class="QLabel" name="labelTranspose">
+           <property name="toolTip">
+            <string>Repeat every candidate for each region in this range, so the structures can lie there instead of only near the world origin (0, 0). Auto takes the range from the condition's area.</string>
+           </property>
            <property name="text">
-            <string>Transpose by regions (multiplied by ×512):</string>
+            <string>Move by regions (1 region = 512 blocks):</string>
            </property>
           </widget>
          </item>
@@ -403,6 +405,9 @@ Applies only to feature-structures of region-size = 32 and chunk-gap = 8, in par
       </item>
       <item row="4" column="0">
        <widget class="QLabel" name="labelSpace">
+        <property name="toolTip">
+         <string>How many seeds the search checks: the number of structure seeds times the 65536 possible upper 16 bits</string>
+        </property>
         <property name="text">
          <string>Seeds in search space:</string>
         </property>

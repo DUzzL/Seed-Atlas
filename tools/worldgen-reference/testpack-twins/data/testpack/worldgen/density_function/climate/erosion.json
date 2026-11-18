@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:min",
+  "argument1": {
+    "type": "minecraft:max",
+    "argument1": "testpack:erosion/choice",
+    "argument2": "testpack:erosion/floor"
+  },
+  "argument2": "testpack:erosion/ceiling"
+}

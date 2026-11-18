@@ -6,6 +6,18 @@
    <string>Form</string>
   </property>
   <layout class="QGridLayout" name="gridLayout">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
    <item row="1" column="1">
     <widget class="StyledComboBox" name="comboSeedSource">
      <property name="sizePolicy">
@@ -21,7 +33,7 @@
      </item>
      <item>
       <property name="text">
-       <string>From matching seeds list</string>
+       <string>All matching seeds</string>
       </property>
      </item>
     </widget>
@@ -80,8 +92,11 @@
         <layout class="QGridLayout" name="gridOptions">
          <item row="0" column="0">
           <widget class="QCheckBox" name="radioMap">
+           <property name="toolTip">
+            <string>Only the structure types that are switched on in the layer sidebar</string>
+           </property>
            <property name="text">
-            <string>Active map selections</string>
+            <string>Structures shown on the map</string>
            </property>
            <property name="checked">
             <bool>false</bool>
@@ -100,8 +115,11 @@
          </item>
          <item row="1" column="0">
           <widget class="QCheckBox" name="checkCollect">
+           <property name="toolTip">
+            <string>List every structure with its position, not only the number of structures per type</string>
+           </property>
            <property name="text">
-            <string>Collect all instances</string>
+            <string>List each structure</string>
            </property>
            <property name="checked">
             <bool>true</bool>
@@ -149,6 +167,7 @@
          <item row="1" column="0">
           <widget class="QLabel" name="labelDensityRadius">
            <property name="text"><string>Radius</string></property>
+           <property name="toolTip"><string>Structures of one type form a group when each lies within this distance of another structure in the group.</string></property>
           </widget>
          </item>
          <item row="1" column="1">
@@ -163,6 +182,7 @@
          <item row="2" column="0">
           <widget class="QLabel" name="labelDensityMinimum">
            <property name="text"><string>Minimum structures</string></property>
+           <property name="toolTip"><string>Only list groups with at least this many structures.</string></property>
           </widget>
          </item>
          <item row="2" column="1">
@@ -419,8 +439,11 @@
      </item>
      <item row="0" column="1">
       <widget class="QPushButton" name="buttonFromVisible">
+       <property name="toolTip">
+        <string>Fill in the area that the map currently shows</string>
+       </property>
        <property name="text">
-        <string>From visible</string>
+        <string>Use map view</string>
        </property>
       </widget>
      </item>

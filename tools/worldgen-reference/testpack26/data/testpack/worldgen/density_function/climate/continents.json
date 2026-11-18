@@ -1,0 +1,13 @@
+{
+  "left": {
+    "left": {
+      "left": 0.55,
+      "right": "minecraft:overworld/continents",
+      "type": "minecraft:mul"
+    },
+    "right": "testpack:continents/bias",
+    "type": "minecraft:add"
+  },
+  "right": "testpack:continents/local",
+  "type": "minecraft:add"
+}

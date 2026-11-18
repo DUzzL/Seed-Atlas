@@ -1,0 +1,30 @@
+{
+  "left": {
+    "input": {
+      "left": {
+        "left": {
+          "left": 1.8,
+          "right": {
+            "noise": "minecraft:temperature",
+            "shift_x": "minecraft:shift_x",
+            "shift_y": 0.0,
+            "shift_z": "minecraft:shift_z",
+            "type": "minecraft:noise",
+            "xz_scale": 0.5,
+            "y_scale": 0.0
+          },
+          "type": "minecraft:mul"
+        },
+        "right": -0.3,
+        "type": "minecraft:add"
+      },
+      "right": "testpack:temperature/lapse",
+      "type": "minecraft:add"
+    },
+    "max": 0.57,
+    "min": -0.99995,
+    "type": "minecraft:clamp"
+  },
+  "right": "testpack:new26/bias",
+  "type": "minecraft:add"
+}

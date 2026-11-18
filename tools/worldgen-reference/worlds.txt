@@ -1,0 +1,22 @@
+# Worlds of the worldgen reference data: <seed> <area> <area> ...
+# area = <name>:<chunk_x0>,<chunk_z0>,<chunks_x>,<chunks_z>  (chunk coordinates of the
+# minimum corner, size in chunks). The same areas are used for all versions and
+# both world types. Areas of one world must not overlap.
+#
+# origin: 32x32 chunks around 0,0. far1: 16x16 chunks around (5000,-3000).
+# far2: 16x16 chunks around (-20000,12000). ocean/peaks/inland/plains: 16x16
+# chunks, picked per seed by pick_areas.c (engine climate noise, 1.21.1, Default
+# world type; nearest suitable place to the origin within +-16000 blocks):
+#   ocean  = deep ocean biome at the centre and 96 blocks diagonally around it
+#   peaks  = jagged/frozen/stony peaks at the centre
+#   inland = continentalness >= 0.55
+#   plains = plains at the centre and 96 blocks diagonally around it
+# The comment above each world is the output of pick_areas.
+# 12345: continentalness/erosion/weirdness x10000 at the centres (engine, 1.21.1, Default): ocean -5999/-1386/-2765 (576,-2048) peaks 585/-8108/5512 (-640,0) inland 6241/-5676/-186 (640,-128) plains 3835/-371/3635 (512,-896)
+12345 origin:-16,-16,32,32 far1:304,-196,16,16 far2:-1258,742,16,16 ocean:28,-136,16,16 peaks:-48,-8,16,16 inland:32,-16,16,16 plains:24,-64,16,16
+# -42: continentalness/erosion/weirdness x10000 at the centres (engine, 1.21.1, Default): ocean -7035/-1826/-1350 (-640,-64) peaks 1300/-6187/6870 (64,-768) inland 5734/498/-1851 (-320,1216) plains 4269/-4726/-1085 (1216,-896)
+-42 origin:-16,-16,32,32 far1:304,-196,16,16 far2:-1258,742,16,16 ocean:-48,-12,16,16 peaks:-4,-56,16,16 inland:-28,68,16,16 plains:68,-64,16,16
+# -4172144997902289642: continentalness/erosion/weirdness x10000 at the centres (engine, 1.21.1, Default): ocean -9528/2307/11418 (0,-640) peaks 1365/-3783/-6094 (960,-2304) inland 5885/-1707/-959 (832,-1984) plains 1423/2629/4669 (-768,-896)
+-4172144997902289642 origin:-16,-16,32,32 far1:304,-196,16,16 far2:-1258,742,16,16 ocean:-8,-48,16,16 peaks:52,-152,16,16 inland:44,-132,16,16 plains:-56,-64,16,16
+# 6027786629280759191: continentalness/erosion/weirdness x10000 at the centres (engine, 1.21.1, Default): ocean -6327/-634/-2665 (320,-640) peaks 1223/-3782/5677 (3008,704) inland 5602/-433/-913 (640,512) plains 4015/-435/-2193 (-576,3008)
+6027786629280759191 origin:-16,-16,32,32 far1:304,-196,16,16 far2:-1258,742,16,16 ocean:12,-48,16,16 peaks:180,36,16,16 inland:32,24,16,16 plains:-44,180,16,16

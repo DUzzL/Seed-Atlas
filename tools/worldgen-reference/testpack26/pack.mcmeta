@@ -1,0 +1,33 @@
+{
+  "overlays": {
+    "entries": [
+      {
+        "directory": "overlay_26a",
+        "max_format": [
+          121,
+          0
+        ],
+        "min_format": [
+          121,
+          0
+        ]
+      },
+      {
+        "directory": "overlay_26b",
+        "max_format": 121,
+        "min_format": [
+          121,
+          1
+        ]
+      }
+    ]
+  },
+  "pack": {
+    "description": "Seed Atlas worldgen test pack in the format of 26.3",
+    "max_format": 121,
+    "min_format": [
+      121,
+      0
+    ]
+  }
+}

@@ -6,7 +6,7 @@
    <enum>Qt::StrongFocus</enum>
   </property>
   <property name="windowTitle">
-   <string>Go To</string>
+   <string>Go to</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">

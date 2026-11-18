@@ -1,0 +1,16 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 1004,
+    "spacing": 5,
+    "separation": 1,
+    "frequency": 0.25,
+    "frequency_reduction_method": "legacy_type_3"
+  },
+  "structures": [
+    {
+      "structure": "testpack:hut",
+      "weight": 1
+    }
+  ]
+}

@@ -102,6 +102,8 @@ public:
     int value(int row, int column) const; // row in display order
     void setSort(int column, Qt::SortOrder order);
     QHeaderView *header() const { return head; }
+    // a short muted hint shown while the table has no rows
+    void setEmptyText(const QString& text) { emptyText = text; viewport()->update(); }
 
     void writeCsv(CsvWriter& csv) const;
 
@@ -133,6 +135,7 @@ private:
     QHeaderView *head;
     int sortColumn = -1;
     Qt::SortOrder sortOrder = Qt::DescendingOrder;
+    QString emptyText;
 };
 
 #endif // RESULTLIST_H

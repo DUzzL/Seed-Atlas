@@ -25,6 +25,11 @@ class GpuBackend;
  * Only seeds the exact CPU test would reject as well are removed, and the
  * remaining seeds are tested on the CPU as usual, so the results do not
  * change.
+ *
+ * The tests use the five horizontal climate noises and bounds on them that
+ * hold for every depth. Of the world types only Large Biomes changes those
+ * noises; an Amplified world has the climate of a default world (its depth
+ * and terrain differ), so it takes the same filter.
  */
 class GpuClimateFilter
 {

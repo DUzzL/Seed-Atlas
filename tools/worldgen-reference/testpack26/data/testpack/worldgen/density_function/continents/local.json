@@ -1,0 +1,33 @@
+{
+  "input": {
+    "axis": "y",
+    "coordinate": 0,
+    "input": {
+      "left": {
+        "left": 1.0,
+        "right": {
+          "noise": "testpack:single",
+          "type": "minecraft:noise",
+          "xz_scale": 0.75,
+          "y_scale": 2.0
+        },
+        "type": "minecraft:mul"
+      },
+      "right": {
+        "left": 0.45,
+        "right": {
+          "axis": "y",
+          "from_coordinate": -64,
+          "from_value": -1.0,
+          "to_coordinate": 320,
+          "to_value": 1.0,
+          "type": "minecraft:gradient"
+        },
+        "type": "minecraft:mul"
+      },
+      "type": "minecraft:add"
+    },
+    "type": "minecraft:slice"
+  },
+  "type": "minecraft:cache"
+}

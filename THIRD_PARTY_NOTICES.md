@@ -93,3 +93,39 @@ Structure marker textures include Minecraft Java 26.3 block, item and entity
 textures owned by Mojang/Microsoft, composed using the mappings in
 https://github.com/DUzzL/seed-atlas-xaero . See rc/icons/ICON_SOURCES.md.
 These game assets are not covered by the application code license.
+
+## deepslate (datapack world generator)
+
+The datapack world generator in `src/datapack` (density functions, noises,
+cubic splines and the nearest-point search of the multi-noise biome source)
+was written with deepslate as a reference for the structure of these
+algorithms and for the worldgen JSON format. Its structure code (structure
+placement, structure sets, jigsaw start pieces) was also read as a reference
+for `src/datapack/dpstructures.cpp`. Source:
+https://github.com/misode/deepslate
+
+Copyright (c) 2021 Misode
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The pack loading rules and the biome colour file of packs
+(`data/c/worldgen/biome_colors.json`) follow the conventions of
+mc-datapack-loader and mc-datapack-map by Jochen Jacobs (MIT License,
+https://github.com/jacobsjo/mc-datapack-map); no code of them is included.
+The zip reader of `src/datapack` (`dpzip.cpp`) was written for Seed Atlas.

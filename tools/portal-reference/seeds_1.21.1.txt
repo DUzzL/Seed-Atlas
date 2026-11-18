@@ -1,0 +1,12 @@
+# <seed> [stronghold indices]; obfuscated jar: indices refer to the engine's
+# approximate order, the stronghold actually used is the one vanilla /locate finds
+12345
+-42
+-4172144997902289642
+9223249143757829398
+# claimed "12-eye" seeds (9minecraft.net, for 26.2/1.21.1), first two rings
+-2627568906264457629 0-8
+6027786629280759191 0-8
+-6695163795316312869 0-8
+-7852870374369532782 0-8
+-4009611042014201934 0-8

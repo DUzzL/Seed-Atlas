@@ -1,0 +1,272 @@
+// GPU stage (b) of the End portal eye search (see eyesearchgpu.h and the
+// description of stage (b) in seedatlas-engine/eyesearch.h).
+//
+// This is the only source of the kernel. tools/gen-gpu-kernels.sh compiles
+// both passes (PASS=1, PASS=2) to SPIR-V for Vulkan (eyesearchgpu_spirv.inc)
+// and translates them to Metal (eyesearchgpu_msl.inc); both generated files
+// are part of the repository.
+//
+// A test is coarse: from the Xoroshiro seed of the frame chunk, a GF(2) table
+// of M^n yields the bits lo[46:37], hi[46:37] and lo[63:54] of the state at
+// the tested draw (fields of 10 bits at 0, 10 and 20). Their sum is the top
+// 10 bits of the output up to two carries (0 .. 2), so a draw certainly gives
+// no eye if that sum + 2 stays at or below the last 10-bit value whose whole
+// range is at most the eye threshold (P.failMax). Everything else counts as
+// a possible eye. The kernel thus keeps a superset of the (plan, seed) pairs
+// that the exact test keeps; the CPU tests the kept ones exactly.
+//
+// The table buffer holds P.nbyte byte tables (16 bytes x 256 values) of the
+// shared skips 760 .. 771, then nibble tables (32 nibbles x 16 values): first
+// those of the same shared skips, then those of the other skips of the batch.
+// Test.table t has its nibble table at P.nbyte * BYTE_WORDS + t * NIBBLE_WORDS
+// and, if t < P.nbyte, also a byte table at t * BYTE_WORDS. Only the first
+// tests of units use the byte tables (from shared memory); every other test
+// uses the nibble tables, which stay in the GPU caches (2 KB instead of 16 KB
+// each; measured 1.4x faster at minEyes 10, 1.7x at 9, equal at 12).
+//
+// Pass 1: every workgroup takes a range of seeds and either a unit or a plan.
+//  - A unit is a group of plans without allowed misses that have the same
+//    first test (with a byte table). Its workgroups run only that first test, with
+//    its byte table in shared memory; the seeds that may have an eye (about
+//    10%) go into a list for pass 2, once for every plan of the unit. The
+//    plans of the units come first in the plan buffer, unit u covers the
+//    plans start .. start+count-1 given by plans[u].unit.
+//  - Any other plan (from P.firstRange on) runs the whole cascade: each seed runs the tests until
+//    more than k of them have certainly missed (rejected) or all are done
+//    (kept). Each thread keeps its own position in the cascade and takes the
+//    next seed as soon as one is decided, so all threads do useful tests
+//    although the number of tests differs from seed to seed.
+// Pass 2: the threads run the remaining tests of the listed (plan, seed)
+//    pairs in the same way.
+#version 450
+#extension GL_ARB_gpu_shader_int64 : require
+
+#ifndef PASS
+#define PASS 1
+#endif
+#ifndef TG
+#define TG 256
+#endif
+layout(local_size_x = TG) in;
+
+const uint MAX_TESTS = 12;
+const uint BYTE_WORDS = 4096;   // 16 bytes x 256 values
+const uint NIBBLE_WORDS = 512;  // 32 nibbles x 16 values
+
+// The C structs in eyesearchgpu_backend.h have the same layout.
+struct Test {
+    int mx, mz;         // 16 * chunk x, 16 * chunk z of the frame chunk
+    uint table;         // table of the skip (< P.nbyte: a byte table)
+    uint pad;
+};
+
+struct Plan {
+    uint ntests;        // tests (counted frames)
+    uint k;             // allowed misses
+    uint unit;          // of unit 'index' (not of this plan): start | count << 16
+    uint pad;
+    Test test[MAX_TESTS];
+};
+
+layout(std140, binding = 0) uniform ParamBuf {
+    uint64_t low48;     // the family
+    uint64_t salt;      // structure index + 10000 * step
+    uint h0, h1;        // seed highs h0 .. h1-1
+    uint nplans;
+    uint maxOut;        // capacity of the output (pairs)
+    uint groupsPerPlan; // pass 1: workgroups per plan
+    uint seedsPerGroup; // pass 1: seeds per workgroup
+    uint failMax;       // a coarse sum + 2 <= failMax: certainly no eye
+    uint maxList;       // capacity of the list (pairs)
+    uint nunits;        // pass 1: units
+    uint firstRange;    // pass 1: the first plan that is not in a unit
+    uint nbyte;         // byte tables (the first tables of the buffer)
+    uint pad;
+} P;
+// per seed high h: the decoration multipliers a, b at 2h and 2h+1
+layout(std430, binding = 1) readonly buffer DecoBuf { uint64_t deco[]; };
+layout(std430, binding = 2) readonly buffer PlanBuf { Plan plans[]; };
+layout(std430, binding = 3) readonly buffer TableBuf { uint tables[]; };
+// kept[0]: number of kept (plan, seed) pairs, then plan << 16 | high each
+layout(std430, binding = 4) buffer OutBuf { uint kept[]; };
+// list[0]: number of pairs for pass 2, then plan << 16 | high each
+layout(std430, binding = 5) buffer ListBuf { uint list[]; };
+
+const uint64_t XL = 0x9e3779b97f4a7c15ul;
+const uint64_t XH = 0x6a09e667f3bcc909ul;
+
+uint64_t mix64(uint64_t v)
+{
+    v = (v ^ (v >> 30)) * 0xbf58476d1ce4e5b9ul;
+    v = (v ^ (v >> 27)) * 0x94d049bb133111ebul;
+    return v ^ (v >> 31);
+}
+
+// The Xoroshiro state after xSetSeed() with the decoration seed of a frame
+// chunk (setFeatureSeed), as two 64-bit words.
+void testState(ivec2 mxz, uint h, out uvec2 lo, out uvec2 hi)
+{
+    uint64_t a = deco[2u * h], b = deco[2u * h + 1u];
+    uint64_t seed = (uint64_t(h) << 48) | P.low48;
+    uint64_t v = ((uint64_t(int64_t(mxz.x)) * a + uint64_t(int64_t(mxz.y)) * b) ^ seed) + P.salt;
+    uint64_t l = v ^ XH;
+    lo = unpackUint2x32(mix64(l));
+    hi = unpackUint2x32(mix64(l + XL));
+}
+
+bool certainMiss(uint p)
+{
+    uint top = ((p & 1023u) + ((p >> 10) & 1023u) + ((p >> 20) & 1023u)) & 1023u;
+    return top + 2u <= P.failMax;
+}
+
+uint lookupNibble(uint base, uvec2 l, uvec2 h)
+{
+    uint p = 0u;
+    for (uint k = 0u; k < 8u; k++)
+    {
+        p ^= tables[base + k * 16u + ((l.x >> (4u * k)) & 15u)];
+        p ^= tables[base + (8u + k) * 16u + ((l.y >> (4u * k)) & 15u)];
+        p ^= tables[base + (16u + k) * 16u + ((h.x >> (4u * k)) & 15u)];
+        p ^= tables[base + (24u + k) * 16u + ((h.y >> (4u * k)) & 15u)];
+    }
+    return p;
+}
+
+// One coarse test with the nibble table of its skip.
+bool testMisses(Test t, uint h)
+{
+    uvec2 lo, hi;
+    testState(ivec2(t.mx, t.mz), h, lo, hi);
+    return certainMiss(lookupNibble(P.nbyte * BYTE_WORDS + t.table * NIBBLE_WORDS, lo, hi));
+}
+
+void keep(uint plan, uint h)
+{
+    uint idx = atomicAdd(kept[0], 1u);
+    if (idx < P.maxOut)
+        kept[1u + idx] = (plan << 16) | h;
+}
+
+#if PASS == 1
+
+shared uint stab[BYTE_WORDS];
+
+uint lookupShared(uvec2 l, uvec2 h)
+{
+    uint p = 0u;
+    for (uint k = 0u; k < 4u; k++)
+    {
+        p ^= stab[k * 256u + ((l.x >> (8u * k)) & 255u)];
+        p ^= stab[(4u + k) * 256u + ((l.y >> (8u * k)) & 255u)];
+        p ^= stab[(8u + k) * 256u + ((h.x >> (8u * k)) & 255u)];
+        p ^= stab[(12u + k) * 256u + ((h.y >> (8u * k)) & 255u)];
+    }
+    return p;
+}
+
+void main()
+{
+    const uint lid = gl_LocalInvocationID.x;
+    const uint index = gl_WorkGroupID.x / P.groupsPerPlan;
+    const uint part = gl_WorkGroupID.x % P.groupsPerPlan;
+    const bool unit = index < P.nunits;
+    const uint begin = P.h0 + part * P.seedsPerGroup;
+    const uint end = min(P.h1, begin + P.seedsPerGroup);
+    // a unit: its plans; otherwise the plan
+    const uint start = unit ? plans[index].unit & 0xffffu : min(P.firstRange + index - P.nunits, P.nplans - 1u);
+    const uint count = unit ? plans[index].unit >> 16 : 1u;
+
+    // the byte table of the unit's first test (unused by the other plans),
+    // loaded in uniform control flow
+    const uint t0 = min(plans[start].test[0].table, P.nbyte - 1u) * BYTE_WORDS;
+    for (uint i = lid; i < BYTE_WORDS; i += TG)
+        stab[i] = tables[t0 + i];
+    barrier();
+
+    if (unit)
+    {
+        const ivec2 mxz = ivec2(plans[start].test[0].mx, plans[start].test[0].mz);
+        for (uint h = begin + lid; h < end; h += TG)
+        {
+            uvec2 lo, hi;
+            testState(mxz, h, lo, hi);
+            if (certainMiss(lookupShared(lo, hi)))
+                continue;
+            for (uint plan = start; plan < start + count; plan++)
+            {
+                if (plans[plan].ntests == 1u)
+                    keep(plan, h);
+                else
+                {
+                    uint idx = atomicAdd(list[0], 1u);
+                    if (idx < P.maxList)
+                        list[1u + idx] = (plan << 16) | h;
+                }
+            }
+        }
+        return;
+    }
+
+    const uint plan = start;
+    const uint ntests = plans[plan].ntests;
+    const uint k = plans[plan].k;
+    uint h = begin + lid, ti = 0u, miss = 0u;
+    while (h < end)
+    {
+        miss += testMisses(plans[plan].test[ti], h) ? 1u : 0u;
+        ti++;
+        bool done = miss > k;
+        if (!done && ti == ntests)
+        {
+            keep(plan, h);
+            done = true;
+        }
+        if (done)
+        {
+            h += TG;
+            ti = 0u;
+            miss = 0u;
+        }
+    }
+}
+
+#else // PASS == 2
+
+void main()
+{
+    const uint stride = gl_NumWorkGroups.x * TG;
+    const uint count = min(list[0], P.maxList);
+    uint i = gl_GlobalInvocationID.x;
+    uint plan = 0u, h = 0u, ti = 1u, miss = 0u;
+    if (i < count)
+    {
+        plan = list[1u + i] >> 16;
+        h = list[1u + i] & 0xffffu;
+    }
+    // the first test of a listed pair is done (a possible eye)
+    while (i < count)
+    {
+        miss += testMisses(plans[plan].test[ti], h) ? 1u : 0u;
+        ti++;
+        bool done = miss > plans[plan].k;
+        if (!done && ti == plans[plan].ntests)
+        {
+            keep(plan, h);
+            done = true;
+        }
+        if (done)
+        {
+            i += stride;
+            ti = 1u;
+            miss = 0u;
+            if (i < count)
+            {
+                plan = list[1u + i] >> 16;
+                h = list[1u + i] & 0xffffu;
+            }
+        }
+    }
+}
+
+#endif

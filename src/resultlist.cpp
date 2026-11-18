@@ -381,15 +381,25 @@ void ResultTable::paintEvent(QPaintEvent *)
     const int first = verticalScrollBar()->value();
     const int last = qMin(rowCount(), first + area.height() / rowHeight + 2);
     const int offset = head->offset();
+    if (rowCount() == 0 && !emptyText.isEmpty())
+    {
+        painter.setPen(pal.color(QPalette::PlaceholderText));
+        painter.drawText(area.adjusted(12, 8, -12, -8),
+            Qt::AlignCenter | Qt::TextWordWrap, emptyText);
+        return;
+    }
+    // a soft accent tint marks the selection, as in the other result lists
+    QColor selection = pal.color(QPalette::Highlight);
+    selection.setAlpha(64);
     for (int row = first, y = 0; row < last; row++, y += rowHeight)
     {
         const QRect line(0, y, area.width(), rowHeight);
         const bool isSelected = selected[order[row]];
-        if (isSelected)
-            painter.fillRect(line, pal.color(QPalette::Highlight));
-        else if (row & 1)
+        if (row & 1)
             painter.fillRect(line, pal.color(QPalette::AlternateBase));
-        painter.setPen(pal.color(isSelected ? QPalette::HighlightedText : QPalette::Text));
+        if (isSelected)
+            painter.fillRect(line, selection);
+        painter.setPen(pal.color(QPalette::Text));
         const int *cells = &values[size_t(order[row]) * n];
         for (int c = 0; c < n; c++)
         {

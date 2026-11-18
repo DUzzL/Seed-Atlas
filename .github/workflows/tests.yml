@@ -23,6 +23,27 @@ jobs:
       - name: Run version tests with the app's engine flags
         run: ./seedatlas-engine/test-versions
 
+  engine-portals:
+    name: Engine stronghold and End portal tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the tests
+        run: >
+          make -C seedatlas-engine CFLAGS=-O3
+          test-strongholds test-portal-reference test-stronghold-positions test-eyesearch
+          test-amplified
+      - name: Stronghold layouts and portal eyes
+        run: ./seedatlas-engine/test-strongholds
+      - name: Vanilla reference data
+        run: ./seedatlas-engine/test-portal-reference tools/portal-reference/data
+      - name: Stronghold positions
+        run: ./seedatlas-engine/test-stronghold-positions
+      - name: Eye search
+        run: ./seedatlas-engine/test-eyesearch -quick -real tools/portal-reference/data
+      - name: Amplified world type
+        run: ./seedatlas-engine/test-amplified tools/worldgen-reference/data
+
   engine-other-os:
     name: Engine tests (${{ matrix.os }})
     strategy:
@@ -50,6 +71,15 @@ jobs:
         run: |
           make -C seedatlas-engine test-versions CFLAGS="-O3 -DSTRUCT_CONFIG_OVERRIDE=1"
           ./seedatlas-engine/test-versions
+      - name: Stronghold and End portal tests
+        run: |
+          make -C seedatlas-engine clean
+          make -C seedatlas-engine CFLAGS=-O3 \
+            test-strongholds test-portal-reference test-stronghold-positions test-eyesearch
+          ./seedatlas-engine/test-strongholds
+          ./seedatlas-engine/test-portal-reference tools/portal-reference/data
+          ./seedatlas-engine/test-stronghold-positions
+          ./seedatlas-engine/test-eyesearch -quick -real tools/portal-reference/data
 
   app:
     name: App build and headless tests (${{ matrix.os }})

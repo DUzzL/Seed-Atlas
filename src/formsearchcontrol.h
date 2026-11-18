@@ -22,6 +22,28 @@ class FormSearchControl;
 
 class MainWindow;
 
+// The world that listed search results and the position to resume from
+// belong to: the version and world type, and for a datapack world the packs
+// (file names, as sessions store them), the world preset and the dimension.
+struct ResultsWorld
+{
+    bool set = false;
+    int mc = 0;
+    int worldType = 0;
+    bool datapack = false;
+    QString preset;
+    QString dimension;
+    QStringList packs;  // the switched on packs, in load order
+
+    static ResultsWorld of(const WorldInfo& wi);
+    bool operator==(const ResultsWorld& o) const
+    {
+        return set == o.set && mc == o.mc && worldType == o.worldType && datapack == o.datapack
+            && preset == o.preset && dimension == o.dimension && packs == o.packs;
+    }
+    bool operator!=(const ResultsWorld& o) const { return !(*this == o); }
+};
+
 class SeedTableModel : public QAbstractTableModel
 {
     Q_OBJECT
@@ -123,6 +145,14 @@ public:
 
     bool getSeed(int row, uint64_t *seed);
 
+    // The world of the listed results and of the resume position (not set
+    // before the first search or list). A search in another world starts
+    // from the beginning and replaces them.
+    const ResultsWorld& resultsWorld() const { return resultsOf; }
+    void setResultsWorld(const ResultsWorld& world) { resultsOf = world; }
+    // whether results are listed or the search would resume after seed 0
+    bool hasResultsOrProgress();
+
 signals:
     void selectedSeedChanged(uint64_t seed);
     void searchStatusChanged(bool running);
@@ -153,6 +183,8 @@ public slots:
     int searchResultsAdd(std::vector<uint64_t> seeds, bool countonly);
     void searchProgressReset();
     void updateSearchProgress(uint64_t last, uint64_t end, int64_t seed);
+    // the progress text sits in the status line above the thin bar
+    void setProgressText(const QString& format);
     void searchFinish(bool done);
     void progressTimeout();
     void removeCurrent();
@@ -187,9 +219,14 @@ private:
     // found seeds that are waiting to be added to results
     std::vector<uint64_t> qbuf;
     QSet<uint64_t> resultSeeds;
-    // version and world type the listed results were found for
-    int resultsMc = MC_UNDEF;
-    bool resultsLarge = false;
+    // the world the listed results were found for
+    ResultsWorld resultsOf;
+    // drops the results and the resume position of another world before a
+    // search in @world; returns the position to start from
+    uint64_t prepareResultsFor(const WorldInfo& world, uint64_t startseed);
+    void startDatapackSearch();
+    // locks the UI and starts the search that sthread has been set up for
+    void beginSearch(Session& session);
     bool searchRunning = false; // from start until searchFinish()
     // set when the filters change during a search: the search is stopped and
     // whatever it still reports belongs to the old filters

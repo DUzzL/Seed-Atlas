@@ -302,6 +302,7 @@ QString ConditionTree::set(const std::vector<Condition>& cv, int mc)
 SearchThreadEnv::SearchThreadEnv()
 : condtree()
 , mc()
+, genflags()
 , large()
 , seed()
 , surfdim(DIM_UNDEF)
@@ -337,11 +338,12 @@ SearchThreadEnv::~SearchThreadEnv()
         lua_close(it.second);
 }
 
-QString SearchThreadEnv::init(int mc, bool large, const ConditionTree& condtree)
+QString SearchThreadEnv::init(int mc, uint32_t genflags, const ConditionTree& condtree)
 {
     this->condtree = condtree;
     this->mc = mc;
-    this->large = large;
+    this->genflags = genflags & (LARGE_BIOMES | AMPLIFIED);
+    this->large = (genflags & LARGE_BIOMES) != 0;
     this->seed = 0;
     this->surfdim = DIM_UNDEF;
     this->octaves = 0;
@@ -350,13 +352,19 @@ QString SearchThreadEnv::init(int mc, bool large, const ConditionTree& condtree)
     this->climrestok = false;
     this->setbounds.clear();
     this->noiseparam = -2;
-    uint32_t flags = 0;
-    if (large)
-        flags |= LARGE_BIOMES;
-    setupGenerator(&g, mc, flags);
+    setupGenerator(&g, mc, this->genflags);
 
+    // (only searches with Lua conditions look at the scripts folder, which
+    // the lookup creates)
     QMap<uint64_t, QString> scripts;
-    getScripts(scripts);
+    for (const Condition& c : condtree.condvec)
+    {
+        if (c.type == F_LUA)
+        {
+            getScripts(scripts);
+            break;
+        }
+    }
     for (auto& it : l_states)
         lua_close(it.second);
     l_states.clear();
@@ -432,7 +440,10 @@ void SearchThreadEnv::initAreaChecks()
     if (mc < MC_1_18)
         return;
 
-    // the amplitudes and frequencies of the noises do not depend on the seed
+    // The amplitudes and frequencies of the noises do not depend on the seed.
+    // The checks use the climate noises and the bounds of the biomes on the
+    // five horizontal parameters, which hold for every depth, so they are the
+    // same for an Amplified world (only its depth differs).
     std::unique_ptr<BiomeNoise> bn;
     for (size_t id = 0; id < condtree.condvec.size(); id++)
     {

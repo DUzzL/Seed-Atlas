@@ -228,7 +228,7 @@ void xPerlinInitJobs(PerlinJob *jobs, int n)
 #define IDXLERP(...) (coherent ? indexedLerp(__VA_ARGS__) : indexedLerpSel(__VA_ARGS__))
 ATTR(hot, always_inline)
 static inline double samplePerlinT(const PerlinNoise *noise, double d1, double d2, double d3,
-        double yamp, double ymin, int coherent)
+        double yamp, double ymin, int coherent, int smeared)
 {
     uint8_t h1, h2, h3;
     double t1, t2, t3;
@@ -262,7 +262,15 @@ static inline double samplePerlinT(const PerlinNoise *noise, double d1, double d
     t1 = d1*d1*d1 * (d1 * (d1*6.0-15.0) + 10.0);
     t3 = d3*d3*d3 * (d3 * (d3*6.0-15.0) + 10.0);
 
-    if (yamp)
+    if (smeared)
+    {   // ImprovedNoise.noise() of 1.18+, see samplePerlinSmeared()
+        if (yamp)
+        {
+            double yclamp = (ymin >= 0 && ymin < d2) ? ymin : d2;
+            d2 -= floor(yclamp / yamp + (double) 1.0E-7F) * yamp;
+        }
+    }
+    else if (yamp)
     {
         double yclamp = ymin < d2 ? ymin : d2;
         d2 -= floor(yclamp / yamp) * yamp;
@@ -332,13 +340,19 @@ static inline double samplePerlinT(const PerlinNoise *noise, double d1, double d
 double samplePerlin(const PerlinNoise *noise, double d1, double d2, double d3,
         double yamp, double ymin)
 {
-    return samplePerlinT(noise, d1, d2, d3, yamp, ymin, 0);
+    return samplePerlinT(noise, d1, d2, d3, yamp, ymin, 0, 0);
+}
+
+double samplePerlinSmeared(const PerlinNoise *noise, double d1, double d2, double d3,
+        double yamp, double ymin)
+{
+    return samplePerlinT(noise, d1, d2, d3, yamp, ymin, 0, 1);
 }
 
 double samplePerlinCoherent(const PerlinNoise *noise, double d1, double d2, double d3,
         double yamp, double ymin)
 {
-    return samplePerlinT(noise, d1, d2, d3, yamp, ymin, 1);
+    return samplePerlinT(noise, d1, d2, d3, yamp, ymin, 1, 0);
 }
 
 static
@@ -623,7 +637,7 @@ static inline double sampleOctaveT(const OctaveNoise *noise, double x, double y,
         double ax = maintainPrecision(x * lf);
         double ay = maintainPrecision(y * lf);
         double az = maintainPrecision(z * lf);
-        double pv = samplePerlinT(p, ax, ay, az, 0, 0, coherent);
+        double pv = samplePerlinT(p, ax, ay, az, 0, 0, coherent, 0);
         v += p->amplitude * pv;
     }
     return v;

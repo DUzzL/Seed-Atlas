@@ -179,7 +179,8 @@ ATTR(const)
 uint64_t getVoronoiSHA(uint64_t worldSeed);
 void voronoiAccess3D(uint64_t sha, int x, int y, int z, int *x4, int *y4, int *z4);
 
-// Applies a 2D voronoi mapping at height 'y' to a 'src' plane, where
+// Applies the voronoi mapping at block height 'y' to a 'src' plane of 1:4
+// cells that do not vary with y, where
 // src_range [px,pz,pw,ph] -> out_range [x,z,w,h] have to match the scaling.
 void mapVoronoiPlane(uint64_t sha, int *out, int *src,
     int x, int z, int w, int h, int y, int px, int pz, int pw, int ph);

@@ -6,7 +6,8 @@ CC ?= cc
 AR ?= ar
 ENGINE := ../seedatlas-engine
 # keep in line with SOURCES in ../seedatlas-engine/makefile
-ENGINE_SOURCES := finders.c generator.c layers.c biomenoise.c biomes.c noise.c util.c quadbase.c
+ENGINE_SOURCES := finders.c generator.c layers.c biomenoise.c biomes.c noise.c util.c quadbase.c \
+	strongholds.c eyesearch.c
 # the flags of the engine's makefile: wrapping signed arithmetic, no fused
 # multiply-adds (so every platform rounds alike)
 SAX_CFLAGS := -std=gnu11 -O3 -fwrapv -ffp-contract=off -DSAX_STATIC -I$(ENGINE) -I.

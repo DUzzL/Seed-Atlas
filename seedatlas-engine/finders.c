@@ -1788,13 +1788,28 @@ int isViableStructurePos(int structureType, Generator *g, int x, int z, uint32_t
         if (g->mc < MC_26_3) goto L_not_viable;
         getAbandonedCampBiomePos(g->seed, (int) chunkX, (int) chunkZ,
                 &sampleX, &sampleZ);
-        sampleX = floordiv(sampleX, 4);
-        sampleZ = floordiv(sampleZ, 4);
         {
             // Jigsaw camps are projected to WORLD_SURFACE_WG, and Vanilla
             // checks the biome at that projected Y coordinate. The generic
             // surface-structure check at Y=319 can pick a different vertical
             // biome near rivers and mountain valleys.
+            if (g->bn.amplified)
+            {   // The depth height is no estimate of an Amplified surface:
+                // the first free block above the real terrain (or the sea)
+                // at the block position.
+                if (g->bn.nptype != -1)
+                    goto L_not_viable;
+                int surfaceH = getTerrainHeightAt(&g->bn,
+                        getThreadTerrainNoise(g->seed), sampleX, sampleZ);
+                if (surfaceH < 63)
+                    surfaceH = 63;
+                sampleX = floordiv(sampleX, 4);
+                sampleZ = floordiv(sampleZ, 4);
+                sampleY = floordiv(surfaceH, 4);
+                goto L_feature;
+            }
+            sampleX = floordiv(sampleX, 4);
+            sampleZ = floordiv(sampleZ, 4);
             float surfaceY;
             int nptype = g->bn.nptype;
             g->bn.nptype = NP_DEPTH;
@@ -2258,6 +2273,29 @@ int isViableStructureTerrain(int structType, Generator *g, int x, int z)
     }
     else
     {
+        return 1;
+    }
+
+    if (g->bn.amplified)
+    {   // The depth is no measure of an Amplified surface, so this is the
+        // check of the game on the real terrain (without caves and aquifers):
+        // the lowest of the four corner heights (WORLD_SURFACE_WG) must not
+        // be below the sea level. A water column has its surface at y 62, so
+        // it fails, and elsewhere the top stone block decides.
+        // Mansions only need y 60, which every column reaches (the water
+        // surface is above it), so they always pass.
+        if (structType == Mansion || g->bn.nptype != -1)
+            return 1;
+        const TerrainNoise *tn = getThreadTerrainNoise(g->seed);
+        int k;
+        for (k = 0; k < 4; k++)
+        {
+            int bx = x + ((k & 1) ? sx : 0);
+            int bz = z + ((k & 2) ? sz : 0);
+            // heightmap value 64: the top block is at y 63
+            if (getTerrainHeightAt(&g->bn, tn, bx, bz) < 64)
+                return 0;
+        }
         return 1;
     }
 

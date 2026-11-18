@@ -9,10 +9,13 @@
 // Samples approximate surface heights for the pixels of a map tile.
 // The output is a (r.sx+2) x (r.sz+2) grid with a one-pixel border, so that
 // slopes can be evaluated at the edges of the tile. Coarse step bits sample
-// every (1 << stepbits) pixels and interpolate in between.
+// every (1 << stepbits) pixels and interpolate in between. With relief, the
+// large mushroom islands of 1.18+ get the hills of the real terrain at 1:4 and
+// finer (see mapReliefHeight()); otherwise the heights are those of
+// mapApproxHeight().
 bool sampleHeightGrid(std::vector<float>& height, Range r,
         const Generator *g, const SurfaceNoise *sn, int stepbits, bool bicubic,
-        const std::atomic_bool *abort);
+        const std::atomic_bool *abort, bool relief = false);
 
 // Recolors a biome tile in a Minecraft-like terrain style: the surface
 // material of each biome (tinted grass, sand, snow, stone, water, ...) with

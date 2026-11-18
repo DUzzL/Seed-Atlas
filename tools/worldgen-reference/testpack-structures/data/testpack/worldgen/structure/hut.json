@@ -1,0 +1,10 @@
+{
+  "type": "minecraft:swamp_hut",
+  "biomes": [
+    "testpack:outer_reach",
+    "testpack:equi_q",
+    "minecraft:swamp"
+  ],
+  "step": "surface_structures",
+  "spawn_overrides": {}
+}

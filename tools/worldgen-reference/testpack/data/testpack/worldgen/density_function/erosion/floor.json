@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:add",
+  "argument1": -1.1,
+  "argument2": {
+    "type": "minecraft:mul",
+    "argument1": 6.0,
+    "argument2": {
+      "type": "minecraft:square",
+      "argument": {
+        "type": "minecraft:noise",
+        "noise": "testpack:single",
+        "xz_scale": 1.0,
+        "y_scale": 0.0
+      }
+    }
+  }
+}

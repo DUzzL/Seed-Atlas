@@ -1,0 +1,7 @@
+# <seed> [stronghold indices]; obfuscated jar: indices refer to the engine's
+# approximate order, the stronghold actually used is the one vanilla /locate finds
+12345
+-42
+-4172144997902289642
+9223249143757829398
+1

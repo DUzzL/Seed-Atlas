@@ -1,0 +1,7 @@
+{
+  "replace": true,
+  "values": [
+    "testpack:amber_plains",
+    "minecraft:meadow"
+  ]
+}

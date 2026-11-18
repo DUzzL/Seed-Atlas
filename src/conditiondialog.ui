@@ -3,84 +3,14 @@
  <class>ConditionDialog</class>
  <widget class="QDialog" name="ConditionDialog">
   <property name="windowTitle">
-   <string>Advanced Filter</string>
+   <string>Add condition</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">
     <normaloff>:/icons/logo.png</normaloff>:/icons/logo.png</iconset>
   </property>
   <layout class="QGridLayout" name="gridLayout_3">
-   <item row="0" column="0">
-    <layout class="QGridLayout" name="gridLayout_2">
-     <item row="0" column="4">
-      <widget class="StyledComboBox" name="comboCat">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
-         <horstretch>2</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="sizeAdjustPolicy">
-        <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
-       </property>
-      </widget>
-     </item>
-     <item row="0" column="5">
-      <widget class="StyledComboBox" name="comboType">
-       <property name="enabled">
-        <bool>false</bool>
-       </property>
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
-         <horstretch>3</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="maxVisibleItems">
-        <number>20</number>
-       </property>
-       <property name="sizeAdjustPolicy">
-        <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
-       </property>
-       <item>
-        <property name="text">
-         <string>Select type</string>
-        </property>
-       </item>
-      </widget>
-     </item>
-     <item row="0" column="0">
-      <widget class="QLabel" name="labelMC">
-       <property name="text">
-        <string>MC: 1.X</string>
-       </property>
-      </widget>
-     </item>
-     <item row="0" column="2">
-      <widget class="QLabel" name="labelFilterType">
-       <property name="text">
-        <string>Condition type:</string>
-       </property>
-       <property name="alignment">
-        <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-       </property>
-      </widget>
-     </item>
-     <item row="0" column="1">
-      <spacer name="horizontalSpacer_4">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>40</width>
-         <height>20</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-    </layout>
-   </item>
+<item row="0" column="0"><layout class="QVBoxLayout" name="layoutTop"><property name="spacing"><number>8</number></property><item><layout class="QHBoxLayout" name="layoutHeader"><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property><item><widget class="QLabel" name="labelQuestion"><property name="text"><string>What are you looking for?</string></property></widget></item><item><spacer name="spacerHeader"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property></spacer></item><item><widget class="QLabel" name="labelMC"><property name="text"><string>Minecraft 1.X</string></property><property name="toolTip"><string>The Minecraft version of the map; the search uses it as well.</string></property></widget></item></layout></item></layout></item>
    <item row="1" column="0">
     <widget class="QScrollArea" name="scrollMain">
      <property name="frameShape">
@@ -109,228 +39,7 @@
        <property name="horizontalSpacing">
         <number>0</number>
        </property>
-       <item row="0" column="0" rowspan="2" colspan="2">
-        <widget class="QGroupBox" name="groupBoxPosition">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Location</string>
-         </property>
-         <layout class="QGridLayout" name="gridLayout">
-          <item row="5" column="1" colspan="6">
-           <layout class="QHBoxLayout" name="horizontalLayout">
-            <item>
-             <widget class="QLabel" name="labelX1">
-              <property name="toolTip">
-               <string>Lower bound (inclusive)</string>
-              </property>
-              <property name="text">
-               <string>X&lt;sub&gt;1&lt;/sub&gt;:</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="CoordEdit" name="lineEditX1">
-              <property name="toolTip">
-               <string>Lower bound (inclusive)</string>
-              </property>
-              <property name="text">
-               <string>0</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLabel" name="labelZ1">
-              <property name="toolTip">
-               <string>Lower bound (inclusive)</string>
-              </property>
-              <property name="text">
-               <string>Z&lt;sub&gt;1&lt;/sub&gt;:</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="CoordEdit" name="lineEditZ1">
-              <property name="toolTip">
-               <string>Lower bound (inclusive)</string>
-              </property>
-              <property name="text">
-               <string>0</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLabel" name="label_13">
-              <property name="text">
-               <string/>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLabel" name="labelX2">
-              <property name="toolTip">
-               <string>Upper bound (inclusive)</string>
-              </property>
-              <property name="text">
-               <string>X&lt;sub&gt;2&lt;/sub&gt;:</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="CoordEdit" name="lineEditX2">
-              <property name="toolTip">
-               <string>Upper bound (inclusive)</string>
-              </property>
-              <property name="text">
-               <string>0</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLabel" name="labelZ2">
-              <property name="toolTip">
-               <string>Upper bound (inclusive)</string>
-              </property>
-              <property name="text">
-               <string>Z&lt;sub&gt;2&lt;/sub&gt;:</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="CoordEdit" name="lineEditZ2">
-              <property name="toolTip">
-               <string>Upper bound (inclusive)</string>
-              </property>
-              <property name="text">
-               <string>0</string>
-              </property>
-              <property name="maxLength">
-               <number>9</number>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="buttonFromVisible">
-              <property name="text">
-               <string>From visible</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item row="0" column="6">
-           <widget class="QCheckBox" name="checkSkipRef">
-            <property name="toolTip">
-             <string>Skip instances at exactly the relative reference location</string>
-            </property>
-            <property name="text">
-             <string>Ignore reference</string>
-            </property>
-           </widget>
-          </item>
-          <item row="3" column="5" colspan="2">
-           <widget class="QLineEdit" name="lineSquare">
-            <property name="text">
-             <string>0</string>
-            </property>
-           </widget>
-          </item>
-          <item row="2" column="5" colspan="2">
-           <widget class="QLineEdit" name="lineRadius">
-            <property name="text">
-             <string>0</string>
-            </property>
-           </widget>
-          </item>
-          <item row="5" column="0">
-           <widget class="QRadioButton" name="radioCustom">
-            <property name="text">
-             <string>Custom rectangle:</string>
-            </property>
-           </widget>
-          </item>
-          <item row="6" column="0" colspan="3">
-           <widget class="QLabel" name="labelRelative">
-            <property name="text">
-             <string>Location is relative to:</string>
-            </property>
-           </widget>
-          </item>
-          <item row="3" column="4">
-           <widget class="QPushButton" name="buttonAreaInfo">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="text">
-             <string/>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="5">
-           <widget class="SpinInstances" name="spinBox">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="specialValueText">
-             <string>0 (exclude)</string>
-            </property>
-            <property name="minimum">
-             <number>0</number>
-            </property>
-            <property name="maximum">
-             <number>99</number>
-            </property>
-            <property name="value">
-             <number>1</number>
-            </property>
-           </widget>
-          </item>
-          <item row="6" column="3" colspan="4">
-           <widget class="StyledComboBox" name="comboRelative">
-            <item>
-             <property name="text">
-              <string>World origin (0, 0)</string>
-             </property>
-            </item>
-           </widget>
-          </item>
-          <item row="3" column="0" colspan="4">
-           <widget class="QRadioButton" name="radioSquare">
-            <property name="text">
-             <string>Within centered square of side (blocks):</string>
-            </property>
-            <property name="checked">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item row="2" column="0" colspan="4">
-           <widget class="QRadioButton" name="radioRadius">
-            <property name="text">
-             <string>Within radius (blocks):</string>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="0" colspan="4">
-           <widget class="QLabel" name="labelSpinBox">
-            <property name="text">
-             <string>Instances within area:</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
+<item row="0" column="0" rowspan="2" colspan="2"><widget class="QGroupBox" name="groupBoxPosition"><property name="sizePolicy"><sizepolicy hsizetype="Preferred" vsizetype="Preferred"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property><property name="title"><string>Where</string></property><layout class="QGridLayout" name="gridLayout" columnstretch="0,1"><item row="0" column="0"><widget class="QLabel" name="labelRelative"><property name="text"><string>Measured from:</string></property><property name="toolTip"><string>The area is placed around this position: the world origin (0, 0) or the position found by another condition</string></property></widget></item><item row="0" column="1"><widget class="StyledComboBox" name="comboRelative"><property name="toolTip"><string>The area is placed around this position: the world origin (0, 0) or the position found by another condition</string></property><item><property name="text"><string>World origin (0, 0)</string></property></item></widget></item><item row="1" column="0"><widget class="QLabel" name="labelShape"><property name="text"><string>Area:</string></property></widget></item><item row="1" column="1"><widget class="QWidget" name="rowShape"><layout class="QHBoxLayout" name="layoutShape"><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property><item><widget class="QRadioButton" name="radioRadius"><property name="text"><string>Circle</string></property></widget></item><item><widget class="QRadioButton" name="radioSquare"><property name="text"><string>Square</string></property><property name="checked"><bool>true</bool></property></widget></item><item><widget class="QRadioButton" name="radioCustom"><property name="text"><string>Custom area</string></property></widget></item><item><spacer name="spacerShape"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property></spacer></item><item><widget class="QPushButton" name="buttonAreaInfo"><property name="text"><string></string></property></widget></item></layout></widget></item><item row="2" column="0"><widget class="QLabel" name="labelRadius"><property name="text"><string>Radius:</string></property></widget></item><item row="2" column="1"><widget class="QWidget" name="rowRadius"><layout class="QHBoxLayout" name="layoutRadius"><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property><item><widget class="QLineEdit" name="lineRadius"><property name="toolTip"><string>Distance from the center in blocks</string></property><property name="text"><string>0</string></property></widget></item><item><widget class="QLabel" name="labelRadiusUnit"><property name="text"><string>blocks</string></property></widget></item><item><spacer name="spacerRadius"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property></spacer></item></layout></widget></item><item row="3" column="0"><widget class="QLabel" name="labelSquare"><property name="text"><string>Side length:</string></property></widget></item><item row="3" column="1"><widget class="QWidget" name="rowSquare"><layout class="QHBoxLayout" name="layoutSquare"><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property><item><widget class="QLineEdit" name="lineSquare"><property name="toolTip"><string>Width and height of the square in blocks, centered on the position it is measured from</string></property><property name="text"><string>0</string></property></widget></item><item><widget class="QLabel" name="labelSquareUnit"><property name="text"><string>blocks</string></property></widget></item><item><spacer name="spacerSquare"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property></spacer></item></layout></widget></item><item row="4" column="0"><widget class="QLabel" name="labelCorner1"><property name="text"><string>From corner:</string></property></widget></item><item row="4" column="1"><widget class="QWidget" name="rowCorner1"><layout class="QHBoxLayout" name="layoutCorner1"><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property><item><widget class="QLabel" name="labelX1"><property name="text"><string>X</string></property><property name="toolTip"><string>First corner, relative to the position the area is measured from (included)</string></property></widget></item><item><widget class="CoordEdit" name="lineEditX1"><property name="toolTip"><string>First corner, relative to the position the area is measured from (included)</string></property><property name="text"><string>0</string></property></widget></item><item><widget class="QLabel" name="labelZ1"><property name="text"><string>Z</string></property><property name="toolTip"><string>First corner, relative to the position the area is measured from (included)</string></property></widget></item><item><widget class="CoordEdit" name="lineEditZ1"><property name="toolTip"><string>First corner, relative to the position the area is measured from (included)</string></property><property name="text"><string>0</string></property></widget></item><item><spacer name="spacerCorner1"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property></spacer></item></layout></widget></item><item row="5" column="0"><widget class="QLabel" name="labelCorner2"><property name="text"><string>To corner:</string></property></widget></item><item row="5" column="1"><widget class="QWidget" name="rowCorner2"><layout class="QHBoxLayout" name="layoutCorner2"><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property><item><widget class="QLabel" name="labelX2"><property name="text"><string>X</string></property><property name="toolTip"><string>Opposite corner (included)</string></property></widget></item><item><widget class="CoordEdit" name="lineEditX2"><property name="toolTip"><string>Opposite corner (included)</string></property><property name="text"><string>0</string></property></widget></item><item><widget class="QLabel" name="labelZ2"><property name="text"><string>Z</string></property><property name="toolTip"><string>Opposite corner (included)</string></property></widget></item><item><widget class="CoordEdit" name="lineEditZ2"><property name="toolTip"><string>Opposite corner (included)</string></property><property name="text"><string>0</string></property><property name="maxLength"><number>9</number></property></widget></item><item><widget class="QPushButton" name="buttonFromVisible"><property name="toolTip"><string>Fill in the area that the map currently shows</string></property><property name="text"><string>Use map view</string></property></widget></item><item><spacer name="spacerCorner2"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property></spacer></item></layout></widget></item><item row="6" column="0"><widget class="QLabel" name="labelSpinBox"><property name="text"><string>How many:</string></property></widget></item><item row="6" column="1"><widget class="QWidget" name="rowCount"><layout class="QHBoxLayout" name="layoutCount"><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property><item><widget class="SpinInstances" name="spinBox"><property name="toolTip"><string>How many of them must be in the area. 0 means that none may be there.</string></property><property name="minimum"><number>0</number></property><property name="maximum"><number>99</number></property><property name="value"><number>1</number></property></widget></item><item><spacer name="spacerCount"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property></spacer></item></layout></widget></item><item row="7" column="1"><widget class="QCheckBox" name="checkSkipRef"><property name="toolTip"><string>Skips an instance at exactly the position this condition is measured from. Use it when you look for a second structure of the same kind, so that the first one is not counted again.</string></property><property name="text"><string>Don't count the one it is measured from</string></property></widget></item></layout></widget></item>
        <item row="4" column="0" colspan="2">
         <widget class="QStackedWidget" name="stackedWidget">
          <property name="lineWidth">
@@ -410,9 +119,9 @@
              </property>
              <layout class="QGridLayout" name="gridLayout_13">
               <item row="0" column="3">
-               <widget class="QLabel" name="labelY">
+               <widget class="QLabel" name="labelY"><property name="toolTip"><string>The height at which the biomes are checked. It matters for cave biomes, which only exist underground.</string></property>
                 <property name="text">
-                 <string>Y:</string>
+                 <string>Height (Y):</string>
                 </property>
                 <property name="alignment">
                  <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
@@ -441,21 +150,21 @@
                 <item>
                  <widget class="QPushButton" name="buttonUncheck">
                   <property name="text">
-                   <string>uncheck all</string>
+                   <string>Clear all</string>
                   </property>
                  </widget>
                 </item>
                 <item>
                  <widget class="QPushButton" name="buttonInclude">
                   <property name="text">
-                   <string>include all</string>
+                   <string>Require all</string>
                   </property>
                  </widget>
                 </item>
                 <item>
                  <widget class="QPushButton" name="buttonExclude">
                   <property name="text">
-                   <string>exclude all</string>
+                   <string>Exclude all</string>
                   </property>
                  </widget>
                 </item>
@@ -498,7 +207,7 @@
                      <string>Enables optimizations that trade some accuracy for speed</string>
                     </property>
                     <property name="text">
-                     <string>Approximate</string>
+                     <string>Faster, less exact</string>
                     </property>
                    </widget>
                   </item>
@@ -512,10 +221,10 @@
                   <item row="2" column="0">
                    <widget class="QCheckBox" name="checkMatchAny">
                     <property name="toolTip">
-                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p style=&quot;white-space:pre&quot;&gt;Satisfied if &lt;span style=&quot; font-weight:600;&quot;&gt;any&lt;/span&gt; of the checked biomes are present&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+                     <string>Passes when at least one of the required biomes is in the area, instead of all of them</string>
                     </property>
                     <property name="text">
-                     <string>Match any</string>
+                     <string>Any one is enough</string>
                     </property>
                    </widget>
                   </item>
@@ -550,28 +259,27 @@
                      <string>Proportion of the area that has to be of the included biomes</string>
                     </property>
                     <property name="text">
-                     <string>Required coverage (%):</string>
+                     <string>Share of the area (%):</string>
                     </property>
                    </widget>
                   </item>
                   <item row="1" column="0">
                    <widget class="QLabel" name="label_18">
                     <property name="toolTip">
-                     <string>Statistical confidence that the coverage has been reached</string>
+                     <string>How sure the sampling must be that the share is reached. Higher values need more samples.</string>
                     </property>
                     <property name="text">
-                     <string>Confidence (%):</string>
+                     <string>Certainty (%):</string>
                     </property>
                    </widget>
                   </item>
                   <item row="0" column="4">
                    <widget class="QCheckBox" name="checkSamplePos">
                     <property name="toolTip">
-                     <string>Instead of estimating the center of the allowed biome area,
-yield each sampled position individually</string>
+                     <string>For conditions measured from this one: test them at every matching sample point instead of at the center of all matches.</string>
                     </property>
                     <property name="text">
-                     <string>Yield individual samples</string>
+                     <string>Use each matching sample as a position</string>
                     </property>
                    </widget>
                   </item>
@@ -585,7 +293,7 @@ yield each sampled position individually</string>
                   <item row="1" column="1">
                    <widget class="QLineEdit" name="lineConfidence1">
                     <property name="toolTip">
-                     <string>Statistical confidence that the coverage has been reached</string>
+                     <string>How sure the sampling must be that the share is reached. Higher values need more samples.</string>
                     </property>
                    </widget>
                   </item>
@@ -683,13 +391,13 @@ yield each sampled position individually</string>
            <item row="0" column="0">
             <widget class="QGroupBox" name="groupBox_5">
              <property name="title">
-              <string>Locate biome center</string>
+              <string>Biome patch</string>
              </property>
              <layout class="QGridLayout" name="gridLayout_19">
               <item row="3" column="0">
-               <widget class="QLabel" name="label_4">
+               <widget class="QLabel" name="label_4"><property name="toolTip"><string>How many cells (4 × 4 blocks) of other biomes may separate parts that still count as one patch. 0 or 1: only touching parts.</string></property>
                 <property name="text">
-                 <string>Border tolerance:</string>
+                 <string>Gap tolerance:</string>
                 </property>
                </widget>
               </item>
@@ -721,21 +429,21 @@ yield each sampled position individually</string>
                </spacer>
               </item>
               <item row="2" column="0">
-               <widget class="QLabel" name="label_5">
+               <widget class="QLabel" name="label_5"><property name="toolTip"><string>Smallest patch that counts, in cells (4 × 4 blocks at 1:4, 256 × 256 blocks at 1:256)</string></property>
                 <property name="text">
-                 <string>Minimum area:</string>
+                 <string>Minimum size:</string>
                 </property>
                </widget>
               </item>
               <item row="1" column="0" colspan="2">
                <widget class="QLabel" name="labelY_2">
                 <property name="text">
-                 <string>Sample at height (Y):</string>
+                 <string>Height (Y):</string>
                 </property>
                </widget>
               </item>
               <item row="3" column="2" colspan="2">
-               <widget class="QLineEdit" name="lineTolerance">
+               <widget class="QLineEdit" name="lineTolerance"><property name="toolTip"><string>How many cells (4 × 4 blocks) of other biomes may separate parts that still count as one patch. 0 or 1: only touching parts.</string></property>
                 <property name="text">
                  <string>0</string>
                 </property>
@@ -854,13 +562,13 @@ yield each sampled position individually</string>
            <item>
             <widget class="QGroupBox" name="groupBox_8">
              <property name="title">
-              <string>Temperature categories</string>
+              <string>Temperature zones</string>
              </property>
              <layout class="QVBoxLayout" name="verticalLayout">
               <item>
                <widget class="QLabel" name="label">
                 <property name="text">
-                 <string>Select how many entries of each temperature category are required.</string>
+                 <string>How many cells (1024 × 1024 blocks) of each zone the area needs. 0: any number, −1: none allowed.</string>
                 </property>
                </widget>
               </item>
@@ -905,13 +613,13 @@ yield each sampled position individually</string>
            <item row="0" column="0">
             <widget class="QGroupBox" name="groupBox">
              <property name="title">
-              <string>Climate parameters</string>
+              <string>Climate ranges</string>
              </property>
              <layout class="QGridLayout" name="gridLayout_15">
               <item row="0" column="0">
                <widget class="QGroupBox" name="groupBox_2">
                 <property name="title">
-                 <string>Select the minimum required and maximum allowed climate parameters:</string>
+                 <string>Set the range each climate value must reach and the range it must stay within:</string>
                 </property>
                 <layout class="QGridLayout" name="gridLayout_6">
                  <property name="spacing">
@@ -982,7 +690,7 @@ yield each sampled position individually</string>
                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;The climate must remain inside the confinement range&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
                    </property>
                    <property name="title">
-                    <string>Confined:</string>
+                    <string>Stays within:</string>
                    </property>
                    <layout class="QGridLayout" name="gridLayout_12">
                     <property name="leftMargin">
@@ -1110,7 +818,7 @@ yield each sampled position individually</string>
                   <item row="0" column="0">
                    <widget class="QLabel" name="label_15">
                     <property name="text">
-                     <string>Yield position of:</string>
+                     <string>Use the position of the:</string>
                     </property>
                    </widget>
                   </item>
@@ -1162,11 +870,10 @@ yield each sampled position individually</string>
                   <item row="2" column="1">
                    <widget class="QCheckBox" name="checkSamplePos2">
                     <property name="toolTip">
-                     <string>Instead of estimating the center of the allowed biome area,
-yield each sampled position individually</string>
+                     <string>For conditions measured from this one: test them at every matching sample point instead of at the center of all matches.</string>
                     </property>
                     <property name="text">
-                     <string>Yield individual samples</string>
+                     <string>Use each matching sample as a position</string>
                     </property>
                    </widget>
                   </item>
@@ -1176,10 +883,10 @@ yield each sampled position individually</string>
                   <item row="1" column="0">
                    <widget class="QLabel" name="label_27">
                     <property name="toolTip">
-                     <string>Statistical confidence that the coverage has been reached</string>
+                     <string>How sure the sampling must be that the share is reached. Higher values need more samples.</string>
                     </property>
                     <property name="text">
-                     <string>Confidence (%):</string>
+                     <string>Certainty (%):</string>
                     </property>
                    </widget>
                   </item>
@@ -1199,14 +906,14 @@ yield each sampled position individually</string>
                   <item row="1" column="1">
                    <widget class="QLineEdit" name="lineConfidence2">
                     <property name="toolTip">
-                     <string>Statistical confidence that the coverage has been reached</string>
+                     <string>How sure the sampling must be that the share is reached. Higher values need more samples.</string>
                     </property>
                    </widget>
                   </item>
                   <item row="0" column="0">
-                   <widget class="QLabel" name="label_19">
+                   <widget class="QLabel" name="label_19"><property name="toolTip"><string>Proportion of the area that has to be covered</string></property>
                     <property name="text">
-                     <string>Required coverage (%):</string>
+                     <string>Share of the area (%):</string>
                     </property>
                    </widget>
                   </item>
@@ -1233,7 +940,7 @@ yield each sampled position individually</string>
               <item row="3" column="0">
                <widget class="QLabel" name="label_9">
                 <property name="text">
-                 <string>If value is in range:</string>
+                 <string>Value must be in range:</string>
                 </property>
                </widget>
               </item>
@@ -1249,9 +956,9 @@ yield each sampled position individually</string>
                </widget>
               </item>
               <item row="1" column="0">
-               <widget class="QLabel" name="label_12">
+               <widget class="QLabel" name="label_12"><property name="toolTip"><string>Fewer octaves are faster to check but less exact</string></property>
                 <property name="text">
-                 <string>Generate up to octave:</string>
+                 <string>Detail level (octaves):</string>
                 </property>
                </widget>
               </item>
@@ -1268,7 +975,7 @@ yield each sampled position individually</string>
               <item row="0" column="0">
                <widget class="QLabel" name="label_8">
                 <property name="text">
-                 <string>Climate parameter: </string>
+                 <string>Climate value:</string>
                 </property>
                </widget>
               </item>
@@ -1288,7 +995,7 @@ yield each sampled position individually</string>
                  <string>Only match if value is outside the given range</string>
                 </property>
                 <property name="text">
-                 <string>Invert range</string>
+                 <string>Outside the range instead</string>
                 </property>
                </widget>
               </item>
@@ -1336,7 +1043,7 @@ yield each sampled position individually</string>
               <item row="0" column="0">
                <widget class="QLabel" name="label_11">
                 <property name="text">
-                 <string>Height (Y-level)</string>
+                 <string>Height (Y)</string>
                 </property>
                </widget>
               </item>
@@ -1483,9 +1190,9 @@ yield each sampled position individually</string>
             </widget>
            </item>
            <item row="0" column="4">
-            <widget class="QPushButton" name="pushLuaOpen">
+            <widget class="QPushButton" name="pushLuaOpen"><property name="toolTip"><string>Open the folder with your Lua scripts</string></property>
              <property name="text">
-              <string>Open directory...</string>
+              <string>Open folder...</string>
              </property>
             </widget>
            </item>
@@ -1515,13 +1222,13 @@ yield each sampled position individually</string>
            <item row="0" column="0">
             <widget class="QGroupBox" name="groupBoxSpiral">
              <property name="title">
-              <string>Spiral iterator</string>
+              <string>Scan steps</string>
              </property>
              <layout class="QGridLayout" name="gridLayout_29">
               <item row="0" column="0">
-               <widget class="QLabel" name="label_16">
+               <widget class="QLabel" name="label_16"><property name="toolTip"><string>Distance between two test positions. Smaller steps are more thorough but slower.</string></property>
                 <property name="text">
-                 <string>Step size:</string>
+                 <string>Step size (blocks):</string>
                 </property>
                </widget>
               </item>
@@ -1567,23 +1274,23 @@ yield each sampled position individually</string>
            <item row="0" column="0">
             <widget class="QGroupBox" name="groupBoxVillage">
              <property name="title">
-              <string>Village variants</string>
+              <string>Village options</string>
              </property>
              <layout class="QGridLayout" name="gridLayoutVillage2">
               <item row="0" column="0">
                <widget class="QCheckBox" name="checkStartPieces">
                 <property name="toolTip">
-                 <string>Allow only structures that start with one of the selected pieces</string>
+                 <string>Only structures that start with one of the selected pieces. The start piece decides the type and layout.</string>
                 </property>
                 <property name="text">
-                 <string>Filter starting piece</string>
+                 <string>Only these village types</string>
                 </property>
                </widget>
               </item>
               <item row="0" column="1">
-               <widget class="QCheckBox" name="checkAbandoned">
+               <widget class="QCheckBox" name="checkAbandoned"><property name="toolTip"><string>Click once: must be abandoned. Click again: must not be abandoned. Clear: either.</string></property>
                 <property name="text">
-                 <string>Abandoned</string>
+                 <string>Abandoned (zombie village)</string>
                 </property>
                 <property name="tristate">
                  <bool>true</bool>
@@ -1626,16 +1333,16 @@ yield each sampled position individually</string>
            <item row="0" column="0">
             <widget class="QGroupBox" name="groupBoxBastion">
              <property name="title">
-              <string>Bastion variants</string>
+              <string>Bastion options</string>
              </property>
              <layout class="QGridLayout" name="gridLayoutBastion2">
               <item row="0" column="0">
                <widget class="QCheckBox" name="checkStartBastion">
                 <property name="toolTip">
-                 <string>Allow only structures that start with one of the selected pieces</string>
+                 <string>Only structures that start with one of the selected pieces. The start piece decides the type and layout.</string>
                 </property>
                 <property name="text">
-                 <string>Filter starting piece</string>
+                 <string>Only these bastion types</string>
                 </property>
                </widget>
               </item>
@@ -1675,7 +1382,7 @@ yield each sampled position individually</string>
            <item row="0" column="0">
             <widget class="QGroupBox" name="groupBoxFortress">
              <property name="title">
-              <string>Fortress pieces</string>
+              <string>Fortress layout</string>
              </property>
              <layout class="QGridLayout" name="gridLayout_17">
               <item row="0" column="0">
@@ -1684,7 +1391,7 @@ yield each sampled position individually</string>
                  <string>Finds four adjacent bridge-crossing or start pieces forming a square at the same Y level.</string>
                 </property>
                 <property name="text">
-                 <string>With 2x2 arrangement of bridge crossings or start piece</string>
+                 <string>With 4 bridge crossings in a 2 × 2 square</string>
                 </property>
                </widget>
               </item>
@@ -1694,7 +1401,7 @@ yield each sampled position individually</string>
                  <string>Finds at least three consecutive bridge-crossing or start pieces in a straight line at the same Y level.</string>
                 </property>
                 <property name="text">
-                 <string>With 3x1 line of bridge crossings or start piece</string>
+                 <string>With 3 bridge crossings in a row</string>
                 </property>
                </widget>
               </item>
@@ -1733,16 +1440,16 @@ yield each sampled position individually</string>
            <item row="0" column="0">
             <widget class="QGroupBox" name="groupBoxPortal">
              <property name="title">
-              <string>Ruined portal variants</string>
+              <string>Ruined portal options</string>
              </property>
              <layout class="QGridLayout" name="gridLayoutPortal2">
               <item row="0" column="0">
                <widget class="QCheckBox" name="checkStartPortal">
                 <property name="toolTip">
-                 <string>Allow only structures that start with one of the selected pieces</string>
+                 <string>Only structures that start with one of the selected pieces. The start piece decides the type and layout.</string>
                 </property>
                 <property name="text">
-                 <string>Filter starting piece</string>
+                 <string>Only these portal types</string>
                 </property>
                </widget>
               </item>
@@ -1782,7 +1489,7 @@ yield each sampled position individually</string>
            <item row="0" column="0">
             <widget class="QGroupBox" name="groupBoxEndCity">
              <property name="title">
-              <string>End city variants</string>
+              <string>End city options</string>
              </property>
              <layout class="QGridLayout" name="gridLayoutEndCity2">
               <item row="0" column="0">
@@ -1830,13 +1537,13 @@ yield each sampled position individually</string>
            <item row="0" column="0">
             <widget class="QGroupBox" name="groupBoxIgloo">
              <property name="title">
-              <string>Igloo variants</string>
+              <string>Igloo options</string>
              </property>
              <layout class="QGridLayout" name="gridLayoutEndCity2_2">
               <item row="0" column="0">
-               <widget class="QCheckBox" name="checkBasement">
+               <widget class="QCheckBox" name="checkBasement"><property name="toolTip"><string>Click once: must have a basement. Click again: must not have one. Clear: either.</string></property>
                 <property name="text">
-                 <string>Basement</string>
+                 <string>With basement</string>
                 </property>
                 <property name="tristate">
                  <bool>true</bool>
@@ -1871,6 +1578,19 @@ yield each sampled position individually</string>
     </widget>
    </item>
    <item row="2" column="0">
+    <widget class="QLabel" name="labelSummary">
+     <property name="toolTip">
+      <string>What this condition checks, in one sentence</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+     <property name="textInteractionFlags">
+      <set>Qt::TextSelectableByMouse</set>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="0">
     <layout class="QHBoxLayout" name="horizontalLayout_2">
      <item>
       <widget class="QDialogButtonBox" name="buttonBox">
@@ -1906,18 +1626,16 @@ yield each sampled position individually</string>
   </customwidget>
  </customwidgets>
  <tabstops>
-  <tabstop>comboCat</tabstop>
-  <tabstop>comboType</tabstop>
-  <tabstop>spinBox</tabstop>
-  <tabstop>radioRadius</tabstop>
+  <tabstop>comboRelative</tabstop>
   <tabstop>lineRadius</tabstop>
-  <tabstop>radioSquare</tabstop>
   <tabstop>lineSquare</tabstop>
   <tabstop>lineEditX1</tabstop>
   <tabstop>lineEditZ1</tabstop>
   <tabstop>lineEditX2</tabstop>
   <tabstop>lineEditZ2</tabstop>
-  <tabstop>comboRelative</tabstop>
+  <tabstop>buttonFromVisible</tabstop>
+  <tabstop>spinBox</tabstop>
+  <tabstop>checkSkipRef</tabstop>
   <tabstop>stackedWidget</tabstop>
  </tabstops>
  <resources>

@@ -1,0 +1,17 @@
+{
+  "left": {
+    "left": {
+      "left": "testpack:erosion/choice",
+      "right": "testpack:erosion/floor",
+      "type": "minecraft:max"
+    },
+    "right": "testpack:erosion/ceiling",
+    "type": "minecraft:min"
+  },
+  "right": {
+    "left": 0.08,
+    "right": "testpack:new26/shape",
+    "type": "minecraft:mul"
+  },
+  "type": "minecraft:add"
+}

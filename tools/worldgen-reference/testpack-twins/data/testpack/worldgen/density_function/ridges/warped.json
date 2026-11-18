@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:shifted_noise",
+  "noise": "testpack:fold",
+  "xz_scale": 0.6,
+  "y_scale": 0.4,
+  "shift_x": "testpack:shift/x",
+  "shift_y": "testpack:shift/y",
+  "shift_z": "testpack:shift/z"
+}

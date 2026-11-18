@@ -1,0 +1,39 @@
+{
+  "has_precipitation": true,
+  "temperature": 0.75,
+  "downfall": 0.45,
+  "effects": {
+    "sky_color": 8959216,
+    "fog_color": 13689080,
+    "water_color": 4602456,
+    "water_fog_color": 731720,
+    "grass_color": 4602456,
+    "foliage_color": 6691448
+  },
+  "spawners": {},
+  "spawn_costs": {},
+  "carvers": {
+    "air": [
+      "minecraft:cave"
+    ]
+  },
+  "features": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [
+      "minecraft:ore_coal_upper",
+      "minecraft:ore_iron_small",
+      "minecraft:disk_clay"
+    ],
+    [],
+    [],
+    [
+      "minecraft:trees_plains",
+      "minecraft:patch_sugar_cane"
+    ]
+  ]
+}

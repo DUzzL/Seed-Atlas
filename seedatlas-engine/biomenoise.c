@@ -5,6 +5,7 @@
 #include "tables/btree19.h"
 #include "tables/btree20.h"
 #include "tables/btree21wd.h"
+#include "tables/terrain_splines.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,36 @@ void initSurfaceNoise(SurfaceNoise *sn, int dim, uint64_t seed)
         sn->xzFactor = 80;
         sn->yFactor = 160;
     }
+}
+
+void initSurfaceNoise118(SurfaceNoise *sn, uint64_t seed)
+{
+    // The positional random of "minecraft:terrain" (md5 salts, see the climate
+    // noises below). Its octaves are created one after the other from this one
+    // random: the limit noises 16 octaves (-15..0) each, then the main noise
+    // with 8 (-7..0). The first one created is the finest, i.e. oct[0] has
+    // the frequency 1, as in octaveInit().
+    Xoroshiro xr;
+    xSetSeed(&xr, seed);
+    uint64_t xlo = xNextLong(&xr);
+    uint64_t xhi = xNextLong(&xr);
+    xr.lo = xlo ^ 0x1ee555222ef96f14ULL;
+    xr.hi = xhi ^ 0xe2bedfdbebe43d33ULL;
+    int i;
+    for (i = 0; i < 16+16+8; i++)
+        xPerlinInit(&sn->oct[i], &xr);
+    sn->octmin.octaves = sn->oct;
+    sn->octmin.octcnt = 16;
+    sn->octmax.octaves = sn->oct + 16;
+    sn->octmax.octcnt = 16;
+    sn->octmain.octaves = sn->oct + 32;
+    sn->octmain.octcnt = 8;
+    // "old_blended_noise": xz_scale 0.25, y_scale 0.125, xz_factor 80,
+    // y_factor 160 per block, which is 1 and 1 in cell units of 4 by 8 blocks
+    sn->xzScale = 1.0;
+    sn->yScale = 1.0;
+    sn->xzFactor = 80;
+    sn->yFactor = 160;
 }
 
 void initSurfaceNoiseBeta(SurfaceNoiseBeta *snb, uint64_t seed)
@@ -959,6 +990,10 @@ static Spline *createFixSpline(SplineStack *ss, float val)
 {
     FixSpline *sp = &ss->fstack[ss->flen++];
     sp->len = 1;
+    // TerrainProvider.AMPLIFIED_OFFSET: only the values are transformed, the
+    // derivatives of the spline points are those of the default world
+    if (ss->amplified && val > 0)
+        val *= 2.0F;
     sp->val = val;
     return (Spline*)sp;
 }
@@ -1111,8 +1146,15 @@ float getSpline(const Spline *sp, const float *vals)
 
 void initBiomeNoise(BiomeNoise *bn, int mc)
 {
+    initBiomeNoiseEx(bn, mc, 0);
+}
+
+void initBiomeNoiseEx(BiomeNoise *bn, int mc, int amplified)
+{
     SplineStack *ss = &bn->ss;
     memset(ss, 0, sizeof(*ss));
+    ss->amplified = amplified != 0;
+    bn->amplified = amplified != 0;
     Spline *sp = &ss->stack[ss->len++];
     sp->typ = SP_CONTINENTALNESS;
 
@@ -1248,6 +1290,551 @@ int64_t sampleBiomeNoiseDepth(const BiomeNoise *bn, int x, int y, int z,
         (sample_flags & ~SAMPLE_NO_DEPTH) | COLUMN_NO_TEMP_HUMID);
     float d = columnDepth(&cc, y);
     return (int64_t)(10000.0F*d);
+}
+
+void reliefNoiseInit(ReliefNoise *rn)
+{
+    rn->sn = NULL;
+    rn->tn = NULL;
+}
+
+void reliefNoiseFree(ReliefNoise *rn)
+{
+    free(rn->sn);
+    free(rn->tn);
+    rn->sn = NULL;
+    rn->tn = NULL;
+}
+
+// Value of the density "overworld/sloped_cheese" at the corner of a noise cell
+// (4 by 8 by 4 blocks; x and z in biome coordinates, k = y / 8) where the
+// continentalness is so low that "factor" is the constant 3.95 and
+// "jaggedness" is zero. @base is the depth at y = 0 (the offset included).
+// quarter_negative(v) = v < 0 ? v / 4 : v, and the surface is where the sum
+// with the 3D noise crosses zero. The vanilla final density interpolates this
+// linearly between the corners (and is solid where it is positive).
+static double reliefDensity(const SurfaceNoise *sn, double base, int x, int k, int z)
+{
+    double v = (base - k * 8 / 128.0) * 3.95;
+    if (v < 0)
+        v *= 0.25;
+    return 4.0 * v + sampleSurfaceNoise(sn, x, k, z) / 128.0;
+}
+
+double sampleBiomeNoiseRelief(const BiomeNoise *bn, ReliefNoise *rn,
+    uint64_t seed, int x, int z)
+{
+    if (bn->amplified)
+    {   // the depth height means nothing here: the real surface everywhere
+        const TerrainNoise *tn = rn->tn;
+        if (!tn)
+        {
+            rn->tn = (TerrainNoise*) malloc(sizeof(*rn->tn));
+            if (rn->tn)
+                initTerrainNoise(rn->tn, seed);
+            tn = rn->tn ? rn->tn : getThreadTerrainNoise(seed);
+        }
+        return sampleTerrainSurface(bn, tn, x, z, 0) + 0.5;
+    }
+
+    // fully relief up to this continentalness, then blended out to the depth
+    // height at the second one; below -0.19 factor and jaggedness are
+    // constant, so the density formula holds throughout
+    const double c_full = -1.0, c_none = -0.9;
+
+    ColumnClimate cc;
+    sampleColumnClimate(bn, &cc, x, z, COLUMN_NO_TEMP_HUMID);
+    double flat = (int64_t)(10000.0F * columnDepth(&cc, 0)) / 76.0;
+    if (!(cc.c < c_none))
+        return flat;
+
+    double t = (cc.c - c_full) / (c_none - c_full);
+    t = t < 0 ? 0 : t;
+    double wgt = 1.0 - t * t * (3.0 - 2.0 * t);
+
+    if (!rn->sn)
+    {
+        rn->sn = (SurfaceNoise*) malloc(sizeof(*rn->sn));
+        if (!rn->sn)
+            return flat;
+        initSurfaceNoise118(rn->sn, seed);
+    }
+    const SurfaceNoise *sn = rn->sn;
+
+    // the depth is base - y / 128; the noise is below about 0.45 in absolute
+    // value, which moves the surface up by 3.95 * 0.45 * 128 / 4 < 20 blocks
+    double base = 1.0 - 83.0 / 160.0 + cc.off;
+    double y0 = base * 128.0;
+    int k = (int) ceil((y0 + 20.0) / 8.0);
+    double f = reliefDensity(sn, base, x, k, z);
+    int n;
+    for (n = 0; f > 0 && n < 16; n++)
+        f = reliefDensity(sn, base, x, ++k, z);
+    double root = flat;
+    for (n = 0; n < 40; n++)
+    {   // the topmost sign change: empty at k + 1, solid at k
+        double d = reliefDensity(sn, base, x, --k, z);
+        if (d > 0)
+        {
+            root = 8.0 * k + 8.0 * d / (d - f) + 0.5;
+            break;
+        }
+        f = d;
+    }
+    return flat + wgt * (root - flat);
+}
+
+
+//==============================================================================
+// Overworld (1.18+) Terrain
+//==============================================================================
+
+// CubicSpline.Multipoint.apply() on a spline table (tables/terrain_splines.h),
+// in float arithmetic like the game.
+static float getTerrainSpline(const TerrainSplineNode *nodes,
+    const TerrainSplinePoint *points, int idx, int amplified, const float *vals)
+{
+    const TerrainSplineNode *nd = &nodes[idx];
+    const TerrainSplinePoint *pt = &points[nd->first];
+    float f = vals[nd->typ];
+    int i, n = nd->len;
+    // findIntervalStart(): the last point at or below the coordinate
+    for (i = 0; i < n; i++)
+        if (f < pt[i].loc)
+            break;
+    i--;
+    if (i < 0 || i == n-1)
+    {   // linearExtend()
+        if (i < 0)
+            i = 0;
+        float v = pt[i].child < 0 ? pt[i].val[amplified] :
+            getTerrainSpline(nodes, points, pt[i].child, amplified, vals);
+        if (pt[i].der == 0)
+            return v;
+        return v + pt[i].der * (f - pt[i].loc);
+    }
+    float g = pt[i].loc;
+    float h = pt[i+1].loc;
+    float k = (f - g) / (h - g);
+    float l = pt[i].der;
+    float m = pt[i+1].der;
+    float v0 = pt[i].child < 0 ? pt[i].val[amplified] :
+        getTerrainSpline(nodes, points, pt[i].child, amplified, vals);
+    float v1 = pt[i+1].child < 0 ? pt[i+1].val[amplified] :
+        getTerrainSpline(nodes, points, pt[i+1].child, amplified, vals);
+    float p = l * (h - g) - (v1 - v0);
+    float q = -m * (h - g) + (v1 - v0);
+    float a = v0 + k * (v1 - v0);
+    float b = p + k * (q - p);
+    return a + k * (1.0F - k) * b;
+}
+
+float getTerrainFactor(int amplified, const float np_param[4])
+{
+    return getTerrainSpline(g_factor_nodes, g_factor_points, 0,
+        amplified != 0, np_param);
+}
+
+float getTerrainJaggedness(int amplified, const float np_param[4])
+{
+    return getTerrainSpline(g_jaggedness_nodes, g_jaggedness_points, 0,
+        amplified != 0, np_param);
+}
+
+void initTerrainNoise(TerrainNoise *tn, uint64_t seed)
+{
+    initSurfaceNoise118(&tn->base, seed);
+
+    // NormalNoise "minecraft:jagged": first octave -16, 16 amplitudes of 1.
+    // It is seeded like the climate noises, from the positional random of
+    // the world seed with the md5 of its name.
+    static const uint64_t md5_octave[16][2] = {
+        {0xc613bf766619f992, 0x954753f86691b86a}, // md5 "octave_-16"
+        {0x7eee475a921c6cf5, 0xf2bd39426f8da413}, // md5 "octave_-15"
+        {0xfc0027cef9683114, 0xb758d3954dcbfdd3}, // md5 "octave_-14"
+        {0xd1fc8a05be565eca, 0xdc2a3915cbdda25b}, // md5 "octave_-13"
+        {0xb198de63a8012672, 0x7b84cad43ef7b5a8}, // md5 "octave_-12"
+        {0x0fd787bfbc403ec3, 0x74a4a31ca21b48b8}, // md5 "octave_-11"
+        {0x36d326eed40efeb2, 0x5be9ce18223c636a}, // md5 "octave_-10"
+        {0x082fe255f8be6631, 0x4e96119e22dedc81}, // md5 "octave_-9"
+        {0x0ef68ec68504005e, 0x48b6bf93a2789640}, // md5 "octave_-8"
+        {0xf11268128982754f, 0x257a1d670430b0aa}, // md5 "octave_-7"
+        {0xe51c98ce7d1de664, 0x5f9478a733040c45}, // md5 "octave_-6"
+        {0x6d7b49e7e429850a, 0x2e3063c622a24777}, // md5 "octave_-5"
+        {0xbd90d5377ba1b762, 0xc07317d419a7548d}, // md5 "octave_-4"
+        {0x53d39c6752dac858, 0xbcd1c5a80ab65b3e}, // md5 "octave_-3"
+        {0xb4a24d7a84e7677b, 0x023ff9668e89b5c4}, // md5 "octave_-2"
+        {0xdffa22b534c5f608, 0xb9b67517d3665ca9}, // md5 "octave_-1"
+    };
+    Xoroshiro xr;
+    xSetSeed(&xr, seed);
+    uint64_t xlo = xNextLong(&xr);
+    uint64_t xhi = xNextLong(&xr);
+    xr.lo = xlo ^ 0xf902c0a7c9daa994ULL; // md5 "minecraft:jagged"
+    xr.hi = xhi ^ 0x71ecd96a8da5e503ULL;
+    int n, i;
+    for (n = 0; n < 2; n++)
+    {
+        OctaveNoise *on = n ? &tn->jagged.octB : &tn->jagged.octA;
+        on->octaves = tn->oct + 16*n;
+        on->octcnt = 16;
+        uint64_t olo = xNextLong(&xr);
+        uint64_t ohi = xNextLong(&xr);
+        double lacuna = 1.0 / 65536.0;      // 2^-16
+        double persist = 32768.0 / 65535.0; // 2^15 / (2^16 - 1)
+        for (i = 0; i < 16; i++, lacuna *= 2.0, persist *= 0.5)
+        {
+            Xoroshiro pxr;
+            pxr.lo = olo ^ md5_octave[i][0];
+            pxr.hi = ohi ^ md5_octave[i][1];
+            xPerlinInit(&on->octaves[i], &pxr);
+            on->octaves[i].amplitude = persist;
+            on->octaves[i].lacunarity = lacuna;
+        }
+    }
+    // NormalNoise.valueFactor for 16 octaves
+    tn->jagged.amplitude = 0.16666666666666666 / (0.1 * (1.0 + 1.0 / 16.0));
+}
+
+#if defined(_MSC_VER)
+#define TN_THREAD_LOCAL __declspec(thread)
+#else
+#define TN_THREAD_LOCAL _Thread_local
+#endif
+
+const TerrainNoise *getThreadTerrainNoise(uint64_t seed)
+{
+    static TN_THREAD_LOCAL struct { TerrainNoise tn; uint64_t seed; int valid; } cache;
+    if (!cache.valid || cache.seed != seed)
+    {
+        initTerrainNoise(&cache.tn, seed);
+        cache.seed = seed;
+        cache.valid = 1;
+    }
+    return &cache.tn;
+}
+
+// BlendedNoise.compute() at a cell corner: block (4 x, 8 k, 4 z). The octave
+// coordinates, sums and the smearing are those of the game.
+enum { BASE_NOISE_MIN = 1, BASE_NOISE_MAX = 2 };
+
+static inline double baseLimitOctave(const PerlinNoise *oct, int i,
+    double d, double e, double f, double o)
+{
+    return samplePerlinSmeared(&oct[i], d * o, e * o, f * o, 684.412 * o, e * o);
+}
+
+double sampleTerrainBaseNoise(const TerrainNoise *tn, int x, int k, int z)
+{
+    const SurfaceNoise *sn = &tn->base;
+    // block x * (684.412 * xz_scale 0.25), block y * (684.412 * y_scale 0.125)
+    double d = x * 684.412;
+    double e = k * 684.412;
+    double f = z * 684.412;
+    double g = d / 80.0;
+    double h = e / 160.0;
+    double i = f / 80.0;
+    double ks = 684.412 / 160.0; // smear scale of the main noise
+    double vmin = 0, vmax = 0, vmain = 0;
+    double o = 1.0;
+    int p;
+    for (p = 0; p < 8; p++)
+    {
+        vmain += samplePerlinSmeared(&sn->octmain.octaves[p],
+            g * o, h * o, i * o, ks * o, h * o) / o;
+        o /= 2.0;
+    }
+    double q = (vmain / 10.0 + 1.0) / 2.0;
+    int usemin = !(q >= 1.0), usemax = !(q <= 0.0);
+    o = 1.0;
+    for (p = 0; p < 16; p++)
+    {
+        if (usemin)
+            vmin += baseLimitOctave(sn->octmin.octaves, p, d, e, f, o) / o;
+        if (usemax)
+            vmax += baseLimitOctave(sn->octmax.octaves, p, d, e, f, o) / o;
+        o /= 2.0;
+    }
+    return clampedLerp(q, vmin / 512.0, vmax / 512.0) / 128.0;
+}
+
+// PerlinNoise.wrap(): the game keeps the input of each octave within
+// +-2^24 (the noise repeats every 2^25, a multiple of its period of 256).
+// Without it, the lattice index of the jagged noise's finer octaves leaves
+// the range of an int beyond about 2.8 million blocks.
+static double wrapNoiseInput(double d)
+{
+    return d - floor(d / 33554432.0 + 0.5) * 33554432.0;
+}
+
+// NormalNoise.getValue() at y 0 with the inputs wrapped like the game
+static double sampleDoublePerlinWrapped(const DoublePerlinNoise *dpn, double x, double z)
+{
+    const double f = 337.0 / 331.0;
+    double sum[2] = { 0, 0 };
+    int n, i;
+    for (n = 0; n < 2; n++)
+    {
+        const OctaveNoise *on = n ? &dpn->octB : &dpn->octA;
+        const double ox = n ? x * f : x, oz = n ? z * f : z;
+        for (i = 0; i < on->octcnt; i++)
+        {
+            const PerlinNoise *p = on->octaves + i;
+            const double lf = p->lacunarity;
+            sum[n] += p->amplitude * samplePerlin(p, wrapNoiseInput(ox * lf), 0, wrapNoiseInput(oz * lf), 0, 0);
+        }
+    }
+    // first + second, as NormalNoise adds them
+    return (sum[0] + sum[1]) * dpn->amplitude;
+}
+
+void sampleTerrainColumn(const BiomeNoise *bn, const TerrainNoise *tn,
+    int x, int z, uint32_t sample_flags, TerrainColumn *tc)
+{
+    double px, pz;
+    getBiomeNoisePos(bn, x, z, sample_flags, &px, &pz);
+    tc->x = x;
+    tc->z = z;
+    tc->amplified = bn->amplified != 0;
+    tc->c = sampleDoublePerlin(&bn->climate[NP_CONTINENTALNESS], px, 0, pz);
+    tc->e = sampleDoublePerlin(&bn->climate[NP_EROSION], px, 0, pz);
+    tc->w = sampleDoublePerlin(&bn->climate[NP_WEIRDNESS], px, 0, pz);
+    float np_param[] = {
+        tc->c, tc->e,
+        -3.0F * ( fabsf( fabsf(tc->w) - 0.6666667F ) - 0.33333334F ), tc->w,
+    };
+    // overworld/offset = -0.50375F + spline; depth = 1 - y / 128 + offset
+    tc->base = 1.0 + ((double) -0.50375F + (double) getSpline(bn->sp, np_param));
+    tc->factor = getTerrainFactor(tc->amplified, np_param);
+    tc->jaggedness = getTerrainJaggedness(tc->amplified, np_param);
+    tc->jagged = 0;
+    if (tn && tc->jaggedness != 0)
+    {   // noise "jagged" with xz_scale 1500 at the block position, y_scale 0
+        double j = sampleDoublePerlinWrapped(&tn->jagged,
+            x * 4 * 1500.0, z * 4 * 1500.0);
+        tc->jagged = tc->jaggedness * (j > 0 ? j : j * 0.5);
+    }
+}
+
+// sloped_cheese without the base 3D noise
+static inline double terrainSlope(const TerrainColumn *tc, int k)
+{
+    double depth = tc->base - k * 8 / 128.0;
+    double s = (depth + tc->jagged) * tc->factor;
+    return 4.0 * (s > 0 ? s : s * 0.25);
+}
+
+// The slides of final_density at a cell corner, as weights:
+// value = sl[2] + sl[1] * (-sl[2] + (-0.078125 + sl[0] * (0.078125 + v)))
+static inline void terrainSlides(int amplified, int k, double sl[3])
+{
+    int y = k * 8;
+    int ytop = amplified ? 304 : 240;
+    double gt = 1.0 - (y - ytop) / 16.0;
+    double gb = (y + 64) / 24.0;
+    sl[0] = gt < 0 ? 0 : gt > 1 ? 1 : gt;
+    sl[1] = gb < 0 ? 0 : gb > 1 ? 1 : gb;
+    sl[2] = amplified ? 0.4 : 0.1171875;
+}
+
+// From sloped_cheese to the argument of "interpolated", without caves.
+static inline double terrainFinal(double v, const double sl[3])
+{
+    if (!(v < 1.5625))
+    {   // The cave branch of the range_choice, where every cave noise is 0:
+        // 4 * cave_layer^2 + clamp(0.27 + cave_cheese, -1, 1)
+        //   + clamp(1.5 - 0.64 * sloped_cheese, 0, 0.5)
+        double t = 1.5 - 0.64 * v;
+        v = 0.27 + (t < 0 ? 0 : t > 0.5 ? 0.5 : t);
+    }
+    v = -0.078125 + sl[0] * (0.078125 + v);
+    return sl[2] + sl[1] * (-sl[2] + v);
+}
+
+double sampleTerrainDensity(const TerrainColumn *tc, const TerrainNoise *tn, int k)
+{
+    double sl[3];
+    terrainSlides(tc->amplified, k, sl);
+    double v = terrainSlope(tc, k) + sampleTerrainBaseNoise(tn, tc->x, k, tc->z);
+    return terrainFinal(v, sl);
+}
+
+// Bounds on what the limit noise octaves below i can add to a limit noise sum
+// (in units of 1 / 65536 of the base 3D noise): an octave is at most
+// PERLIN_VALUE_BOUND, or 1.55 where the smearing is active (y scale below 1,
+// octaves 10 and up). With the smearing the y offset of the gradients is
+// independent of the y weights, so a corner term can reach 1 + max(|ox|, |oz|),
+// and the weighted sum of the latter peaks at 0.5353.
+static const double g_base_noise_rest[16] = {
+#define BNB_LO(i) (PERLIN_VALUE_BOUND * ((1 << (i)) - 1))
+#define BNB_HI(i) (PERLIN_VALUE_BOUND * 1023 + 1.55 * ((1 << (i)) - 1024))
+    BNB_LO(0), BNB_LO(1), BNB_LO(2), BNB_LO(3), BNB_LO(4), BNB_LO(5),
+    BNB_LO(6), BNB_LO(7), BNB_LO(8), BNB_LO(9), BNB_LO(10),
+    BNB_HI(11), BNB_HI(12), BNB_HI(13), BNB_HI(14), BNB_HI(15),
+#undef BNB_LO
+#undef BNB_HI
+};
+
+// Is the density at the cell corner k positive? The base 3D noise lies
+// between its two limit noises, whose octaves are summed from the largest
+// down until the sign is certain; only corners close to the surface need the
+// full noise. In that case *val gets the density and *known is set.
+static int terrainCornerSolid(const TerrainColumn *tc, const TerrainNoise *tn,
+    int k, double *val, int *known)
+{
+    double sl[3];
+    terrainSlides(tc->amplified, k, sl);
+    *known = 0;
+    if (sl[1] <= 0)
+        return 1; // the bottom slide ends at its (positive) target
+    if (sl[0] <= 0)
+        return 0; // the top slide ends at -0.078125
+    // positive iff sloped_cheese > thr (the cave branch is positive and lies
+    // above every threshold)
+    double thr = (0.078125 + sl[2] - sl[2] / sl[1]) / sl[0] - 0.078125;
+    double slope = terrainSlope(tc, k);
+    double a = slope - thr;
+    const SurfaceNoise *sn = &tn->base;
+    double d = tc->x * 684.412;
+    double e = k * 684.412;
+    double f = tc->z * 684.412;
+    double vmin = 0, vmax = 0;
+    const double eps = 1e-9;
+    int i;
+    for (i = 15; i >= 8; i--)
+    {
+        double o = 1.0 / (1 << i);
+        vmin += baseLimitOctave(sn->octmin.octaves, i, d, e, f, o) * (1 << i);
+        vmax += baseLimitOctave(sn->octmax.octaves, i, d, e, f, o) * (1 << i);
+        double rest = g_base_noise_rest[i];
+        double hi = (vmin > vmax ? vmin : vmax) + rest;
+        double lo = (vmin < vmax ? vmin : vmax) - rest;
+        if (a + hi * (1.0 / 65536.0) < -eps)
+            return 0;
+        if (a + lo * (1.0 / 65536.0) > eps)
+            return 1;
+    }
+    // The full noise as in sampleTerrainBaseNoise(), with the sums above.
+    // (The limit noises are summed in the opposite order here, which only
+    // differs in the last bits.)
+    double g = d / 80.0;
+    double h = e / 160.0;
+    double j = f / 80.0;
+    double ks = 684.412 / 160.0;
+    double vmain = 0;
+    double o = 1.0;
+    for (i = 0; i < 8; i++)
+    {
+        vmain += samplePerlinSmeared(&sn->octmain.octaves[i],
+            g * o, h * o, j * o, ks * o, h * o) / o;
+        o /= 2.0;
+    }
+    double q = (vmain / 10.0 + 1.0) / 2.0;
+    int usemin = !(q >= 1.0), usemax = !(q <= 0.0);
+    for (i = 7; i >= 0; i--)
+    {
+        o = 1.0 / (1 << i);
+        if (usemin)
+            vmin += baseLimitOctave(sn->octmin.octaves, i, d, e, f, o) * (1 << i);
+        if (usemax)
+            vmax += baseLimitOctave(sn->octmax.octaves, i, d, e, f, o) * (1 << i);
+    }
+    double n = clampedLerp(q, vmin / 512.0, vmax / 512.0) / 128.0;
+    *val = terrainFinal(slope + n, sl);
+    *known = 1;
+    return *val > 0;
+}
+
+// The highest cell corner of the column with a positive density, and the
+// densities there and at the corner above.
+static int terrainColumnTop(const TerrainColumn *tc, const TerrainNoise *tn,
+    double *v0, double *v1)
+{
+    int k = TERRAIN_K_MAX, known = 0, known1 = 0;
+    double v = 0, vabove = 0;
+    // Above the depth-zero level sloped_cheese is depth * factor + noise, and
+    // the noise is at most 1.5422 (the bounds above), so the corners above
+    // 16 * (base + jagged + 1.5422 / factor) are empty. (Not for the corners
+    // of the bottom slide, which are solid for negative values as well.)
+    if (tc->factor > 1e-3)
+    {
+        double kb = floor(16.0 * (tc->base + tc->jagged + 1.5425 / tc->factor));
+        if (kb < -5)
+            kb = -5;
+        if (kb < k)
+            k = (int) kb;
+    }
+    for (;;)
+    {
+        if (terrainCornerSolid(tc, tn, k, &v, &known))
+            break;
+        vabove = v;
+        known1 = known;
+        k--; // ends at TERRAIN_K_MIN, which is always solid
+    }
+    *v0 = known ? v : sampleTerrainDensity(tc, tn, k);
+    *v1 = known1 ? vabove : sampleTerrainDensity(tc, tn, k+1);
+    return k;
+}
+
+double sampleTerrainSurface(const BiomeNoise *bn, const TerrainNoise *tn,
+    int x, int z, uint32_t sample_flags)
+{
+    TerrainColumn tc;
+    sampleTerrainColumn(bn, tn, x, z, sample_flags, &tc);
+    double v0, v1;
+    int k = terrainColumnTop(&tc, tn, &v0, &v1);
+    if (!(v0 > 0))
+        return k * 8.0;
+    if (v1 > 0)
+        v1 = 0;
+    return k * 8.0 + 8.0 * v0 / (v0 - v1);
+}
+
+int getTerrainHeightAt(const BiomeNoise *bn, const TerrainNoise *tn,
+    int blockX, int blockZ)
+{
+    int qx = blockX >> 2, qz = blockZ >> 2;
+    double fx = (blockX & 3) / 4.0, fz = (blockZ & 3) / 4.0;
+    TerrainColumn tc[4];
+    double v0[4], v1[4];
+    int used[4] = { 1, fx != 0, fz != 0, fx != 0 && fz != 0 };
+    int i, k, kmax = TERRAIN_K_MIN;
+    for (i = 0; i < 4; i++)
+    {
+        v0[i] = v1[i] = 0;
+        if (!used[i])
+            continue;
+        sampleTerrainColumn(bn, tn, qx + (i & 1), qz + (i >> 1), 0, &tc[i]);
+        k = terrainColumnTop(&tc[i], tn, &v0[i], &v1[i]);
+        if (k > kmax)
+            kmax = k;
+    }
+    // above the highest solid corner of the columns everything is empty; from
+    // there down, the first cell with a solid block
+    for (k = kmax; k >= TERRAIN_K_MIN; k--)
+    {
+        for (i = 0; i < 4; i++)
+        {
+            if (!used[i])
+                continue;
+            v0[i] = sampleTerrainDensity(&tc[i], tn, k);
+            v1[i] = k < TERRAIN_K_MAX ? sampleTerrainDensity(&tc[i], tn, k+1) : 0;
+        }
+        int yb;
+        for (yb = 7; yb >= 0; yb--)
+        {   // NoiseInterpolator: y, then x, then z
+            double ty = yb / 8.0;
+            double n00 = lerp(ty, v0[0], v1[0]);
+            double n10 = lerp(ty, v0[1], v1[1]);
+            double n01 = lerp(ty, v0[2], v1[2]);
+            double n11 = lerp(ty, v0[3], v1[3]);
+            double n = lerp(fz, lerp(fx, n00, n10), lerp(fx, n01, n11));
+            if (n > 0)
+                return k * 8 + yb + 1;
+        }
+    }
+    return -64;
 }
 
 // Note: Climate noise is sampled at a 1:1 scale.

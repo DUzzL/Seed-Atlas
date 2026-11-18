@@ -4,16 +4,24 @@
 #include "aboutdialog.h"
 #include "biomecolordialog.h"
 #include "configdialog.h"
+#include "datapackworld.h"
+#include "dpmap.h"
+#include "dpstructuresdialog.h"
 #include "exportdialog.h"
 #include "extgendialog.h"
+#include "glyphs.h"
 #include "layerdialog.h"
 #include "maptoolsdialog.h"
 #include "message.h"
 #include "tabbiomes.h"
+#include "tabdatapacks.h"
+#include "formdpconditions.h"
 #include "tablocations.h"
 #include "tabslime.h"
+#include "tabportals.h"
 #include "tabstructures.h"
 #include "util.h"
+#include "vanilladata.h"
 #include "world.h"
 
 #if WITH_UPDATER
@@ -21,10 +29,16 @@
 #endif
 
 #include <QBuffer>
+#include <QButtonGroup>
+#include <QTabBar>
+#include <QVBoxLayout>
 #include <QByteArray>
 #include <QDataStream>
 #include <QDateTime>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QFile>
 #include <QSaveFile>
 #include <QFileDialog>
@@ -46,6 +60,7 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QStandardItemModel>
 #include <QStandardPaths>
 #include <QStyleFactory>
 #include <QPushButton>
@@ -57,6 +72,9 @@
 #endif
 #include <QPointer>
 #include <QTreeWidget>
+#include <QTableView>
+#include <QListWidget>
+#include <QAbstractItemView>
 
 #if WITH_DBUS
 #include <QDBusMessage>
@@ -67,85 +85,39 @@ int getStructureConfig_override(int stype, int mc, StructureConfig *sconf);
 
 namespace {
 
-// Procedural pixel-art gear, matching the style and 20px canvas of the
-// other toolbar icons. A second pixmap is added for high-dpi displays.
-QIcon pixelGearIcon(QColor color)
+// Which chrome icon the rail shows for a tool page.
+QString railIconKind(const QWidget *page)
 {
-    QIcon icon;
-    for (int size : {20, 40})
-    {
-        const double scale = size / 20.0;
-        const double c = (size - 1) / 2.0;
-        const double rHole = 3.0 * scale;
-        const double rRing = 6.6 * scale;
-        const double rOuter = 9.3 * scale;
-        const int teeth = 8;
-        const double step = 2.0 * M_PI / teeth;
-
-        QPixmap pixmap(size, size);
-        pixmap.fill(Qt::transparent);
-        QPainter painter(&pixmap);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(color);
-        for (int y = 0; y < size; y++)
-        for (int x = 0; x < size; x++)
-        {
-            const double dx = x - c;
-            const double dy = y - c;
-            const double r = std::hypot(dx, dy);
-            const double a = std::fmod(std::atan2(dy, dx) + M_PI + step*0.5, step);
-            const bool tooth = a > step*0.28 && a < step*0.72;
-            if (r >= rHole && r <= (tooth ? rOuter : rRing))
-                painter.drawRect(x, y, 1, 1);
-        }
-        icon.addPixmap(pixmap);
-    }
-    return icon;
+    if (page->objectName() == "tabSearch")
+        return "search";
+    if (page->inherits("TabBiomes"))
+        return "biomes";
+    if (page->inherits("TabStructures"))
+        return "structures";
+    if (page->inherits("TabSlime"))
+        return "slime";
+    if (page->inherits("TabPortals"))
+        return "eye";
+    const QString kind = page->property("railIcon").toString();
+    return kind.isEmpty() ? QString("layers") : kind;
 }
 
-// Three bars on the same 20px canvas as the gear.
-QIcon menuIcon(QColor color)
+QFrame *createMapCard(const char *name, QWidget *parent)
 {
-    QIcon icon;
-    for (int size : {20, 40})
-    {
-        const int s = size / 20;
-        QPixmap pixmap(size, size);
-        pixmap.fill(Qt::transparent);
-        QPainter painter(&pixmap);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(color);
-        for (int y : {4, 9, 14})
-            painter.drawRect(3*s, y*s, 14*s, 2*s);
-        icon.addPixmap(pixmap);
-    }
-    return icon;
+    QFrame *card = new QFrame(parent);
+    card->setObjectName(name);
+    card->setAttribute(Qt::WA_StyledBackground, true);
+    QGraphicsDropShadowEffect *shadow = new QGraphicsDropShadowEffect(card);
+    shadow->setBlurRadius(18);
+    shadow->setOffset(0, 3);
+    shadow->setColor(QColor(0, 0, 0, 90));
+    card->setGraphicsEffect(shadow);
+    return card;
 }
 
-// A right arrow on a 16px canvas, drawn as a shape so it is centered in its
-// button; the "\u2192" text glyph sat on the font's baseline instead.
-QIcon goIcon(QColor color)
-{
-    QIcon icon;
-    for (int size : {16, 32})
-    {
-        const qreal s = size / 16.0;
-        QPixmap pixmap(size, size);
-        pixmap.fill(Qt::transparent);
-        QPainter painter(&pixmap);
-        painter.setRenderHint(QPainter::Antialiasing);
-        QPen pen(color, 2 * s, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-        painter.setPen(pen);
-        painter.drawLine(QPointF(3 * s, 8 * s), QPointF(12.5 * s, 8 * s));
-        painter.drawPolyline(QPolygonF({QPointF(8.5 * s, 4 * s), QPointF(12.5 * s, 8 * s),
-            QPointF(8.5 * s, 12 * s)}));
-        icon.addPixmap(pixmap);
-    }
-    return icon;
-}
-
-constexpr int SIDE_PANEL_MINIMUM_WIDTH = 420;
-constexpr int SIDE_PANEL_DEFAULT_WIDTH = 560;
+constexpr int SIDE_PANEL_MINIMUM_WIDTH = 400;
+constexpr int SIDE_PANEL_DEFAULT_WIDTH = 470;
+constexpr int MAP_CARD_MARGIN = 12;
 
 } // namespace
 
@@ -190,6 +162,17 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
     ui->setupUi(this);
     resize(1600, 900);
 
+    // Data packs: the list is part of the settings (read in loadSettings()).
+    // A change reaches the map through onDatapacksChanged(), queued, so that
+    // it never runs in the middle of another update.
+    vanillaData = new VanillaData(this);
+    datapacks = new DatapackManager(vanillaData, this);
+    connect(datapacks, &DatapackManager::worldChanged, this, &MainWindow::onDatapacksChanged,
+        Qt::QueuedConnection);
+    setAcceptDrops(true);
+    for (int i = 0; i < ui->comboY->count(); i++)
+        vanillaLevels.append(ui->comboY->itemText(i));
+
     // Replace the crowded menu strip with one dedicated Settings control.
     // It opens the full Settings dialog instead of a drop-down menu.
     ui->menuBar->clear();
@@ -202,7 +185,7 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
     // The former menus (sessions, presets, examples, layers, export, about)
     // stay reachable through one Menu button. Their actions are also added
     // to the window, as shortcuts of actions in a hidden menu do not fire.
-    QMenu *mainMenu = new QMenu(this);
+    mainMenu = new QMenu(this);
     for (QMenu *menu : {ui->menuFile, ui->menuEdit, ui->menuMap, ui->menuLayer, ui->menuHelp})
     {
         mainMenu->addMenu(menu);
@@ -214,7 +197,7 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
     }
     menuAction = new QAction(tr("Menu"), this);
     menuAction->setProperty("toolbarLabel", tr("Menu"));
-    connect(menuAction, &QAction::triggered, this, [mainMenu]() {
+    connect(menuAction, &QAction::triggered, this, [this]() {
         mainMenu->popup(QCursor::pos());
     });
 
@@ -235,73 +218,18 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
     mapView->setFocusPolicy(Qt::StrongFocus);
     setDockable(false);
 
-    QFrame *coordinateFinder = new QFrame(mapView);
-    coordinateFinder->setObjectName("mapCoordinateFinder");
-    coordinateFinder->setAttribute(Qt::WA_StyledBackground, true);
-    coordinateFinder->setMinimumHeight(62);
-
-    QHBoxLayout *coordinateLayout = new QHBoxLayout(coordinateFinder);
-    coordinateLayout->setContentsMargins(9, 7, 9, 11);
-    coordinateLayout->setSpacing(5);
-    coordinateLayout->setAlignment(Qt::AlignVCenter);
-
-    QLabel *coordinateTitle = new QLabel(tr("Go to"), coordinateFinder);
-    coordinateTitle->setObjectName("coordinateFinderTitle");
-    QLabel *coordinateXLabel = new QLabel(tr("X"), coordinateFinder);
-    coordinateXLabel->setObjectName("coordinateFinderAxis");
-    QLineEdit *coordinateX = new QLineEdit(coordinateFinder);
-    QLabel *coordinateZLabel = new QLabel(tr("Z"), coordinateFinder);
-    coordinateZLabel->setObjectName("coordinateFinderAxis");
-    QLineEdit *coordinateZ = new QLineEdit(coordinateFinder);
-    coordinateGo = new QPushButton(coordinateFinder);
-    coordinateGo->setIconSize(QSize(16, 16));
-    coordinateGo->setObjectName("coordinateFinderGo");
-    coordinateGo->setToolTip(tr("Go to coordinates"));
-    coordinateGo->setAccessibleName(tr("Go to coordinates"));
-
-    coordinateX->setText("0");
-    coordinateZ->setText("0");
-    coordinateX->setValidator(new QIntValidator(-30000000, 30000000, coordinateX));
-    coordinateZ->setValidator(new QIntValidator(-30000000, 30000000, coordinateZ));
-    coordinateX->setToolTip(tr("X coordinate"));
-    coordinateZ->setToolTip(tr("Z coordinate"));
-
-    coordinateLayout->addWidget(coordinateTitle, 0, Qt::AlignVCenter);
-    coordinateLayout->addSpacing(3);
-    coordinateLayout->addWidget(coordinateXLabel, 0, Qt::AlignVCenter);
-    coordinateLayout->addWidget(coordinateX, 0, Qt::AlignVCenter);
-    coordinateLayout->addWidget(coordinateZLabel, 0, Qt::AlignVCenter);
-    coordinateLayout->addWidget(coordinateZ, 0, Qt::AlignVCenter);
-    coordinateLayout->addWidget(coordinateGo, 0, Qt::AlignVCenter);
-
-    auto goToCoordinates = [this, coordinateX, coordinateZ]() {
-        if (!coordinateX->hasAcceptableInput() || !coordinateZ->hasAcceptableInput())
-            return;
-        getMapView()->setView(coordinateX->text().toDouble(), coordinateZ->text().toDouble());
-        getMapView()->setFocus();
-    };
-    connect(coordinateGo, &QPushButton::clicked, this, goToCoordinates);
-    connect(coordinateX, &QLineEdit::returnPressed, this, goToCoordinates);
-    connect(coordinateZ, &QLineEdit::returnPressed, this, goToCoordinates);
-    auto updateCoordinateButton = [this, coordinateX, coordinateZ]() {
-        coordinateGo->setEnabled(coordinateX->hasAcceptableInput() && coordinateZ->hasAcceptableInput());
-    };
-    connect(coordinateX, &QLineEdit::textChanged, this, updateCoordinateButton);
-    connect(coordinateZ, &QLineEdit::textChanged, this, updateCoordinateButton);
-    updateCoordinateButton();
-
-    QGraphicsDropShadowEffect *coordinateShadow = new QGraphicsDropShadowEffect(coordinateFinder);
-    coordinateShadow->setBlurRadius(18);
-    coordinateShadow->setOffset(0, 3);
-    coordinateShadow->setColor(QColor(0, 0, 0, 115));
-    coordinateFinder->setGraphicsEffect(coordinateShadow);
-
-    coordinateFinder->adjustSize();
-    coordinateFinder->move(qMax(14, (mapView->width() - coordinateFinder->width()) / 2), 14);
-    coordinateFinder->raise();
-    coordinateFinder->show();
-
     formCond = new FormConditions(this);
+    formDpCond = new FormDpConditions(this);
+    {   // the vanilla conditions and those for datapack worlds share the
+        // Conditions section; it shows the ones of the world on the map
+        QWidget *conditionsBox = new QWidget(this);
+        QVBoxLayout *conditionsLayout = new QVBoxLayout(conditionsBox);
+        conditionsLayout->setContentsMargins(0, 0, 0, 0);
+        conditionsLayout->setSpacing(0);
+        conditionsLayout->addWidget(formCond);
+        conditionsLayout->addWidget(formDpCond);
+        formDpCond->hide();
+    }
     formGen48 = new FormGen48(this);
     formControl = new FormSearchControl(this);
 
@@ -311,7 +239,22 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
     ui->tabContainerSearch->addTab(tabLocations, tr("Locations"));
     ui->tabContainer->addTab(new TabBiomes(this), tr("Biomes"));
     ui->tabContainer->addTab(new TabStructures(this), tr("Structures"));
-    ui->tabContainer->addTab(new TabSlime(this), tr("Slime Chunks"));
+    ui->tabContainer->addTab(new TabSlime(this), tr("Slime chunks"));
+    ui->tabContainer->addTab(new TabPortals(this), tr("End portals"));
+    tabDatapacks = new TabDatapacks(this, datapacks);
+    ui->tabContainer->addTab(tabDatapacks, tr("Datapacks"));
+    setupToolRail();
+
+    // One notice for all tools that only know vanilla worlds, above the tool.
+    datapackNotice = new QLabel(ui->controlFrame);
+    datapackNotice->setObjectName("labelNotice");
+    datapackNotice->setWordWrap(true);
+    datapackNotice->setTextFormat(Qt::RichText);
+    datapackNotice->hide();
+    connect(datapackNotice, &QLabel::linkActivated, this, &MainWindow::openDatapacks);
+    if (QBoxLayout *panel = qobject_cast<QBoxLayout*>(ui->controlFrame->layout()))
+        panel->insertWidget(panel->indexOf(ui->tabContainer), datapackNotice);
+    connect(ui->tabContainer, &QTabWidget::currentChanged, this, &MainWindow::updateDatapackNotice);
 
     laction.resize(LOPT_MAX);
     laction[LOPT_BIOMES] = ui->actionBiomes;
@@ -354,9 +297,10 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
         addAction(act);
     }
 
-    acthome = new QAction(QIcon(getPix("origin")), tr("Go to Origin"), this);
-    actzoom[0] = new QAction(QIcon(getPix("zoom_in")), tr("Zoom In"), this);
-    actzoom[1] = new QAction(QIcon(getPix("zoom_out")), tr("Zoom Out"), this);
+    // the chrome icons get their colors in onStyleChanged()
+    acthome = new QAction(tr("Go to world origin (0, 0)"), this);
+    actzoom[0] = new QAction(tr("Zoom in"), this);
+    actzoom[1] = new QAction(tr("Zoom out"), this);
     acthome->setProperty("toolbarLabel", tr("Origin"));
     actzoom[0]->setProperty("toolbarLabel", tr("Zoom in"));
     actzoom[1]->setProperty("toolbarLabel", tr("Zoom out"));
@@ -364,19 +308,13 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
     connect(actzoom[0], &QAction::triggered, [=](){ this->mapZoom(pow(2.0, +0.5)); });
     connect(actzoom[1], &QAction::triggered, [=](){ this->mapZoom(pow(2.0, -0.5)); });
 
-    ui->toolBar->addAction(settingsAction);
-    ui->toolBar->addAction(menuAction);
-    ui->toolBar->addSeparator();
-    ui->toolBar->addAction(acthome);
-    ui->toolBar->addAction(actzoom[0]);
-    ui->toolBar->addAction(actzoom[1]);
-    ui->toolBar->addSeparator();
-
-    // map layers of their own, apart from the dimensions and structures
+    // Settings, Menu, origin and zoom live in the tool rail and on the map;
+    // the sidebar lists only the map layers, in three groups.
     saction.resize(D_STRUCT_NUM);
+    ui->toolBar->addSection(tr("View"));
     addMapAction(D_GRID);
     // The layer menu is hidden, so the terrain map has its own toggle.
-    terrainAction = addMapAction("map",
+    terrainAction = addMapAction("terrain",
         tr("Terrain map: Minecraft-like surface colors with hill shading (1.18 and newer)"),
         tr("Terrain"));
     terrainAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_G));
@@ -385,7 +323,7 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
         if (!layerSync)
             onActionBiomeLayerSelect(checked ? LOPT_TERRAIN : LOPT_BIOMES);
     });
-    ui->toolBar->addSeparator();
+    ui->toolBar->addSection(tr("Dimension"));
 
     dimactions[0] = addMapAction("overworld", tr("Overworld"));
     dimactions[1] = addMapAction("nether", tr("Nether"));
@@ -410,11 +348,20 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
         });
     }
     dimactions[0]->setChecked(true);
-    ui->toolBar->addSeparator();
+    ui->toolBar->addSection(tr("Structures"));
 
     // Only the structures of the shown dimension and version are listed (see
     // updateStructureActions), so they need no separators between groups.
     addMapAction(D_SLIME);
+    // The structures of a datapack world: one entry that opens their list (a
+    // pack can bring hundreds). Vanilla structures of such a world use the
+    // entries below; it is only shown for datapack worlds.
+    dpStructAction = new QAction(tr("Structures of the datapacks: pick which ones the map shows"), this);
+    dpStructAction->setObjectName("actionDatapackStructures");
+    dpStructAction->setProperty("toolbarLabel", tr("Pack structures..."));
+    dpStructAction->setVisible(false);
+    ui->toolBar->addAction(dpStructAction);
+    connect(dpStructAction, &QAction::triggered, this, &MainWindow::openDatapackStructures);
     addMapAction(D_SPAWN);
     addMapAction(D_STRONGHOLD);
     addMapAction(D_VILLAGE);
@@ -456,17 +403,16 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
     ui->splitterMap->setSizes(QList<int>({SIDE_PANEL_DEFAULT_WIDTH, 1040}));
     ui->splitterSearch->setSizes(QList<int>({1000, 3000}));
     ui->splitterSeeds->setSizes(QList<int>({500, 2500}));
+    ui->splitterMap->setHandleWidth(1);
+
+    setupMapOverlays();
 
     sidePanelToggle = new QToolButton(ui->centralWidget);
     sidePanelToggle->setObjectName("sidePanelToggle");
-    sidePanelToggle->setFixedSize(18, 72);
+    sidePanelToggle->setFixedSize(14, 56);
     sidePanelToggle->setAutoRaise(false);
     sidePanelToggle->setCursor(Qt::PointingHandCursor);
     sidePanelToggle->setToolTip(tr("Collapse side panel"));
-    sidePanelToggle->setStyleSheet(
-        "QToolButton { background: palette(window); border: 1px solid palette(mid); "
-        "border-radius: 4px; padding: 0; margin: 0; }"
-        "QToolButton:hover { background: palette(button); }");
     connect(sidePanelToggle, &QToolButton::clicked, this, &MainWindow::onSidePanelToggle);
     connect(ui->splitterMap, &QSplitter::splitterMoved, this, &MainWindow::onSplitterMapMoved);
     sidePanelAnimation->setDuration(220);
@@ -486,65 +432,72 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
 
     loadSettings();
 
-    ui->collapseConstraints->init(tr("Conditions"), formCond, false);
+    // the box of both condition lists (see the constructor's start)
+    ui->collapseConstraints->init(tr("Conditions"), formCond->parentWidget(), false);
     connect(formCond, &FormConditions::changed, this, &MainWindow::onConditionsChanged);
+    connect(formDpCond, &FormDpConditions::changed, this, [this]() {
+        if (formControl)
+            formControl->invalidateResults();
+    });
     connect(formCond, &FormConditions::selectionUpdate, this, &MainWindow::onConditionsSelect);
     ui->collapseConstraints->setInfo(
         tr("Help: Conditions"),
         tr(
         "<html><head/><body><p>"
-        "Pick a structure or biome and how far from the world center it may be, "
-        "then press <b>Add</b>. <b>Advanced filter...</b> offers every filter "
-        "type and option, and <b>Saved filters</b> loads examples or your own "
-        "filter lists and saves the current one."
+        "Pick a structure or biome and how far from the world origin it may be, "
+        "then press <b>+ Add</b>. <b>More options...</b> opens the condition "
+        "editor with every kind of condition and all settings, and "
+        "<b>Saved filters</b> loads examples or your own lists of conditions "
+        "and saves the current one."
         "</p><p>"
-        "The search conditions define the properties by which potential seeds "
-        "are filtered."
+        "A seed matches when it meets all conditions in the list. Conditions "
+        "that are turned off are ignored."
         "</p><p>"
-        "Conditions can reference each other to produce relative positional "
-        "dependencies (indicated with the ID in square brackets [XY]). "
-        "When a condition passes its check, it usually yields just one location "
-        "that other conditions can reference. An exception to this are structure "
-        "conditions with exactly one required instance. In this case, each found "
-        "structure occurrence is examined separately instead. On the other hand, "
-        "a condition that checks for a structure cluster will average the "
-        "position of all occurrences and yield a single position."
+        "Each condition has a number (#1, #2, ...) at the right. Another "
+        "condition can be <b>measured from</b> it instead of from the world "
+        "origin, e.g. a village within 200 blocks of #1. When a condition "
+        "passes, it usually gives one position for the conditions measured "
+        "from it. A structure condition that asks for at least 1 instead "
+        "tries each instance it finds, one after another, and one that asks "
+        "for several uses their average position."
         "</p><p>"
-        "Standard biome conditions yield the center of the testing area "
-        "as they evaluate the area as a whole. To locate the position of a "
-        "given biome you can use the designated <b>locate</b> filters, or use a "
-        "spiral iterator (advanced options) to scan an area with a localized condition."
+        "Biome conditions give the center of their area, as they check the "
+        "area as a whole. To find where a biome is, use <b>Biome patch of a "
+        "minimum size</b>, or (with the expert types) scan an area in steps "
+        "with a condition measured from the scan."
         "</p></body></html>"
     ));
 
     // 48-bit generator settings are not all that interesting unless we are
     // using them, so start as collapsed if they are on the "Auto" setting.
     Gen48Config gen48 = formGen48->getConfig(false);
-    ui->collapseGen48->init(tr("Seed generator (48-bit)"), formGen48, gen48.mode == GEN48_AUTO);
+    ui->collapseGen48->init(tr("Seed generator"), formGen48, gen48.mode == GEN48_AUTO);
     connect(formGen48, &FormGen48::changed, this, &MainWindow::onGen48Changed);
     ui->collapseGen48->setInfo(
         tr("Help: Seed generator"),
         tr(
         "<html><head/><body><p>"
-        "For some searches, the 48-bit structure seed candidates can be "
-        "generated without searching, which can vastly reduce the search space "
-        "that has to be checked."
+        "Where most structures can generate depends only on the lower 48 bits "
+        "of a seed, the <i>structure seed</i>. For some searches, suitable "
+        "structure seeds can be computed directly instead of testing every "
+        "seed, which makes the search much faster."
         "</p><p>"
-        "The generator mode <b>Auto</b> is recommended for general use, which "
-        "automatically selects suitable options based on the conditions list."
+        "<b>Auto</b> is recommended: it picks suitable settings from the "
+        "Seed Finder conditions."
         "</p><p>"
-        "The <b>Quad-feature</b> mode produces candidates for "
-        "quad&#8209;structures that have a uniform distribution of "
-        "region&#8209;size=32 and chunk&#8209;gap=8, such as swamp huts."
+        "<b>Quad-feature</b> produces candidates with four structures close "
+        "together, for structures that are placed in 32&#8209;chunk regions "
+        "with an 8&#8209;chunk gap, such as swamp huts."
         "</p><p>"
-        "A perfect <b>Quad-monument</b> structure constellation does not "
-        "actually exist, but some extremely rare structure seed bases get close, "
-        "with over 90&#37; of the area within 128 blocks. The generator uses a "
-        "precomputed list of these seed bases."
+        "A perfect <b>Quad-monument</b> does not exist, but some extremely "
+        "rare structure seeds come close, with over 90&#37; of the monument "
+        "area within 128 blocks of one spot. The generator uses a "
+        "precomputed list of these structure seeds."
         "</p><p>"
-        "Using a <b>Seed list</b> you can provide a custom set of 48-bit "
-        "candidates. Optionally, a salt value can be added and the seeds can "
-        "be region transposed."
+        "With <b>Seed list</b> you load your own structure seeds from a "
+        "file. Optionally, a salt (a fixed number that each structure type "
+        "adds to the seed) can be added, and the seeds can be moved by whole "
+        "regions of 512 blocks."
         "</p></body></html>"
     ));
 
@@ -570,6 +523,65 @@ MainWindow::MainWindow(QString sessionpath, QString resultspath, QString openses
         applySearchMode();
     });
     applySearchMode();
+
+    // the section headings count their entries: "CONDITIONS \u00b7 2"
+    const auto countRows = [](QAbstractItemView *view, Collapsible *section) {
+        if (!view || !view->model())
+            return;
+        QAbstractItemModel *model = view->model();
+        // the list empties itself while the window is torn down, after the
+        // heading button is gone
+        QPointer<QToolButton> heading = section->toggleButton;
+        const auto update = [model, section, heading]() {
+            if (heading)
+                section->setCount(model->rowCount());
+        };
+        connect(model, &QAbstractItemModel::rowsInserted, section, update);
+        connect(model, &QAbstractItemModel::rowsRemoved, section, update);
+        connect(model, &QAbstractItemModel::modelReset, section, update);
+        connect(model, &QAbstractItemModel::layoutChanged, section, update);
+        update();
+    };
+    // the heading counts the conditions of the list that is shown
+    for (QListWidget *list : {formCond->findChild<QListWidget*>("listConditions"), formDpCond->list()})
+    {
+        if (!list)
+            continue;
+        QAbstractItemModel *model = list->model();
+        QPointer<QToolButton> heading = ui->collapseConstraints->toggleButton;
+        const auto update = [this, heading]() {
+            if (heading && activeConditionList())
+                ui->collapseConstraints->setCount(activeConditionList()->count());
+        };
+        connect(model, &QAbstractItemModel::rowsInserted, this, update);
+        connect(model, &QAbstractItemModel::rowsRemoved, this, update);
+        connect(model, &QAbstractItemModel::modelReset, this, update);
+        connect(model, &QAbstractItemModel::layoutChanged, this, update);
+    }
+    ui->collapseConstraints->setCount(activeConditionList()->count());
+
+    // the condition list grows with its rows, the matching seeds give way
+    for (QListWidget *list : {formCond->findChild<QListWidget*>("listConditions"), formDpCond->list()})
+    {
+        if (!list)
+            continue;
+        const auto refit = [this]() {
+            QTimer::singleShot(0, this, &MainWindow::fitConditionsHeight);
+        };
+        QAbstractItemModel *model = list->model();
+        connect(model, &QAbstractItemModel::rowsInserted, this, refit);
+        connect(model, &QAbstractItemModel::rowsRemoved, this, refit);
+        connect(model, &QAbstractItemModel::modelReset, this, refit);
+        connect(model, &QAbstractItemModel::dataChanged, this, refit);
+    }
+    connect(ui->collapseConstraints->toggleButton, &QToolButton::toggled, this, [this]() {
+        QTimer::singleShot(250, this, &MainWindow::fitConditionsHeight);
+    });
+    connect(ui->splitterSearch, &QSplitter::splitterMoved, this, [this]() {
+        conditionsHeightManual = true;
+    });
+    ui->splitterSearch->installEventFilter(this);
+    countRows(formControl->findChild<QTableView*>("results"), ui->collapseControl);
 
     // only sync the generator here: onConditionsChanged() would also discard
     // the matching seeds that loadSettings() just restored from the session
@@ -622,7 +634,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         if (!saveSession(sessionpath, true, &error))
         {
             int button = warn(this, tr("Session not saved"),
-                tr("The current session (filters, matching seeds and search progress) "
+                tr("The current session (conditions, matching seeds and search progress) "
                    "could not be saved:\n%1\n\nThe previous session file was kept.").arg(error),
                 tr("Quit anyway?"), QMessageBox::Yes | QMessageBox::No);
             if (button != QMessageBox::Yes)
@@ -747,6 +759,461 @@ void MainWindow::updateSidePanelToggle()
     sidePanelToggle->raise();
 }
 
+void MainWindow::setupToolRail()
+{
+    // One icon per tool at the left edge. The tools stay pages of tabContainer
+    // (its own tab bar is hidden), so the rail only drives setCurrentIndex().
+    ui->tabContainer->tabBar()->hide();
+
+    toolRail = new QFrame(ui->centralWidget);
+    toolRail->setObjectName("toolRail");
+    toolRail->setAttribute(Qt::WA_StyledBackground, true);
+    toolRail->setFixedWidth(52);
+    QVBoxLayout *layout = new QVBoxLayout(toolRail);
+    layout->setContentsMargins(8, 12, 8, 12);
+    layout->setSpacing(6);
+
+    railGroup = new QButtonGroup(this);
+    railGroup->setExclusive(true);
+    const auto railButton = [this](const QString& name) {
+        QToolButton *button = new QToolButton(toolRail);
+        button->setObjectName("railButton");
+        button->setProperty("keepIconSize", true);
+        button->setFixedSize(36, 36);
+        button->setIconSize(QSize(20, 20));
+        button->setCursor(Qt::PointingHandCursor);
+        button->setToolTip(name);
+        button->setAccessibleName(name);
+        return button;
+    };
+    for (int i = 0; i < ui->tabContainer->count(); i++)
+    {
+        QToolButton *button = railButton(ui->tabContainer->tabText(i));
+        button->setCheckable(true);
+        button->setProperty("railIcon", railIconKind(ui->tabContainer->widget(i)));
+        railGroup->addButton(button, i);
+        layout->addWidget(button, 0, Qt::AlignHCenter);
+    }
+    layout->addStretch(1);
+
+    railMenuButton = railButton(tr("Menu"));
+    railMenuButton->setProperty("railIcon", "menu");
+    connect(railMenuButton, &QToolButton::clicked, this, [this]() {
+        mainMenu->popup(railMenuButton->mapToGlobal(QPoint(railMenuButton->width() + 8, 0)));
+    });
+    layout->addWidget(railMenuButton, 0, Qt::AlignHCenter);
+
+    railSettingsButton = railButton(tr("Settings"));
+    railSettingsButton->setProperty("railIcon", "settings");
+    connect(railSettingsButton, &QToolButton::clicked, settingsAction, &QAction::trigger);
+    layout->addWidget(railSettingsButton, 0, Qt::AlignHCenter);
+
+    ui->gridLayout_6->addWidget(toolRail, 0, 0);
+
+    // Second-level pages (Seeds/Locations, Locate/Statistics, ...) line up
+    // with the panel edge instead of adding an indentation of their own.
+    for (QTabWidget *tabs : ui->controlFrame->findChildren<QTabWidget*>())
+    {
+        if (tabs == ui->tabContainer)
+            continue;
+        for (int i = 0; i < tabs->count(); i++)
+        {
+            if (QLayout *layout = tabs->widget(i)->layout())
+                layout->setContentsMargins(0, 0, 0, 0);
+        }
+    }
+
+    connect(railGroup, &QButtonGroup::idClicked, this, &MainWindow::onRailClicked);
+    connect(ui->tabContainer, &QTabWidget::currentChanged, this, &MainWindow::updateToolRail);
+    updateToolRail();
+}
+
+void MainWindow::onRailClicked(int index)
+{
+    // a click on the active tool folds the panel away or opens it again
+    if (index == ui->tabContainer->currentIndex())
+    {
+        setSidePanelCollapsed(!sidePanelCollapsed);
+        return;
+    }
+    ui->tabContainer->setCurrentIndex(index);
+    if (sidePanelCollapsed)
+        setSidePanelCollapsed(false);
+}
+
+void MainWindow::updateToolRail()
+{
+    const int index = ui->tabContainer->currentIndex();
+    if (railGroup)
+    {
+        if (QAbstractButton *button = railGroup->button(index))
+            button->setChecked(true);
+    }
+    ui->panelTitle->setText(ui->tabContainer->tabText(index));
+}
+
+void MainWindow::setupMapOverlays()
+{
+    // World inputs: a compact card at the top left of the map, reachable while
+    // the side panel is collapsed. The widgets keep their names from the form.
+    QFrame *worldBar = ui->worldBar;
+    worldBar->setParent(mapView);
+    worldBar->setAttribute(Qt::WA_StyledBackground, true);
+    QGraphicsDropShadowEffect *worldShadow = new QGraphicsDropShadowEffect(worldBar);
+    worldShadow->setBlurRadius(18);
+    worldShadow->setOffset(0, 3);
+    worldShadow->setColor(QColor(0, 0, 0, 90));
+    worldBar->setGraphicsEffect(worldShadow);
+    ui->labelMono->hide(); // only a reference for the monospace font
+    ui->seedEdit->setMinimumWidth(120);
+    {   // the world types in the order of WorldType, so that index == type
+        const QSignalBlocker blocker(ui->comboWorldType);
+        for (int type = 0; type < WORLD_TYPE_NUM; type++)
+            ui->comboWorldType->addItem(worldTypeName(type));
+        ui->comboWorldType->setCurrentIndex(WORLD_DEFAULT);
+    }
+    updateWorldTypeAvailability(MC_DEFAULT);
+
+    // A datapack world shows at a glance: a small chip with the number of
+    // packs at the start of the card, which opens the Datapacks tool.
+    packChip = new QToolButton(worldBar);
+    packChip->setObjectName("packChip");
+    packChip->setProperty("keepIconSize", true);
+    packChip->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    packChip->setIconSize(QSize(14, 14));
+    packChip->setCursor(Qt::PointingHandCursor);
+    packChip->hide();
+    connect(packChip, &QToolButton::clicked, this, &MainWindow::openDatapacks);
+    if (QBoxLayout *card = qobject_cast<QBoxLayout*>(worldBar->layout()))
+        card->insertWidget(0, packChip);
+
+    // the box shows only the level, its list the full names ("62 (Sea Level)")
+    ui->comboY->view()->setMinimumWidth(ui->comboY->view()->sizeHintForColumn(0) + 36);
+    worldBar->show();
+
+    // Status strip at the bottom: biome and position under the cursor, scale,
+    // zoom, origin and a compact "Go to".
+    mapStatusStrip = createMapCard("mapStatusStrip", mapView);
+    QHBoxLayout *strip = new QHBoxLayout(mapStatusStrip);
+    strip->setContentsMargins(12, 5, 6, 5);
+    strip->setSpacing(6);
+
+    mapBiomeName = new QLabel(mapStatusStrip);
+    mapBiomeName->setObjectName("mapBiomeName");
+    mapBiomeName->setToolTip(tr("Biome under the cursor"));
+    mapCursorPos = new QLabel(mapStatusStrip);
+    mapCursorPos->setObjectName("mapCursorPos");
+    mapCursorPos->setToolTip(tr("Block coordinates under the cursor"));
+    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    mono.setStyleHint(QFont::Monospace);
+    mapCursorPos->setFont(mono);
+    mapScale = new QLabel(mapStatusStrip);
+    mapScale->setObjectName("mapScale");
+    mapScale->setToolTip(tr("Map scale: blocks per screen pixel"));
+
+    const auto stripButton = [this](QAction *action) {
+        QToolButton *button = new QToolButton(mapStatusStrip);
+        button->setObjectName("mapStripButton");
+        button->setProperty("keepIconSize", true);
+        button->setDefaultAction(action);
+        button->setIconSize(QSize(16, 16));
+        button->setFixedSize(28, 28);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setAutoRaise(false);
+        return button;
+    };
+    mapZoomOut = stripButton(actzoom[1]);
+    mapZoomIn = stripButton(actzoom[0]);
+    mapOrigin = stripButton(acthome);
+
+    coordinateFinder = new QFrame(mapStatusStrip);
+    coordinateFinder->setObjectName("mapCoordinateFinder");
+    QHBoxLayout *coordinateLayout = new QHBoxLayout(coordinateFinder);
+    coordinateLayout->setContentsMargins(0, 0, 0, 0);
+    coordinateLayout->setSpacing(5);
+    QLabel *coordinateTitle = new QLabel(tr("Go to"), coordinateFinder);
+    coordinateTitle->setObjectName("coordinateFinderTitle");
+    QLabel *coordinateXLabel = new QLabel(tr("X"), coordinateFinder);
+    coordinateXLabel->setObjectName("coordinateFinderAxis");
+    QLineEdit *coordinateX = new QLineEdit(coordinateFinder);
+    QLabel *coordinateZLabel = new QLabel(tr("Z"), coordinateFinder);
+    coordinateZLabel->setObjectName("coordinateFinderAxis");
+    QLineEdit *coordinateZ = new QLineEdit(coordinateFinder);
+    coordinateGo = new QPushButton(coordinateFinder);
+    coordinateGo->setObjectName("coordinateFinderGo");
+    coordinateGo->setProperty("keepIconSize", true);
+    coordinateGo->setIconSize(QSize(16, 16));
+    coordinateGo->setFixedSize(28, 28);
+    coordinateGo->setCursor(Qt::PointingHandCursor);
+    coordinateGo->setToolTip(tr("Go to coordinates"));
+    coordinateGo->setAccessibleName(tr("Go to coordinates"));
+
+    coordinateX->setText("0");
+    coordinateZ->setText("0");
+    coordinateX->setValidator(new QIntValidator(-30000000, 30000000, coordinateX));
+    coordinateZ->setValidator(new QIntValidator(-30000000, 30000000, coordinateZ));
+    coordinateX->setToolTip(tr("X coordinate"));
+    coordinateZ->setToolTip(tr("Z coordinate"));
+    coordinateLayout->addWidget(coordinateTitle);
+    coordinateLayout->addSpacing(2);
+    coordinateLayout->addWidget(coordinateXLabel);
+    coordinateLayout->addWidget(coordinateX);
+    coordinateLayout->addWidget(coordinateZLabel);
+    coordinateLayout->addWidget(coordinateZ);
+    coordinateLayout->addWidget(coordinateGo);
+
+    auto goToCoordinates = [this, coordinateX, coordinateZ]() {
+        if (!coordinateX->hasAcceptableInput() || !coordinateZ->hasAcceptableInput())
+            return;
+        getMapView()->setView(coordinateX->text().toDouble(), coordinateZ->text().toDouble());
+        getMapView()->setFocus();
+    };
+    connect(coordinateGo, &QPushButton::clicked, this, goToCoordinates);
+    connect(coordinateX, &QLineEdit::returnPressed, this, goToCoordinates);
+    connect(coordinateZ, &QLineEdit::returnPressed, this, goToCoordinates);
+    auto updateCoordinateButton = [this, coordinateX, coordinateZ]() {
+        coordinateGo->setEnabled(coordinateX->hasAcceptableInput() && coordinateZ->hasAcceptableInput());
+    };
+    connect(coordinateX, &QLineEdit::textChanged, this, updateCoordinateButton);
+    connect(coordinateZ, &QLineEdit::textChanged, this, updateCoordinateButton);
+    updateCoordinateButton();
+
+    mapStripDivider = new QFrame(mapStatusStrip);
+    mapStripDivider->setObjectName("mapStripDivider");
+    mapStripDivider->setFixedSize(1, 20);
+
+    strip->addWidget(mapBiomeName);
+    strip->addSpacing(4);
+    strip->addWidget(mapCursorPos);
+    strip->addStretch(1);
+    strip->addWidget(mapScale);
+    strip->addSpacing(2);
+    strip->addWidget(mapZoomOut);
+    strip->addWidget(mapZoomIn);
+    strip->addWidget(mapOrigin);
+    strip->addSpacing(4);
+    strip->addWidget(mapStripDivider);
+    strip->addSpacing(4);
+    strip->addWidget(coordinateFinder);
+    mapStatusStrip->show();
+
+    getMapView()->setCursorTextVisible(false);
+    connect(getMapView(), &MapView::cursorInfoChanged, this, &MainWindow::updateMapStatus,
+        Qt::QueuedConnection);
+    updateMapStatus(QString(), 0, 0, getMapView()->getScale(), false);
+    mapView->installEventFilter(this);
+    layoutMapOverlays();
+}
+
+void MainWindow::updateMapStatus(const QString& biome, int x, int z, qreal scale, bool hasWorld)
+{
+    if (!mapBiomeName)
+        return;
+    QString none = tr("No seed");
+    if (!hasWorld && datapackMode() && !ui->seedEdit->text().trimmed().isEmpty())
+    {   // a datapack world that cannot be shown (yet)
+        const std::shared_ptr<const DatapackWorld> world = datapacks->current();
+        none = world ? world->shortText() : tr("Datapack world");
+    }
+    mapBiomeName->setText(hasWorld ? biome : none);
+    mapCursorPos->setText(hasWorld
+        ? QString("X %1 · Z %2").arg(x).arg(z) : QString());
+    mapCursorPos->setVisible(hasWorld && mapCursorPos->property("fits").toBool());
+    QString text;
+    if (scale >= 1)
+        text = QString("1:%1").arg(QLocale().toString(scale, 'g', 3));
+    else
+        text = QString("%1:1").arg(QLocale().toString(1.0 / scale, 'g', 3));
+    mapScale->setText(text);
+}
+
+void MainWindow::layoutMapOverlays()
+{
+    if (!mapStatusStrip)
+        return;
+    const int margin = MAP_CARD_MARGIN;
+    const int available = qMax(0, mapView->width() - 2 * margin);
+
+    // World card: drop the field labels first, then let the seed field shrink.
+    QFrame *worldBar = ui->worldBar;
+    for (QLabel *label : {ui->labelMC, ui->labelSeed, ui->labelWorldType, ui->labelY})
+        label->setVisible(true);
+    setWorldTypeNames(false);
+    ui->comboY->setMaximumWidth(QWIDGETSIZE_MAX);
+    ui->seedEdit->setMinimumWidth(170);
+    // A datapack world: its chip first gives up the world type picker, if
+    // the packs do not use the world type anyway, later its number.
+    const std::shared_ptr<const DatapackWorld> packWorld = datapacks ? datapacks->current() : nullptr;
+    const bool typeUnused = datapackMode() && packWorld && packWorld->usable()
+        && !packWorld->presetMatters;
+    ui->comboWorldType->setVisible(true);
+    if (packChip)
+        packChip->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    if (typeUnused && worldBar->sizeHint().width() > available)
+    {
+        ui->comboWorldType->setVisible(false);
+        ui->labelWorldType->setVisible(false);
+    }
+    if (worldBar->sizeHint().width() > available)
+    {
+        for (QLabel *label : {ui->labelMC, ui->labelSeed, ui->labelWorldType})
+            label->setVisible(false);
+    }
+    if (worldBar->sizeHint().width() > available)
+        ui->seedEdit->setMinimumWidth(110);
+    if (worldBar->sizeHint().width() > available)
+        setWorldTypeNames(true);
+    if (worldBar->sizeHint().width() > available)
+        ui->seedEdit->setMinimumWidth(70);
+    // Still too wide with the seed field at its minimum (the size hint above
+    // counts the field at its preferred width): the level box keeps only its
+    // number, without its label.
+    if (worldBar->minimumSizeHint().width() > available)
+    {
+        ui->labelY->setVisible(false);
+        ui->comboY->ensurePolished();
+        ui->comboY->setMaximumWidth(ui->comboY->widthForContents(
+            ui->comboY->fontMetrics().horizontalAdvance("-64") + 6));
+    }
+    if (packChip && packChip->isVisibleTo(worldBar) && worldBar->minimumSizeHint().width() > available)
+        packChip->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    worldBar->adjustSize();
+    worldBar->resize(qMin(worldBar->sizeHint().width(), available), worldBar->sizeHint().height());
+    worldBar->move(margin, margin);
+    worldBar->raise();
+
+    // Status strip: give up the "Go to" fields first, then the scale and the
+    // cursor position; biome, zoom and origin always stay.
+    coordinateFinder->setVisible(true);
+    mapStripDivider->setVisible(true);
+    mapScale->setVisible(true);
+    mapCursorPos->setProperty("fits", true);
+    mapCursorPos->setVisible(!mapCursorPos->text().isEmpty());
+    const auto needed = [this]() {
+        mapStatusStrip->layout()->activate();
+        return mapStatusStrip->layout()->minimumSize().width() + 150;
+    };
+    if (needed() > available)
+    {
+        coordinateFinder->setVisible(false);
+        mapStripDivider->setVisible(false);
+    }
+    if (needed() > available)
+        mapScale->setVisible(false);
+    if (needed() > available)
+    {
+        mapCursorPos->setProperty("fits", false);
+        mapCursorPos->setVisible(false);
+    }
+    const int height = mapStatusStrip->sizeHint().height();
+    mapStatusStrip->setGeometry(margin, mapView->height() - height - margin, available, height);
+    mapStatusStrip->raise();
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == mapView && event->type() == QEvent::Resize)
+    {
+        layoutMapOverlays();
+        // the panel edge moves with the map, e.g. when the layer sidebar
+        // changes its width
+        QTimer::singleShot(0, this, &MainWindow::updateSidePanelToggle);
+    }
+    else if (watched == ui->splitterSearch && event->type() == QEvent::Resize)
+    {
+        QTimer::singleShot(0, this, &MainWindow::fitConditionsHeight);
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::fitConditionsHeight()
+{
+    QListWidget *list = activeConditionList();
+    QList<int> sizes = ui->splitterSearch->sizes();
+    if (!list || conditionsHeightManual || sizes.size() != 2 || !list->isVisible()
+        || !ui->collapseConstraints->toggleButton->isChecked())
+        return;
+    const int total = sizes[0] + sizes[1];
+    if (total <= 0)
+        return;
+    // the height of all rows, as the list lays them out at its width
+    int rows = 0;
+    // (a row that wraps has its height in the layout of the list, which the
+    // size hint does not always know yet)
+    for (int i = 0, n = list->count(); i < n; i++)
+        rows += qMax(list->sizeHintForRow(i), list->visualRect(list->model()->index(i, 0)).height())
+            + 2 * list->spacing();
+    // an empty list shows its hint, which may wrap
+    if (list->count() == 0)
+    {
+        if (QLabel *hint = list->viewport()->findChild<QLabel*>("emptyHint",
+                Qt::FindDirectChildrenOnly))
+        {
+            const int width = qMax(1, list->viewport()->width() - 24);
+            rows = qMax(rows, hint->heightForWidth(width) + 16);
+        }
+    }
+    const int listWant = qMax(list->minimumHeight(), rows + 2 * list->frameWidth() + 4);
+    // everything else in the section: heading, quick filter row, buttons
+    // (at least what the layout needs besides the list: a section that was
+    // squeezed below its minimum would otherwise stay squeezed)
+    const int around = qMax(sizes[0] - list->height(),
+        ui->collapseConstraints->minimumSizeHint().height() - list->minimumHeight());
+    // the former split stays the least; the matching seeds keep at least a
+    // third of the height, and never less than a few rows
+    const int least = total / 4;
+    const int most = total - qMax(220, total / 3);
+    const int want = qBound(least, around + listWant, qMax(least, most));
+    if (qAbs(want - sizes[0]) <= 1)
+        return;
+    ui->splitterSearch->setSizes({want, total - want});
+}
+
+void MainWindow::refreshChromeIcons()
+{
+    const QPalette pal = QApplication::palette();
+    const QColor muted = pal.color(QPalette::PlaceholderText);
+    const QColor text = pal.color(QPalette::Text);
+    const QColor accent = pal.color(QPalette::Highlight);
+
+    if (railGroup)
+    {
+        QList<QAbstractButton*> rail = railGroup->buttons();
+        rail << railMenuButton << railSettingsButton;
+        for (QAbstractButton *button : rail)
+        {
+            if (button)
+                button->setIcon(chromeIcon(button->property("railIcon").toString(),
+                    muted, 20, accent));
+        }
+    }
+    settingsAction->setIcon(chromeIcon("settings", muted));
+    menuAction->setIcon(chromeIcon("menu", muted));
+    acthome->setIcon(chromeIcon("origin", text, 16));
+    actzoom[0]->setIcon(chromeIcon("plus", text, 16));
+    actzoom[1]->setIcon(chromeIcon("minus", text, 16));
+    if (coordinateGo)
+        coordinateGo->setIcon(chromeIcon("go", text, 16));
+    ui->toolBar->setChromeColor(muted);
+    if (tabDatapacks)
+        tabDatapacks->refreshTheme();
+    updateDatapackMode(); // the pack chip is drawn in a theme color
+
+    // the layer icons: their grey "off" state depends on the background
+    const int size = ui->toolBar->iconSize().height();
+    for (QAction *action : layerActions)
+        action->setIcon(mapLayerIcon(action->property("layerIcon").toString(), size));
+}
+
+// The views and dimensions are glyphs (muted while off, in the text color
+// while on), the structures their pixel-art pictures.
+QIcon MainWindow::mapLayerIcon(const QString& rcbase, int size) const
+{
+    if (hasGlyph(rcbase))
+        return glyphIcon(rcbase, true);
+    return layerIcon(rcbase, size, darkTheme);
+}
+
 QAction *MainWindow::addMapAction(int opt)
 {
     QString tip = tr("Show %1").arg(mapopt2display(opt));
@@ -785,32 +1252,16 @@ QAction *MainWindow::addMapAction(int opt)
 
 QAction *MainWindow::addMapAction(QString rcbase, QString tip, QString toolbarLabel)
 {
-    QPixmap active = getPix(rcbase);
-    QPixmap inactive = getPix(rcbase + "_d");
-    // Some markers have no dedicated inactive asset. Generate the same neutral
-    // grayscale state that the other map-selection icons use.
-    if (inactive.isNull())
-    {
-        QImage image = active.toImage().convertToFormat(QImage::Format_ARGB32);
-        for (int y = 0; y < image.height(); y++)
-        {
-            QRgb *line = reinterpret_cast<QRgb *>(image.scanLine(y));
-            for (int x = 0; x < image.width(); x++)
-            {
-                const int gray = qGray(line[x]);
-                line[x] = qRgba(gray, gray, gray, qAlpha(line[x]));
-            }
-        }
-        inactive = QPixmap::fromImage(image);
-    }
-    QIcon icon;
-    icon.addPixmap(active, QIcon::Normal, QIcon::On);
-    icon.addPixmap(inactive, QIcon::Normal, QIcon::Off);
-    QAction *action = new QAction(icon, tip, this);
+    // crisp pixel art in color while shown, a calm grey while hidden; the
+    // icons are rebuilt for the theme in refreshChromeIcons()
+    QAction *action = new QAction(mapLayerIcon(rcbase, ui->toolBar->iconSize().height()),
+        tip, this);
+    action->setProperty("layerIcon", rcbase);
     if (!toolbarLabel.isEmpty())
         action->setProperty("toolbarLabel", toolbarLabel);
     action->setCheckable(true);
     ui->toolBar->addAction(action);
+    layerActions.append(action);
     return action;
 }
 
@@ -845,8 +1296,12 @@ bool MainWindow::getSeed(WorldInfo *wi, bool applyrand)
             ui->seedEdit->setText(QString::asprintf("%" PRId64, (int64_t)wi->seed));
     }
 
-    wi->large = ui->checkLarge->isChecked();
+    wi->setWorldType(ui->comboWorldType->currentIndex());
     wi->y = ui->comboY->currentText().section(' ', 0, 0).toInt();
+    // with data packs loaded, the world is a datapack world
+    wi->dp = datapacks ? datapacks->resolve(wi->mc, wi->worldType()) : nullptr;
+    // no Amplified before 1.18, and the surface level of the world type
+    wi->normalize();
 
     return ok;
 }
@@ -861,6 +1316,11 @@ bool MainWindow::setSeed(WorldInfo wi, int dim)
         dimactions[2]->setChecked(true);
     else
         dim = getDim();
+
+    // The datapack world belongs to the version and world type that are set
+    // here, whatever the caller had (it may have changed the version).
+    wi.dp = datapacks ? datapacks->resolve(wi.mc, wi.worldType()) : nullptr;
+    wi.normalize(); // no Amplified before 1.18, the surface level of the world type
 
     const QList<QAction*> hist = ui->menuHistory->actions();
 
@@ -887,11 +1347,12 @@ bool MainWindow::setSeed(WorldInfo wi, int dim)
 
     // temporarily disable UI to prevent recursive setSeed() updates
     ui->comboBoxMC->setEnabled(false);
-    ui->checkLarge->setEnabled(false);
+    ui->comboWorldType->setEnabled(false);
     ui->seedEdit->setEnabled(false);
     ui->comboY->setEnabled(false);
 
-    ui->checkLarge->setChecked(wi.large);
+    updateLevelPicker(&wi);
+    showWorldType(wi.mc, wi.worldType());
     int i, n = ui->comboY->count();
     for (i = 0; i < n; i++)
         if (ui->comboY->itemText(i).section(' ', 0, 0).toInt() == wi.y)
@@ -912,10 +1373,27 @@ bool MainWindow::setSeed(WorldInfo wi, int dim)
     ui->seedEdit->setText(QString::asprintf("%" PRId64, (int64_t)wi.seed));
     updateTerrainAvailability(wi.mc);
     formCond->updateQuickFilters(wi.mc);
-    getMapView()->setSeed(wi, dim, lopt);
+    // A datapack world has the biome map of its own dimension only: the
+    // layer and the dimension picked in the sidebar stay as they are and
+    // apply again without packs.
+    if (wi.dp)
+    {   // the biome map, or the height and terrain layers (with the display
+        // mode of the height layer)
+        LayerOpt dpopt;
+        if ((lopt.mode == LOPT_HEIGHT || lopt.mode == LOPT_TERRAIN) && wi.dp->usable()
+            && wi.dp->dimensionInfo()->terrain)
+        {
+            dpopt.mode = lopt.mode;
+            dpopt.disp[lopt.mode] = lopt.disp[lopt.mode];
+        }
+        getMapView()->setSeed(wi, DIM_OVERWORLD, dpopt);
+    }
+    else
+        getMapView()->setSeed(wi, dim, lopt);
 
     ui->comboBoxMC->setEnabled(true);
-    ui->checkLarge->setEnabled(wi.mc >= MC_1_3);
+    // a pack with its own dimension file does not use the world type
+    ui->comboWorldType->setEnabled(!(wi.dp && wi.dp->usable() && !wi.dp->presetMatters));
     ui->seedEdit->setEnabled(true);
     ui->comboY->setEnabled(true);
 
@@ -971,15 +1449,97 @@ void MainWindow::updateStructureActions()
     getSeed(&wi, false);
     if (wi.mc <= MC_UNDEF)
         wi.mc = MC_NEWEST; // no version picked yet (first start)
-    const int dim = getDim();
+    int dim = getDim();
+    const bool datapack = datapackMode();
+    // A datapack world: its vanilla structures use the entries of the
+    // built-in ones (villages, fortresses, ...), as far as it has them.
+    const std::shared_ptr<const DatapackWorld> packWorld = datapack ? datapacks->current() : nullptr;
+    const std::shared_ptr<const DpStructureCatalog> catalog = dpStructureCatalog(packWorld);
+    std::vector<int> found(D_STRUCT_NUM, 0), supported(D_STRUCT_NUM, 0);
+    if (catalog)
+    {
+        dim = dpEngineDim(*packWorld);
+        for (const DpStructureEntry& e : catalog->entries)
+        {
+            if (e.vanillaOpt == D_NONE)
+                continue;
+            const int opt = e.vanillaOpt == D_PORTALN ? D_PORTAL : e.vanillaOpt;
+            found[opt]++;
+            supported[opt] += e.supported;
+        }
+    }
     for (int opt = 0; opt < (int) saction.size(); opt++)
     {
-        if (QAction *act = saction[opt])
-            act->setVisible(mconfig.enabled(opt) && mapOptionExists(opt, dim, wi.mc));
+        QAction *act = saction[opt];
+        if (!act)
+            continue;
+        const bool exists = mconfig.enabled(opt) && mapOptionExists(opt, dim, wi.mc);
+        const QString tip = tr("Show %1").arg(mapopt2display(opt));
+        if (!datapack || opt == D_GRID || opt == D_SLIME)
+        {
+            act->setVisible(exists);
+            act->setEnabled(true);
+            act->setToolTip(tip);
+            continue;
+        }
+        if (catalog && found[opt])
+        {   // a structure of the datapack world
+            act->setVisible(exists);
+            act->setEnabled(supported[opt] > 0);
+            act->setToolTip(supported[opt] > 0 ? tip
+                : tr("%1: the datapacks change this structure in a way that is not "
+                     "supported (see Pack structures).").arg(mapopt2display(opt)));
+            continue;
+        }
+        // spawn, geodes, ore veins, ... come from the built-in generator, and
+        // structures the datapack world does not have
+        act->setVisible(exists);
+        act->setEnabled(false);
+        if (opt == D_SPAWN)
+            act->setToolTip(tr("%1: not available for datapack worlds yet (the world spawn "
+                "depends on the terrain and the game's spawn search).").arg(mapopt2display(opt)));
+        else if (catalog)
+            act->setToolTip(tr("%1: not in this datapack world, or not available for "
+                "datapack worlds yet.").arg(mapopt2display(opt)));
+        else
+            act->setToolTip(tr("%1: available once the datapack world is loaded.")
+                .arg(mapopt2display(opt)));
+    }
+    if (dpStructDialog)
+        dpStructDialog->refresh();
+    if (dpStructAction)
+    {
+        int pack = 0, packSupported = 0;
+        if (catalog)
+            for (const DpStructureEntry& e : catalog->entries)
+                if (e.vanillaOpt == D_NONE)
+                {
+                    pack++;
+                    packSupported += e.supported;
+                }
+        dpStructAction->setVisible(datapack && catalog);
+        dpStructAction->setEnabled(catalog != nullptr);
+        dpStructAction->setToolTip(!catalog ? QString()
+            : pack == 0 ? tr("This datapack world has only vanilla structures; they use the "
+                "entries below. Click to see the list.")
+            : tr("%n structure(s) of the datapacks (%1 supported). Click to pick which ones "
+                "the map shows.", nullptr, pack).arg(packSupported));
     }
 }
 
+bool MainWindow::datapackMode() const
+{
+    return datapacks && datapacks->active();
+}
+
 int MainWindow::getDim()
+{
+    // a datapack world has its own dimensions (see the Datapacks tool); for
+    // everything else it counts as the Overworld
+    return datapackMode() ? 0 : toolbarDim();
+}
+
+int MainWindow::toolbarDim()
 {
     if (!dimgroup)
         return 0;
@@ -1014,7 +1574,19 @@ void MainWindow::saveSettings()
         settings.remove("map/mc");
     if (ui->seedEdit->text().isEmpty())
         settings.remove("map/seed");
-    settings.setValue("map/dim", getDim());
+    // The level of a datapack world belongs to its dimension: the level of
+    // the built-in worlds is kept next to it.
+    settings.remove("datapacks/y");
+    if (levelsDatapack)
+    {
+        settings.setValue("datapacks/y", wi.y);
+        if (vanillaLevel != INT_MIN)
+            settings.setValue("map/y", vanillaLevel);
+    }
+    datapacks->save(settings);
+    settings.setValue("datapacks/highlight", getMapView()->getDatapackHighlights());
+    settings.setValue("datapacks/structures", getMapView()->getDatapackStructures());
+    settings.setValue("map/dim", toolbarDim());
     settings.setValue("map/terrain", lopt.mode == LOPT_TERRAIN);
     settings.setValue("map/x", getMapView()->getX());
     settings.setValue("map/z", getMapView()->getZ());
@@ -1049,7 +1621,8 @@ void MainWindow::loadSettings()
     const bool hasStoredSeed = settings.contains("map/seed");
     const bool hasStoredVersion = settings.contains("map/mc");
 
-    setRightSidebarCollapsed(settings.value("ui/rightSidebarCollapsed", false).toBool(), false);
+    // the layer sidebar starts as a slim icon column
+    setRightSidebarCollapsed(settings.value("ui/rightSidebarCollapsed", true).toBool(), false);
 
     getMapView()->deleteWorld();
 
@@ -1091,6 +1664,14 @@ void MainWindow::loadSettings()
     g_extgen.load(settings);
     setMCList(g_extgen.experimentalVers);
 
+    // the data packs, before the first world is set up; they are loaded
+    // once the stored version and world type are set (setSeed below)
+    std::unique_ptr<DatapackManager::Hold> holdLoads(new DatapackManager::Hold(datapacks));
+    datapacks->load(settings);
+    datapackLevel = settings.value("datapacks/y", INT_MIN).toInt();
+    getMapView()->setDatapackHighlights(settings.value("datapacks/highlight").toStringList());
+    getMapView()->setDatapackStructures(settings.value("datapacks/structures").toStringList());
+
     WorldInfo wi;
     // NOTE: version can be wrong when the mc-enum changes, but the session file should correct it
     getSeed(&wi, false);
@@ -1104,6 +1685,7 @@ void MainWindow::loadSettings()
 
     onUpdateMapConfig();
     setSeed(wi, dim);
+    holdLoads.reset();
 
     if (!hasStoredVersion)
     {
@@ -1120,6 +1702,7 @@ void MainWindow::loadSettings()
 
     // The session does not depend on the map seed: a search can run with an
     // empty seed field (as on the first start).
+    restoringSession = true;
     if (!opensession.isEmpty())
     {
         if (QFile::exists(opensession))
@@ -1131,6 +1714,7 @@ void MainWindow::loadSettings()
     {
         loadSession(sessionpath, false);
     }
+    restoringSession = false;
 }
 
 bool MainWindow::saveSession(QString path, bool quiet, QString *error)
@@ -1198,8 +1782,25 @@ bool MainWindow::saveSession(QTextStream& stream)
     session.sc = formControl->getSearchConfig();
     session.gen48 = formGen48->getConfig(false);
     session.cv = formCond->getConditions();
+    session.dpcv = formDpCond->getConditions();
     session.slist = formControl->getResults();
     getSeed(&session.wi);
+    // "#Datapacks" says which kind of world the results and the progress
+    // belong to; without either, the world that is shown
+    const ResultsWorld& results = formControl->resultsWorld();
+    if (results.set && formControl->hasResultsOrProgress())
+    {
+        session.datapack = results.datapack;
+        session.dppacks = results.packs;
+        session.dpdimension = results.dimension;
+    }
+    else if (datapackMode())
+    {
+        const ResultsWorld shown = ResultsWorld::of(session.wi);
+        session.datapack = true;
+        session.dppacks = shown.packs;
+        session.dpdimension = shown.dimension;
+    }
     return session.save(this, stream);
 }
 
@@ -1240,9 +1841,9 @@ bool MainWindow::loadSession(QTextStream& stream, bool keepresults, bool quiet)
             setMCList(g_extgen.experimentalVers, session.wi.mc);
         {
             const QSignalBlocker blockVersion(ui->comboBoxMC);
-            const QSignalBlocker blockLarge(ui->checkLarge);
+            const QSignalBlocker blockWorldType(ui->comboWorldType);
             ui->comboBoxMC->setCurrentText(mcs);
-            ui->checkLarge->setChecked(session.wi.large);
+            showWorldType(session.wi.mc, session.wi.worldType());
         }
         updateMapSeed();
     }
@@ -1257,6 +1858,77 @@ bool MainWindow::loadSession(QTextStream& stream, bool keepresults, bool quiet)
         QListWidgetItem *item = new QListWidgetItem();
         formCond->addItemCondition(item, c);
     }
+    formDpCond->setConditions(session.dpcv);
+    // The world the results and the progress of the session belong to: a
+    // search in another world (other kind, packs or dimension) starts from
+    // the beginning and replaces them (see FormSearchControl::prepareResultsFor).
+    const bool sessionResults = !session.slist.empty() || session.sc.startseed != 0;
+    WorldInfo shownNow;
+    getSeed(&shownNow, false);
+    const ResultsWorld shownWorld = ResultsWorld::of(shownNow);
+    ResultsWorld sessionWorld;
+    sessionWorld.set = true;
+    sessionWorld.mc = session.wi.mc;
+    sessionWorld.worldType = session.wi.worldType();
+    if (session.datapack)
+    {
+        sessionWorld.datapack = true;
+        sessionWorld.preset = datapackPreset(sessionWorld.worldType);
+        // files written before "#DpDimension" existed: the dimension shown now
+        sessionWorld.dimension = session.dpdimension.isEmpty()
+            ? shownWorld.dimension : session.dpdimension;
+        if (sessionWorld.dimension.isEmpty())
+            sessionWorld.dimension = datapacks->dimension();
+        sessionWorld.packs = session.dppacks;
+    }
+    if (!quiet)
+    {   // a session of a datapack world and the world that is shown now
+        const QString restart = sessionResults ? tr("Its results and search progress belong to "
+            "that world: a search here starts from the beginning and replaces them.") : QString();
+        if (session.datapack && !datapackMode())
+        {
+            QStringList names;
+            for (const QString& path : std::as_const(session.dppacks))
+                names.append(QFileInfo(path).fileName());
+            info(this, (tr("This session was saved with datapacks (%1). Its datapack conditions "
+                "are kept, but a search with them needs the packs: add or switch them on in "
+                "Datapacks. Without packs the Seed Finder uses the vanilla conditions.")
+                .arg(names.isEmpty() ? tr("none listed") : names.join(", ")) + " " + restart).trimmed());
+        }
+        else if (datapackMode() && !session.datapack
+            && (!session.cv.empty() || (sessionResults && !restoringSession)))
+        {
+            info(this, (tr("This session was saved for a vanilla world. Datapacks are loaded, "
+                "so the Seed Finder shows the datapack conditions; switch the packs off to "
+                "search with the vanilla conditions of the session.") + " " + restart).trimmed());
+        }
+        else if (datapackMode() && session.datapack && sessionResults && !restoringSession
+            && sessionWorld != shownWorld)
+        {
+            info(this, tr("This session was saved with other datapacks or another dimension "
+                "(%1). Its results stay listed, but a search with the packs loaded now starts "
+                "from the beginning and replaces them.")
+                .arg((sessionWorld.packs.isEmpty() ? tr("no packs listed")
+                    : sessionWorld.packs.join(", ")) + ", " + sessionWorld.dimension));
+        }
+        else if (datapackMode() && datapacks->current() && datapacks->current()->usable())
+        {
+            const DpBiomeNames names{datapacks->current()};
+            QStringList missing;
+            for (const DpCondition& c : session.dpcv)
+            {
+                for (const QString& id : c.biomes)
+                    if (!names.has(id) && !missing.contains(id))
+                        missing.append(id);
+                for (const QString& id : c.structures)
+                    if (names.structureIndex(id) < 0 && !missing.contains(id))
+                        missing.append(id);
+            }
+            if (!missing.isEmpty())
+                warn(this, tr("Some biomes or structures of the datapack conditions are not in "
+                    "the loaded datapacks: %1. The search leaves them out.").arg(missing.join(", ")));
+        }
+    }
 
     formGen48->setConfig(session.gen48, quiet);
     formGen48->updateCount();
@@ -1266,6 +1938,9 @@ bool MainWindow::loadSession(QTextStream& stream, bool keepresults, bool quiet)
     formControl->setSearchConfig(session.sc, quiet);
     formControl->searchResultsAdd(session.slist, false);
     formControl->searchProgressReset();
+    // (after searchResultsAdd(), which takes loaded seeds for the shown world)
+    if (!keepresults || !session.slist.empty())
+        formControl->setResultsWorld(sessionWorld);
 
     return true;
 }
@@ -1298,10 +1973,18 @@ void MainWindow::updateMapSeed()
     ui->actionParaDepth->setEnabled(state);
     ui->actionParaWeirdness->setEnabled(state);
     updateTerrainAvailability(wi.mc);
+    // without a seed, setSeed() did not run: the picker still has to follow
+    // the version
+    updateWorldTypeAvailability(wi.mc);
     formCond->updateQuickFilters(wi.mc);
 
     ui->actionAddShadow->setEnabled(wi.mc <= MC_1_17);
     ui->actionOpenShadow->setEnabled(wi.mc <= MC_1_17);
+
+    // with data packs loaded, only the biome map is right
+    updateDatapackMode();
+    if (!hasSeed)
+        updateStructureActions();
 
     emit mapUpdated();
     update();
@@ -1404,9 +2087,9 @@ void MainWindow::on_seedEdit_editingFinished()
     if (ui->seedEdit->isEnabled())
         updateMapSeed();
 }
-void MainWindow::on_checkLarge_toggled()
+void MainWindow::on_comboWorldType_currentIndexChanged(int)
 {
-    if (ui->checkLarge->isEnabled())
+    if (ui->comboWorldType->isEnabled())
         updateMapSeed();
 }
 void MainWindow::on_comboY_currentIndexChanged(int)
@@ -1424,7 +2107,7 @@ void MainWindow::on_actionSave_triggered()
     QFileDialog::saveFileContent(content, "session.txt");
 #else
     QString filter = tr("Session files (*.session *.txt);;Any files (*)");
-    QString fnam = QFileDialog::getSaveFileName(this, tr("Save progress"), prevdir, filter);
+    QString fnam = QFileDialog::getSaveFileName(this, tr("Save session"), prevdir, filter);
     if (!fnam.isEmpty())
     {
         QFileInfo finfo(fnam);
@@ -1446,7 +2129,7 @@ void MainWindow::on_actionLoad_triggered()
     };
     QFileDialog::getOpenFileContent(filter, fileOpenCompleted);
 #else
-    QString fnam = QFileDialog::getOpenFileName(this, tr("Load progress"), prevdir, filter);
+    QString fnam = QFileDialog::getOpenFileName(this, tr("Load session"), prevdir, filter);
     if (!fnam.isEmpty())
     {
         QFileInfo finfo(fnam);
@@ -1549,7 +2232,8 @@ void MainWindow::applySearchMode()
         tabLocations->setAdvanced(advanced);
     // the 48-bit generator stays visible while it does more than "Auto"
     const bool gen48 = formGen48->getConfig(false).mode != GEN48_AUTO;
-    ui->collapseGen48->setVisible(advanced || gen48);
+    // datapack worlds are searched seed by seed: no structure seed generator
+    ui->collapseGen48->setVisible((advanced || gen48) && !datapackMode());
 }
 
 void MainWindow::on_actionAbout_triggered()
@@ -1739,15 +2423,134 @@ void MainWindow::updateTerrainAvailability(int mc)
 {
     // The terrain map shades the surface height of the 1.18+ generator. For
     // older versions it is unavailable and falls back to the biome map.
+    // A datapack world has no terrain model yet: there the view is only
+    // switched off, the choice stays for the worlds without packs.
+    const bool datapack = datapackMode();
     const bool available = mc > MC_1_17;
-    if (!available && lopt.mode == LOPT_TERRAIN)
+    if (!available && !datapack && lopt.mode == LOPT_TERRAIN)
     {
         lopt.mode = LOPT_BIOMES;
         syncLayerActions();
     }
-    ui->actionTerrain->setEnabled(available);
+    // A datapack world has terrain where its dimension's final_density could
+    // be compiled; the choice of the layer stays either way.
+    const std::shared_ptr<const DatapackWorld> packWorld = datapack ? datapacks->current() : nullptr;
+    const bool packLoaded = packWorld && packWorld->usable();
+    const bool packTerrain = packLoaded && packWorld->dimensionInfo()->terrain;
+    const bool enabled = datapack ? (packTerrain || !packLoaded) : available;
+    ui->actionTerrain->setEnabled(enabled);
     if (terrainAction)
-        terrainAction->setEnabled(available);
+    {
+        terrainAction->setEnabled(enabled);
+        QString tip = tr("Terrain map: Minecraft-like surface colors with hill shading (1.18 and newer)");
+        if (datapack && packLoaded && !packTerrain)
+        {
+            const QString why = packWorld->dimensionInfo()->terrainReason;
+            tip = tr("Terrain map: not available for this dimension of the datapack world.");
+            if (!why.isEmpty())
+                tip += " " + why;
+        }
+        else if (datapack)
+            tip = tr("Terrain map: surface colors with hill shading from the terrain of the "
+                "datapack world (without caves, carvers, trees and structures). Zoomed out to 8 blocks "
+                "per pixel and more, its heights are the highest solid block with the sea and lava "
+                "levels only: no lakes or aquifers, no blocks of the surface rules (such as powder snow).");
+        terrainAction->setToolTip(tip);
+    }
+}
+
+void MainWindow::updateWorldTypeAvailability(int mc)
+{
+    showWorldType(mc, ui->comboWorldType->currentIndex());
+}
+
+void MainWindow::showWorldType(int mc, int type)
+{
+    // In a datapack world the world types are its world presets (normal,
+    // large_biomes, amplified).
+    QStringList presetList;
+    const QStringList *presets = nullptr;
+    const std::shared_ptr<const DatapackWorld> packWorld = datapacks ? datapacks->current() : nullptr;
+    if (datapackMode() && packWorld && packWorld->usable() && packWorld->mc == mc)
+    {
+        presetList = packWorld->world->presets();
+        presets = &presetList;
+    }
+    ui->comboWorldType->setToolTip(packWorld && packWorld->usable() && !packWorld->presetMatters
+        ? tr("World type: not used here. A data pack brings its own file for this dimension.")
+        : tr("World type, as chosen when the world was created"));
+    QStandardItemModel *model = qobject_cast<QStandardItemModel*>(ui->comboWorldType->model());
+    for (int i = 0; model && i < WORLD_TYPE_NUM; i++)
+    {
+        QStandardItem *item = model->item(i);
+        if (!item)
+            continue;
+        bool available = worldTypeAvailable(i, mc);
+        QString tip;
+        if (presets && !presets->contains(datapackPreset(i)))
+        {   // a datapack world: the world types its packs and version offer
+            available = false;
+            tip = tr("The loaded data packs do not offer this world type.");
+        }
+        else if (i == WORLD_LARGE_BIOMES)
+        {
+            tip = available ? tr("Large Biomes: every biome is four times as wide and long.")
+                : tr("Large Biomes is available for Minecraft 1.3 and newer.");
+        }
+        else if (i == WORLD_AMPLIFIED)
+        {
+            tip = available ? tr("Amplified: much taller terrain, up to the build limit. The "
+                    "climate is that of a default world, but biomes at a fixed height, "
+                    "strongholds and everything that depends on the terrain can differ.")
+                : tr("Amplified is available for Minecraft 1.18 and newer. In older versions "
+                    "it has the biomes of a default world and differs only in its terrain, "
+                    "which is not known for these versions: use Default.");
+        }
+        item->setEnabled(available);
+        item->setToolTip(tip);
+    }
+    // Amplified does not exist in this version: back to the default world.
+    // (Large Biomes stays selected, as it always has; the generators of the
+    // versions without it ignore it.)
+    if (type == WORLD_AMPLIFIED && !worldTypeAvailable(WORLD_AMPLIFIED, mc))
+        type = WORLD_DEFAULT;
+    if (type < 0 || type >= WORLD_TYPE_NUM)
+        type = WORLD_DEFAULT;
+    {
+        const QSignalBlocker blocker(ui->comboWorldType);
+        ui->comboWorldType->setCurrentIndex(type);
+    }
+    // the first entry of the Y picker is the surface level of the world type
+    // (the levels of a datapack world are those of its dimension)
+    const QString surface = tr("%1 (surface)").arg(surfaceLevel(type == WORLD_AMPLIFIED));
+    if (!levelsDatapack && ui->comboY->count() && ui->comboY->itemText(0) != surface)
+    {
+        const QSignalBlocker blocker(ui->comboY);
+        ui->comboY->setItemText(0, surface);
+    }
+}
+
+void MainWindow::setWorldTypeNames(bool compact)
+{
+    for (int type = 0; type < WORLD_TYPE_NUM && type < ui->comboWorldType->count(); type++)
+    {
+        QString name = worldTypeName(type);
+        if (compact && type == WORLD_LARGE_BIOMES)
+            name = tr("Large");
+        if (ui->comboWorldType->itemText(type) != name)
+            ui->comboWorldType->setItemText(type, name);
+    }
+    // The box is as wide as its longest name: its size hint (for a generous
+    // contents length) is capped at that width. The contents length itself
+    // stays as it is, QComboBox keeps a stale minimum size hint when it
+    // changes; and the width is not fixed, so that a card without enough room
+    // can still squeeze the box.
+    ui->comboWorldType->ensurePolished();
+    const QFontMetrics fm = ui->comboWorldType->fontMetrics();
+    int widest = 0;
+    for (int type = 0; type < ui->comboWorldType->count(); type++)
+        widest = qMax(widest, fm.horizontalAdvance(ui->comboWorldType->itemText(type)));
+    ui->comboWorldType->setMaximumWidth(ui->comboWorldType->widthForContents(widest + 4));
 }
 
 void MainWindow::onActionBiomeLayerSelect(int mode, int disp)
@@ -1827,8 +2630,10 @@ void MainWindow::onSearchStatusChanged(bool running)
     // discard the results while the search keeps adding seeds for the old ones
     formGen48->setEnabled(!running);
     formCond->setEnabled(!running);
+    formDpCond->setEnabled(!running);
     ui->actionExtGen->setEnabled(!running);
-    ui->actionPresetLoad->setEnabled(!running); // loading replaces the filters
+    // loading replaces the filters; the saved filters are vanilla conditions
+    ui->actionPresetLoad->setEnabled(!running && !datapackMode());
 }
 
 void MainWindow::onUpdateConfig()
@@ -1872,9 +2677,9 @@ void MainWindow::onUpdateConfig()
     if ((old.uistyle != config.uistyle) || (old.iconScale != config.iconScale) ||
         font_changed || qApp->styleSheet().isEmpty())
     {
-        onStyleChanged(config.uistyle);
-        int s = qBound(28, (int) round(g_iconscale * 32), 48);
+        int s = qBound(20, (int) round(g_iconscale * 24), 40);
         ui->toolBar->setIconSize(QSize(s, s));
+        onStyleChanged(config.uistyle);
     }
     if (!old.biomeColorPath.isEmpty() || !config.biomeColorPath.isEmpty())
     {
@@ -1903,13 +2708,18 @@ void MainWindow::onUpdateConfig()
 
         QSize iconsize = QSize((int)round(14 * g_fontscale), (int)round(14 * g_fontscale));
 
-        // update cascade
+        // update cascade; chrome buttons keep the icon size of their design
         for (QWidget *w : std::as_const(wlist))
         {
-            if (QAbstractButton *b = qobject_cast<QAbstractButton*>(w))
+            QAbstractButton *b = qobject_cast<QAbstractButton*>(w);
+            if (b && !b->property("keepIconSize").toBool())
                 b->setIconSize(iconsize);
             w->update();
         }
+        // explicit fonts override the sizes and weights of the style sheet
+        // (headings, panel title): polish everything again
+        if (!qApp->styleSheet().isEmpty())
+            qApp->setStyleSheet(qApp->styleSheet());
     }
 
     if (config.autosaveCycle)
@@ -1939,6 +2749,12 @@ void MainWindow::onUpdateMapConfig()
     }
     actzoom[0]->setVisible(mconfig.zoomEnabled);
     actzoom[1]->setVisible(mconfig.zoomEnabled);
+    if (mapZoomIn && mapZoomOut)
+    {
+        mapZoomIn->setVisible(mconfig.zoomEnabled);
+        mapZoomOut->setVisible(mconfig.zoomEnabled);
+        layoutMapOverlays();
+    }
 }
 
 void MainWindow::onBiomeColorChange()
@@ -1983,32 +2799,42 @@ void MainWindow::onStyleChanged(int style)
 #endif
     }
 
+    // "Atlas" palette: neutral chrome with grass green as the only accent.
+    // accentStrong is the accent for text on accentSoft (contrast >= 4.5:1).
     struct ThemeColors {
         const char *window, *surface, *mapSurface, *input, *popup, *subtle;
         const char *text, *muted, *disabledText, *disabled;
-        const char *border, *borderHover, *alternate;
+        const char *border, *borderHover, *controlBorder, *alternate;
         const char *button, *buttonHover;
-        const char *accent, *accentHover, *accentSoft, *accentText;
+        const char *accent, *accentHover, *accentSoft, *accentText, *accentStrong;
         const char *scroll, *scrollHover;
+        const char *rail, *card, *danger;
     };
 
     const ThemeColors colors = dark
             ? ThemeColors{
-                "#0f141b", "#151c25", "#0b1016", "#111820", "#1a222d", "#1b2530",
-                "#e7edf5", "#9aa9ba", "#667586", "#1a222b",
-                "#2b3745", "#526275", "#18212b",
-                "#1c2631", "#253241",
-                "#75a7ff", "#8bb5ff", "#243f68", "#07111f",
-                "#3b4a5a", "#5a6c7e"
+                "#101311", "#161a17", "#0c0f0d", "#0d100e", "#1b201c", "#1d231f",
+                "#e9eee9", "#8f9b92", "#5c665e", "#131714",
+                "#2a322c", "#3c473f", "#4d5850", "#121613",
+                "#1c221e", "#252c27",
+                "#6cc070", "#80cf84", "#1c3323", "#07140a", "#8fd893",
+                "#323b34", "#4a564d",
+                "#0f1210", "#161a17", "#ff8a7a"
               }
             : ThemeColors{
-                "#f3f6fa", "#ffffff", "#e9eef5", "#ffffff", "#ffffff", "#f1f5f9",
-                "#1e293b", "#64748b", "#94a3b8", "#edf1f5",
-                "#d8e0e9", "#9aaabd", "#f7f9fc",
-                "#ffffff", "#edf3f9",
-                "#2563eb", "#1d4ed8", "#dbeafe", "#ffffff",
-                "#b8c3cf", "#8796a8"
+                "#f4f6f3", "#ffffff", "#e8ece7", "#ffffff", "#ffffff", "#eff2ee",
+                "#1b221d", "#5f6b62", "#9aa49c", "#f0f2ef",
+                "#d9dfd8", "#b4beb5", "#97a299", "#f7f9f6",
+                "#ffffff", "#eef2ed",
+                "#2b8139", "#236d2f", "#dff1e1", "#ffffff", "#1d6529",
+                "#c3cbc3", "#9ea99f",
+                "#eef1ed", "#ffffff", "#c62f1f"
               };
+    darkTheme = dark;
+    colorDanger = QColor(colors.danger);
+    colorAccent = QColor(colors.accent);
+    colorAccentStrong = QColor(colors.accentStrong);
+    colorMuted = QColor(colors.muted);
 
     QPalette palette;
     palette.setColor(QPalette::Window, QColor(colors.window));
@@ -2016,10 +2842,13 @@ void MainWindow::onStyleChanged(int style)
     palette.setColor(QPalette::Base, QColor(colors.input));
     palette.setColor(QPalette::AlternateBase, QColor(colors.alternate));
     palette.setColor(QPalette::Text, QColor(colors.text));
+    palette.setColor(QPalette::PlaceholderText, QColor(colors.muted));
     palette.setColor(QPalette::Button, QColor(colors.button));
     palette.setColor(QPalette::ButtonText, QColor(colors.text));
     palette.setColor(QPalette::Highlight, QColor(colors.accent));
     palette.setColor(QPalette::HighlightedText, QColor(colors.accentText));
+    palette.setColor(QPalette::Link, QColor(colors.accentStrong));
+    palette.setColor(QPalette::Mid, QColor(colors.border));
     palette.setColor(QPalette::ToolTipBase, QColor(colors.popup));
     palette.setColor(QPalette::ToolTipText, QColor(colors.text));
     palette.setColor(QPalette::Disabled, QPalette::Text, QColor(colors.disabledText));
@@ -2029,14 +2858,7 @@ void MainWindow::onStyleChanged(int style)
     if (QStyle *fusion = QStyleFactory::create("Fusion"))
         qApp->setStyle(fusion);
     qApp->setPalette(palette);
-    // follow the text color, so the icons stay visible in the light theme
-    QColor iconColor(colors.muted);
-    if (settingsAction)
-        settingsAction->setIcon(pixelGearIcon(iconColor));
-    if (menuAction)
-        menuAction->setIcon(menuIcon(iconColor));
-    if (coordinateGo)
-        coordinateGo->setIcon(goIcon(QColor(colors.text)));
+    refreshChromeIcons();
 
     QFile file(":/modern.qss");
     if (!file.open(QFile::ReadOnly))
@@ -2052,14 +2874,18 @@ void MainWindow::onStyleChanged(int style)
         {"@TEXT@", colors.text}, {"@MUTED@", colors.muted},
         {"@DISABLED_TEXT@", colors.disabledText}, {"@DISABLED@", colors.disabled},
         {"@BORDER@", colors.border}, {"@BORDER_HOVER@", colors.borderHover},
+        {"@CONTROL_BORDER@", colors.controlBorder},
         {"@ALTERNATE@", colors.alternate}, {"@BUTTON@", colors.button},
         {"@BUTTON_HOVER@", colors.buttonHover}, {"@ACCENT@", colors.accent},
         {"@ACCENT_HOVER@", colors.accentHover}, {"@ACCENT_SOFT@", colors.accentSoft},
-        {"@ACCENT_TEXT@", colors.accentText}, {"@SCROLL@", colors.scroll},
-        {"@SCROLL_HOVER@", colors.scrollHover},
+        {"@ACCENT_TEXT@", colors.accentText}, {"@ACCENT_STRONG@", colors.accentStrong},
+        {"@SCROLL@", colors.scroll}, {"@SCROLL_HOVER@", colors.scrollHover},
+        {"@RAIL@", colors.rail}, {"@CARD@", colors.card}, {"@DANGER@", colors.danger},
     };
     for (const auto& replacement : replacements)
         st.replace(QLatin1String(replacement.first), QLatin1String(replacement.second));
+    if (st.contains('@'))
+        qWarning() << "Unreplaced token in the UI stylesheet";
 
     qApp->setStyleSheet(st);
 }
@@ -2070,5 +2896,385 @@ void MainWindow::onDockFloating(bool floating)
     {
         setDockable(false);
         ui->actionDock->setText(tr("Undock map"));
+    }
+}
+
+// ---------------------------------------------------------------- data packs
+
+QColor MainWindow::themeColor(const QString& name) const
+{
+    if (name == "danger")
+        return colorDanger;
+    if (name == "accent")
+        return colorAccent;
+    if (name == "accentStrong")
+        return colorAccentStrong;
+    return colorMuted;
+}
+
+void MainWindow::setVersion(int mc)
+{
+    const QString name = mc2str(mc);
+    if (ui->comboBoxMC->findText(name) < 0)
+        setMCList(g_extgen.experimentalVers, mc);
+    if (ui->comboBoxMC->currentText() != name)
+        ui->comboBoxMC->setCurrentText(name);
+    else
+        updateMapSeed();
+}
+
+void MainWindow::openDatapackStructures()
+{
+    if (!dpStructDialog)
+    {
+        dpStructDialog = new DpStructuresDialog(this);
+        dpStructDialog->setAttribute(Qt::WA_DeleteOnClose);
+    }
+    dpStructDialog->refresh();
+    dpStructDialog->show();
+    dpStructDialog->raise();
+    dpStructDialog->activateWindow();
+}
+
+void MainWindow::openDatapacks()
+{
+    ui->tabContainer->setCurrentWidget(tabDatapacks);
+    if (sidePanelCollapsed)
+        setSidePanelCollapsed(false);
+}
+
+void MainWindow::addDatapacks(const QStringList& paths)
+{
+    QStringList rejected;
+    for (const QString& path : paths)
+        if (!isDatapackPath(path))
+            rejected.append(QFileInfo(path).fileName());
+    const int added = datapacks->addPacks(paths);
+    openDatapacks();
+    if (!rejected.isEmpty())
+    {
+        warn(this, tr("Not a data pack: %1\n\nData packs are zip files, mod jars or folders.")
+            .arg(rejected.join(", ")));
+    }
+    else if (!added && !paths.isEmpty())
+    {
+        info(this, tr("These packs are already in the list."));
+    }
+}
+
+void MainWindow::onDatapacksChanged()
+{
+    updateMapSeed();
+}
+
+static QStringList droppedPaths(const QMimeData *mime)
+{
+    QStringList paths;
+    if (!mime || !mime->hasUrls())
+        return paths;
+    for (const QUrl& url : mime->urls())
+        if (url.isLocalFile())
+            paths.append(url.toLocalFile());
+    return paths;
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    bool any = false;
+    for (const QString& path : droppedPaths(event->mimeData()))
+        any = any || isDatapackPath(path);
+    if (!any)
+        return;
+    event->acceptProposedAction();
+    if (!dropHighlight)
+    {
+        dropHighlight = new QFrame(this);
+        dropHighlight->setObjectName("dropHighlight");
+        dropHighlight->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        dropHighlight->setAttribute(Qt::WA_StyledBackground, true);
+        QVBoxLayout *layout = new QVBoxLayout(dropHighlight);
+        QLabel *label = new QLabel(tr("Drop to add as datapack"), dropHighlight);
+        label->setObjectName("dropHighlightLabel");
+        label->setAlignment(Qt::AlignCenter);
+        layout->addWidget(label, 0, Qt::AlignCenter);
+    }
+    dropHighlight->setGeometry(rect().adjusted(8, 8, -8, -8));
+    dropHighlight->raise();
+    dropHighlight->show();
+}
+
+void MainWindow::dragLeaveEvent(QDragLeaveEvent *event)
+{
+    if (dropHighlight)
+        dropHighlight->hide();
+    QMainWindow::dragLeaveEvent(event);
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    if (dropHighlight)
+        dropHighlight->hide();
+    const QStringList paths = droppedPaths(event->mimeData());
+    if (paths.isEmpty())
+        return;
+    event->acceptProposedAction();
+    // after the drop has ended: a message box inside the drop would block
+    // the application that the files were dragged from
+    QTimer::singleShot(0, this, [this, paths]() { addDatapacks(paths); });
+}
+
+void MainWindow::updateLevelPicker(WorldInfo *wi)
+{
+    const bool datapack = wi->dp && wi->dp->usable();
+    if (wi->dp && !datapack)
+        return; // loading or failed: the picker waits for a world
+    const QSignalBlocker blocker(ui->comboY);
+    if (datapack)
+    {
+        const int low = wi->dp->minY(), high = wi->dp->maxY();
+        const int sea = wi->dp->dimensionInfo()->seaLevel - 1; // the topmost water block
+        // A dimension with a ceiling (the Nether): the level just below the
+        // roof, where the map looks down into the caves.
+        const int roof = dpBelowRoofLevel(wi->dp, wi->seed);
+        const bool otherDimension = levelsDatapack && levelsDimension != wi->dp->dimensionId;
+        if (!levelsDatapack)
+        {   // coming from a built-in world: remember its level, start at the
+            // top (as "surface" does) or where the datapack world was left
+            vanillaLevel = wi->y;
+            if (datapackLevel != INT_MIN)
+                wi->y = datapackLevel;
+            else if (wi->y == 255 || wi->y == surfaceLevel(false) || wi->y == surfaceLevel(true))
+                wi->y = roof != INT_MIN ? roof : high;
+            datapackLevel = INT_MIN;
+        }
+        else if (otherDimension)
+        {   // another dimension: its top, or below its roof
+            if (roof != INT_MIN && wi->y > roof)
+                wi->y = roof;
+            else if (roof == INT_MIN && wi->y == levelsRoof)
+                wi->y = high;
+        }
+        levelsDimension = wi->dp->dimensionId;
+        levelsRoof = roof;
+        wi->y = qBound(low, wi->y, high);
+        QStringList levels;
+        levels << tr("%1 (top)").arg(high);
+        if (roof != INT_MIN && roof < high && roof > low)
+            levels << tr("%1 (below the roof)").arg(roof);
+        // every 32 blocks in between (floor division, for negative levels)
+        const int step = 32;
+        int first = (roof != INT_MIN && roof < high ? roof : high) - 1;
+        first -= ((first % step) + step) % step;
+        for (int y = first; y > low; y -= step)
+            levels << QString::number(y);
+        levels << tr("%1 (bottom)").arg(low);
+        // the sea level, in its place between the steps
+        if (sea > low && sea < high)
+        {
+            int at = 1;
+            while (at < levels.size() - 1 && levels[at].section(' ', 0, 0).toInt() > sea)
+                at++;
+            if (at < levels.size() && levels[at].section(' ', 0, 0).toInt() == sea)
+                levels[at] = tr("%1 (sea level)").arg(sea);
+            else
+                levels.insert(at, tr("%1 (sea level)").arg(sea));
+        }
+        bool same = levelsDatapack && ui->comboY->count() >= levels.size();
+        for (int i = 0; same && i < levels.size(); i++)
+            same = ui->comboY->itemText(i) == levels[i];
+        if (!same)
+        {
+            ui->comboY->clear();
+            ui->comboY->addItems(levels);
+        }
+        levelsDatapack = true;
+        QString tip = tr("The height (Y level) at which the map shows the biomes of "
+            "the datapack world. This dimension reaches from Y %1 to %2.").arg(low).arg(high);
+        if (roof != INT_MIN)
+            tip += " " + tr("It has a roof: the height layers look down from the chosen level, "
+                "\"below the roof\" shows the caves under it.");
+        ui->comboY->setToolTip(tip);
+    }
+    else if (levelsDatapack)
+    {   // back to a built-in world and its level (the picker still holds the
+        // level of the datapack world; wi->y went through normalize() already)
+        levelsDatapack = false;
+        datapackLevel = ui->comboY->currentText().section(' ', 0, 0).toInt();
+        ui->comboY->clear();
+        ui->comboY->addItems(vanillaLevels);
+        if (vanillaLevel != INT_MIN)
+            wi->y = vanillaLevel;
+        vanillaLevel = INT_MIN;
+        wi->normalize();
+        ui->comboY->setToolTip(ui->labelY->toolTip());
+    }
+    ui->comboY->view()->setMinimumWidth(ui->comboY->view()->sizeHintForColumn(0) + 36);
+}
+
+QListWidget *MainWindow::activeConditionList() const
+{
+    if (formDpCond && datapackMode())
+        return formDpCond->list();
+    return formCond ? formCond->findChild<QListWidget*>("listConditions") : nullptr;
+}
+
+void MainWindow::updateConditionLists()
+{
+    if (!formDpCond || !formCond)
+        return;
+    const bool datapack = datapackMode();
+    formDpCond->refreshWorld();
+    if (formDpCond->isVisibleTo(formDpCond->parentWidget()) != datapack)
+    {
+        formCond->setVisible(!datapack);
+        formDpCond->setVisible(datapack);
+        if (QListWidget *list = activeConditionList())
+            ui->collapseConstraints->setCount(list->count());
+        QTimer::singleShot(0, this, &MainWindow::fitConditionsHeight);
+        applySearchMode(); // no seed generator for datapack worlds
+    }
+    // the saved filters and examples are vanilla conditions
+    ui->actionPresetLoad->setEnabled(!datapack && !(formControl && formControl->isSearching()));
+    // the Locations page evaluates the vanilla conditions
+    if (tabLocations)
+    {
+        const int index = ui->tabContainerSearch->indexOf(tabLocations);
+        tabLocations->setEnabled(!datapack);
+        ui->tabContainerSearch->setTabEnabled(index, !datapack);
+        ui->tabContainerSearch->setTabToolTip(index, datapack
+            ? tr("Locations: not available for datapack worlds yet (it evaluates the vanilla "
+                 "conditions). Switch off the datapacks to use it.")
+            : QString());
+        if (datapack && ui->tabContainerSearch->currentWidget() == tabLocations)
+            ui->tabContainerSearch->setCurrentIndex(0);
+    }
+}
+
+void MainWindow::updateDatapackNotice()
+{
+    if (!datapackNotice)
+        return;
+    QWidget *page = ui->tabContainer->currentWidget();
+    const bool vanillaOnly = page && page != tabDatapacks && !page->inherits("TabSlime")
+        && !page->inherits("TabBiomes") && !page->inherits("TabStructures")
+        && page != ui->tabSearch;
+    const bool show = datapackShown && vanillaOnly;
+    if (show)
+    {
+        datapackNotice->setText(tr("These tools work on vanilla worlds. Remove or switch off "
+            "the datapacks to use them. <a href=\"#datapacks\" style=\"color:%1\">Open Datapacks</a>")
+            .arg(colorAccentStrong.name()));
+    }
+    datapackNotice->setVisible(show);
+}
+
+void MainWindow::updateDatapackMode()
+{
+    if (!datapacks || !packChip || laction.isEmpty() || !dimgroup)
+        return; // called while the window is still being built
+    const bool datapack = datapackMode();
+    const std::shared_ptr<const DatapackWorld> world = datapacks->current();
+
+    // the pack chip of the world card
+    int count = 0;
+    for (int i = 0; i < (int) datapacks->entries().size(); i++)
+        count += datapacks->entries()[i].enabled && datapacks->packExists(i);
+    const bool problem = datapack && world && world->state != DatapackWorld::Ready
+        && world->state != DatapackWorld::Loading;
+    const bool chipChanged = packChip->isVisible() != datapack
+        || packChip->text() != QString::number(count);
+    packChip->setText(QString::number(count));
+    packChip->setIcon(chromeIcon("datapacks", problem ? colorDanger : colorAccentStrong, 14));
+    packChip->setProperty("problem", problem);
+    packChip->style()->unpolish(packChip);
+    packChip->style()->polish(packChip);
+    packChip->setToolTip(problem
+        ? tr("Datapack world with a problem. Click to open Datapacks.")
+        : tr("Datapack world: %n data pack(s) loaded. Click to open Datapacks.", nullptr, count));
+    packChip->setAccessibleName(tr("Datapacks"));
+    packChip->setVisible(datapack);
+    if (chipChanged)
+        layoutMapOverlays();
+
+    // Layers of the built-in generator. Without packs, updateMapSeed() has
+    // just set what the version offers; these two exist in every version.
+    // A datapack world has the biome map and, where its dimension has
+    // terrain, the height and terrain layers.
+    const bool packTerrain = datapack && world && world->usable() && world->dimensionInfo()->terrain;
+    for (int i = 0; i < laction.size(); i++)
+    {
+        if (!laction[i] || i == LOPT_BIOMES || i == LOPT_TERRAIN)
+            continue;
+        if (i == LOPT_HEIGHT)
+            laction[i]->setToolTip(packTerrain
+                ? tr("Height map of the datapack world: the ocean floor of its terrain (without caves, "
+                    "carvers, trees and structures). Zoomed out to 4 blocks per pixel and more, it shows "
+                    "the highest solid block with the sea and lava levels only: no lakes or aquifers, no "
+                    "blocks of the surface rules (such as powder snow).")
+                : tr("An estimate of the terrain height, computed without generating the full terrain"));
+        if (datapack)
+            laction[i]->setEnabled(i == LOPT_HEIGHT && (packTerrain || !world || !world->usable()));
+        else if (i == LOPT_HEIGHT || i == LOPT_STRUCTS)
+            laction[i]->setEnabled(true);
+    }
+    if (dpStructAction)
+        dpStructAction->setIcon(chromeIcon("datapacks", colorAccentStrong, 20));
+    ui->actionLayerDisplay->setEnabled(!datapack);
+    ui->actionBiomeColors->setEnabled(!datapack);
+    for (int i = 0; i < 3; i++)
+    {
+        static const char *const names[] = {QT_TR_NOOP("Overworld"), QT_TR_NOOP("Nether"),
+            QT_TR_NOOP("End")};
+        dimactions[i]->setEnabled(!datapack);
+        dimactions[i]->setToolTip(datapack
+            ? tr("%1: a datapack world has its own dimensions. Pick one in Datapacks.").arg(tr(names[i]))
+            : tr(names[i]));
+    }
+
+    // The search and the analyses work for one world: what runs for a vanilla
+    // world stops when packs come, what runs for a datapack world stops when
+    // that world changes (packs, version, world type, dimension) or goes.
+    const std::shared_ptr<const DatapackWorld> nowWorld = datapack ? world : nullptr;
+    if ((datapack && !datapackShown) || nowWorld != workWorld)
+    {
+        formControl->stopSearch();
+        for (QTabWidget *tabs : {ui->tabContainer, ui->tabContainerSearch})
+            for (int i = 0; i < tabs->count(); i++)
+                if (ISaveTab *tab = dynamic_cast<ISaveTab*>(tabs->widget(i)))
+                    if (tabs->widget(i) != tabDatapacks && !tabs->widget(i)->inherits("TabSlime"))
+                        tab->stopWork();
+    }
+    // the tool in front lists the biomes of the new world
+    const bool worldSwitched = nowWorld != workWorld;
+    workWorld = nowWorld;
+    // the tools that only know vanilla worlds; the Seed Finder, the biome
+    // and the structure analysis have a datapack side
+    for (int i = 0; i < ui->tabContainer->count(); i++)
+    {
+        QWidget *page = ui->tabContainer->widget(i);
+        if (page == tabDatapacks || page->inherits("TabSlime") || page->inherits("TabBiomes")
+            || page->inherits("TabStructures") || page == ui->tabSearch)
+            continue;
+        page->setEnabled(!datapack);
+    }
+    updateConditionLists();
+    const bool changed = datapackShown != datapack;
+    datapackShown = datapack;
+    if (worldSwitched && !changed && datapack)
+        if (ISaveTab *tab = dynamic_cast<ISaveTab*>(ui->tabContainer->currentWidget()))
+            tab->refresh();
+    updateDatapackNotice();
+    // without a world the status strip says why (the map only reports changes)
+    if (!getMapView()->world)
+        updateMapStatus(QString(), 0, 0, getMapView()->getScale(), false);
+    if (changed)
+    {
+        WorldInfo wi;
+        getSeed(&wi, false);
+        updateTerrainAvailability(wi.mc);
+        updateStructureActions();
+        // the tool in front shows what applies now (e.g. the slime chunks)
+        if (ISaveTab *tab = dynamic_cast<ISaveTab*>(ui->tabContainer->currentWidget()))
+            tab->refresh();
     }
 }

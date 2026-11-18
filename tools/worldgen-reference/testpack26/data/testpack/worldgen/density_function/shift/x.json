@@ -1,0 +1,19 @@
+{
+  "input": {
+    "axis": "y",
+    "coordinate": 0,
+    "input": {
+      "input": {
+        "left": 20.0,
+        "right": {
+          "noise": "testpack:shift",
+          "type": "minecraft:shift_a"
+        },
+        "type": "minecraft:mul"
+      },
+      "type": "minecraft:cache"
+    },
+    "type": "minecraft:slice"
+  },
+  "type": "minecraft:cache"
+}

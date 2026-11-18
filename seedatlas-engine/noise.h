@@ -66,6 +66,13 @@ double samplePerlin(const PerlinNoise *noise, double x, double y, double z,
 /// nearby positions (such as in a gradient descent).
 double samplePerlinCoherent(const PerlinNoise *noise, double x, double y, double z,
         double yamp, double ymin);
+/// samplePerlin() with the y smearing exactly as in ImprovedNoise.noise() of
+/// 1.18+: the limit @ymin only applies where it is not negative, and the
+/// number of @yamp steps is floor(limit / yamp + 1.0E-7F). samplePerlin() has
+/// neither, so it can be one step off wherever ymin / yamp rounds to just
+/// below a whole number, and it differs for negative ymin (y below zero).
+double samplePerlinSmeared(const PerlinNoise *noise, double x, double y, double z,
+        double yamp, double ymin);
 double sampleSimplex2D(const PerlinNoise *noise, double x, double y);
 
 /// Perlin Octaves

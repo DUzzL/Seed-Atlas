@@ -1,6 +1,7 @@
 #ifndef WIDGETS_H
 #define WIDGETS_H
 
+#include <QIcon>
 #include <QWidget>
 #include <QSlider>
 #include <QComboBox>
@@ -19,11 +20,33 @@ class QFrame;
 class QHBoxLayout;
 class QLabel;
 class QScrollArea;
+class QScrollBar;
 class QResizeEvent;
 class QPropertyAnimation;
 
-// A dockable toolbar whose action strip remains accessible through a scroll
-// area instead of hiding overflow actions in Qt's extension menu.
+class QAbstractItemView;
+
+// Chrome icons (tool rail, map controls, chevrons) drawn as vector shapes in
+// the theme's colors, so they stay crisp at any scale and follow the theme.
+// kind: search, biomes, structures, slime, eye, datapacks, menu, settings,
+// origin, plus, minus, go, chevron-left, chevron-right, arrow-up, arrow-down,
+// close, layers. A second color is used for
+// the checked ("On") state, e.g. the active tool in the rail.
+QIcon chromeIcon(const QString& kind, const QColor& color, int size = 20,
+                 const QColor& checkedColor = QColor());
+
+// Map layer icons: the small pixel-art sources scaled with nearest-neighbour
+// at integer factors for each device pixel ratio, and a calmer but legible
+// grey "off" version that suits the background of the given theme.
+QIcon layerIcon(const QString& rcbase, int size, bool darkTheme);
+
+// Shows a short muted hint centered in a list or table while it has no rows.
+void setEmptyHint(QAbstractItemView *view, const QString& text);
+
+// The layer sidebar at the right edge of the map. Collapsed it shows only the
+// layer icons stacked vertically (names as tooltips); expanded it shows icon
+// and name with small group headings. The action strip scrolls instead of
+// hiding overflow actions in Qt's extension menu.
 class ScrollableToolBar : public QToolBar
 {
     Q_OBJECT
@@ -33,10 +56,14 @@ public:
 
     QAction *addAction(QAction *action);
     QAction *addSeparator();
+    // a separator followed by a group heading that shows while expanded
+    void addSection(const QString& title);
     bool isCollapsed() const { return collapsed; }
     int sidebarWidth() const { return currentWidth; }
     void setCollapsed(bool collapsed, bool animated = true);
     void setSidebarWidth(int width);
+    // color of the expand/collapse chevron, follows the theme
+    void setChromeColor(const QColor& color);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -45,21 +72,31 @@ signals:
     void collapsedChanged(bool collapsed);
 
 private slots:
-    void updateDirection(Qt::Orientation orientation);
     void updateButtons(const QSize& size);
 
 private:
     int expandedWidth() const;
     int collapsedWidth() const;
     void updateToggleButton();
+    void applyCollapsedLayout();
 
+    QWidget *panel;
+    QLabel *title;
+    QHBoxLayout *headerLayout;
     QScrollArea *scroll;
+    // The visible scroll bar lives in a gutter column of its own next to the
+    // scroll area, whose own bar stays hidden: showing or hiding it never
+    // narrows the strip, so it cannot cover an icon or its outline.
+    QWidget *gutter;
+    QScrollBar *scrollBar;
     QWidget *strip;
     QBoxLayout *stripLayout;
     QVector<QToolButton*> buttons;
+    QVector<QLabel*> sectionLabels;
     QVector<QFrame*> separators;
     QToolButton *toggleButton;
     QPropertyAnimation *widthAnimation;
+    QColor chromeColor;
     int currentWidth;
     bool collapsed;
 };
@@ -102,6 +139,8 @@ public:
     explicit Collapsible(QWidget *parent = nullptr);
     void init(const QString& title, QWidget *widget, bool collapsed);
     void setInfo(const QString& title, const QString& text);
+    // shows "TITLE · count" in the heading; a negative count hides it
+    void setCount(int count);
     void setCollapsed(bool collapsed); // without animation
 
 public slots:
@@ -118,6 +157,7 @@ public:
     QHBoxLayout *layoutContent;
 
     int contentHeight;
+    QString title;
     QString infotitle;
     QString infomsg;
     QWidget *infoButton = nullptr;
@@ -226,6 +266,9 @@ public:
     {
         setItemDelegate(new ComboBoxDelegate(parent, this));
     }
+
+    // the width of the box around contents of this width (as in its size hint)
+    int widthForContents(int width) const;
 
 protected:
     // shows the tab separated columns of an item with spaces between them

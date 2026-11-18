@@ -135,6 +135,8 @@ public:
     void runQuads(Generator *g);
     void runDensity(Generator *g);
     void runFortresses(Generator *g);
+    // the structure starts of a datapack world (dpw), for all seeds
+    void runDatapack();
     bool shouldStop() const { return stop || (cancel && *cancel); }
     void emitStructs(const StructSeedResultPtr& result);
 
@@ -176,6 +178,10 @@ public:
     bool fortress2x2 = true;
     bool fortress3x1 = true;
     std::atomic_bool *cancel = nullptr;
+    // a datapack world: its structures instead of the built-in ones
+    std::shared_ptr<const DatapackWorld> dpw;
+    std::vector<char> dpMask;   // per structure of the world; empty: all supported
+    bool dpUnknown = true;      // also list the starts that are not decided
 };
 
 class TabStructures : public QWidget, public ISaveTab
@@ -191,6 +197,7 @@ public:
     virtual void save(QSettings& settings) override;
     virtual void load(QSettings& settings) override;
     virtual void refresh() override;
+    void stopWork() override;
 
 private slots:
 
@@ -208,6 +215,8 @@ private slots:
 private:
     void exportResults(class CsvWriter& csv);
     void refreshFortressTab();
+    // the options of a datapack world (shown while datapacks are loaded)
+    void refreshDatapackMode();
 
 private:
     Ui::TabStructures *ui;
@@ -215,6 +224,8 @@ private:
     AnalysisStructures thread;
     AnalysisStructures::Dat dats, datq, datf;
     QElapsedTimer elapsed;
+    class QCheckBox *checkDpUnknown = nullptr;
+    bool dpShown = false;
 };
 
 #endif // TABSTRUCTURES_H

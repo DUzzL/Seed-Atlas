@@ -3,7 +3,7 @@
  <class>BiomeColorDialog</class>
  <widget class="QDialog" name="BiomeColorDialog">
   <property name="windowTitle">
-   <string>Biome Color Editor</string>
+   <string>Biome colors</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">

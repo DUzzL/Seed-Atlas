@@ -15,6 +15,27 @@
 #endif
 
 
+static thread_local MessageCapture *t_capture = nullptr;
+
+MessageCapture::MessageCapture() : outer(t_capture)
+{
+    t_capture = this;
+}
+
+MessageCapture::~MessageCapture()
+{
+    t_capture = outer;
+}
+
+// the answer of a prompt without a user: abort, cancel or no where there is one
+static int cautiousButton(QMessageBox::StandardButtons buttons)
+{
+    for (int b : { QMessageBox::Abort, QMessageBox::Cancel, QMessageBox::No, QMessageBox::Close })
+        if (buttons & b)
+            return b;
+    return QMessageBox::Ok;
+}
+
 static
 int term_prompt(const QString& title, const QString& text, QMessageBox::StandardButtons buttons)
 {
@@ -120,6 +141,11 @@ int message(
     QString s = text;
     if (!prompt.isEmpty())
         s += "\n\n" + prompt;
+    if (t_capture)
+    {
+        t_capture->texts.append(text);
+        return cautiousButton(buttons);
+    }
     if (!parent)
         return term_prompt(title, s, buttons);
 

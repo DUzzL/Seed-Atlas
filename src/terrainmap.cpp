@@ -30,6 +30,7 @@ struct BiomeLook
     float canopy = 0;       // share of the ground covered by tree crowns
     float leafTexture = 0;  // average brightness of the leaf texture
     int leaf = -1;          // fixed leaf color, otherwise the foliage tint
+    bool poplars = false;   // crowns in the three poplar leaf colors
     bool deep = false;      // deep ocean variant
 };
 
@@ -54,6 +55,11 @@ const int GRASS_CORNERS[3] = { 0xBFB755, 0x47CD33, 0x80B497 };
 const int FOLIAGE_CORNERS[3] = { 0xAEA42A, 0x1ABF00, 0x60A17B };
 const int FOLIAGE_BIRCH = 0x80A755;
 const int FOLIAGE_EVERGREEN = 0x619961;
+// Poplar leaves (26.3) are not tinted: the averages of the red, orange and
+// yellow leaf textures and the weights of the trees in the dappled forest.
+const int POPLAR_LEAVES[3] = { 0x9A2C27, 0xBC5618, 0xD78628 };
+const int POPLAR_WEIGHTS[3] = { 20, 24, 9 };
+const int POPLAR_MEAN = 0xB34E20;
 
 struct Looks
 {
@@ -98,7 +104,8 @@ struct Looks
         sea(cold_ocean, 0x3D57D6, false);
         sea(deep_cold_ocean, 0x3D57D6, true);
         sea(frozen_ocean, 0x3938C9, false, true);
-        sea(deep_frozen_ocean, 0x3938C9, true, true);
+        // no ice sheet: the base temperature is 0.5, only icebergs freeze
+        sea(deep_frozen_ocean, 0x3938C9, true);
         sea(river, 0x3F76E4, false);
         sea(frozen_river, 0x3938C9, false, true);
 
@@ -116,7 +123,7 @@ struct Looks
         ground(modified_gravelly_mountains, G_GRAVEL);
         ground(stone_shore, G_STONE);
         for (int id : { forest, wooded_hills, flower_forest, dark_forest,
-                dark_forest_hills, dappled_forest })
+                dark_forest_hills })
             climate(id, 0.7f, 0.8f);
         for (int id : { taiga, taiga_hills, taiga_mountains,
                 giant_spruce_taiga, giant_spruce_taiga_hills })
@@ -175,6 +182,12 @@ struct Looks
         at(pale_garden).grass = 0x778272;
         at(pale_garden).foliage = 0x878D76;
         at(pale_garden).water = 0x76889D;
+        // Dappled forest (26.3): the autumn colors of the vanilla biome (its
+        // poplars carry red, orange and yellow leaves, see the trees below).
+        climate(dappled_forest, 0.6f, 0.6f);
+        at(dappled_forest).grass = 0xDF6827;
+        at(dappled_forest).foliage = 0xE68E30;
+        at(dappled_forest).water = 0x375154;
         climate(lush_caves, 0.5f, 0.5f);
         for (int id : { dark_forest, dark_forest_hills })
             at(id).darkGrass = true;
@@ -183,8 +196,10 @@ struct Looks
         for (int id : { forest, wooded_hills })
             trees(id, 0.55f, 0.60f);
         trees(flower_forest, 0.35f, 0.60f);
-        trees(dappled_forest, 0.45f, 0.60f);
-        trees(wooded_mountains, 0.45f, 0.55f);
+        trees(dappled_forest, 0.45f, 0.95f, POPLAR_MEAN);
+        at(dappled_forest).poplars = true;
+        // two thirds of the trees of the windswept forest are spruces
+        trees(wooded_mountains, 0.45f, 0.42f, FOLIAGE_EVERGREEN);
         for (int id : { dark_forest, dark_forest_hills })
             trees(id, 0.90f, 0.50f);
         for (int id : { birch_forest, birch_forest_hills })
@@ -303,7 +318,8 @@ static int grassColor(const BiomeLook& b)
 
 // Tree crowns of radius 1.8..2.7 on a jittered 5-block grid, lit from the
 // north-west. Pixels of 8+ blocks blend ground and leaves by coverage.
-static int crowns(int ground, int leaf, float density, int64_t x, int64_t z, int scale)
+static int crowns(int ground, int leaf, float density, int64_t x, int64_t z, int scale,
+        bool poplars = false, float texture = 1.0f)
 {
     if (scale >= 8)
         return mixColor(ground, leaf, density);
@@ -328,7 +344,14 @@ static int crowns(int ground, int leaf, float density, int64_t x, int64_t z, int
             if (ox * ox + oz * oz > radius * radius)
                 continue;
             float light = -(ox + oz) / radius * 9.0f;
-            return scaleColor(leaf, 1.0f + light / 100.0f);
+            int color = leaf;
+            if (poplars)
+            {   // each tree in one of the three leaf colors
+                int pick = (int)((h >> 40) % (POPLAR_WEIGHTS[0] + POPLAR_WEIGHTS[1] + POPLAR_WEIGHTS[2]));
+                int k = pick < POPLAR_WEIGHTS[0] ? 0 : pick < POPLAR_WEIGHTS[0] + POPLAR_WEIGHTS[1] ? 1 : 2;
+                color = scaleColor(POPLAR_LEAVES[k], texture);
+            }
+            return scaleColor(color, 1.0f + light / 100.0f);
         }
     }
     return ground;
@@ -367,7 +390,8 @@ static int surfaceColor(const BiomeLook& b, int64_t x, int64_t z, float y, int s
     int tint = b.leaf;
     if (tint < 0)
         tint = b.foliage >= 0 ? b.foliage : colormap(FOLIAGE_CORNERS, b.temp, b.downfall);
-    return crowns(ground, scaleColor(tint, b.leafTexture), b.canopy, x, z, scale);
+    return crowns(ground, scaleColor(tint, b.leafTexture), b.canopy, x, z, scale,
+        b.poplars, b.leafTexture);
 }
 
 // Share of solid ground that an End biome carries when no heights are known.
@@ -469,10 +493,36 @@ static int floorDiv4(int64_t v)
     return (int) (v >= 0 ? v / 4 : -((-v + 3) / 4));
 }
 
+namespace {
+
+// Frees the lazily allocated 3D noise of mushroom island relief.
+struct ReliefScope
+{
+    ReliefNoise rn;
+    ReliefScope() { reliefNoiseInit(&rn); }
+    ~ReliefScope() { reliefNoiseFree(&rn); }
+    ReliefScope(const ReliefScope&) = delete;
+    ReliefScope& operator=(const ReliefScope&) = delete;
+};
+
+} // namespace
+
 bool sampleHeightGrid(std::vector<float>& height, Range r,
         const Generator *g, const SurfaceNoise *sn, int stepbits, bool bicubic,
-        const std::atomic_bool *abort)
+        const std::atomic_bool *abort, bool relief)
 {
+    // Mushroom islands get the hills of the real terrain, but only at the
+    // scales where they are visible (an island is a few pixels wide beyond
+    // 1:16); everything else keeps the depth height.
+    ReliefScope scope;
+    ReliefNoise *rn = (relief && r.scale <= 16) ? &scope.rn : nullptr;
+    auto approxHeight = [&](float *y, int x, int z, int w, int h)
+    {
+        if (rn)
+            mapReliefHeight(y, g, sn, rn, x, z, w, h);
+        else
+            mapApproxHeight(y, 0, g, sn, x, z, w, h);
+    };
     int bd = bicubic ? 1 : 0; // sampling border
     int ps = stepbits; // bits in step size
     int st = (1 << ps) - 1; // step mask
@@ -495,7 +545,7 @@ bool sampleHeightGrid(std::vector<float>& height, Range r,
     }
     else if (ps == 0 && r.scale == 4)
     {
-        mapApproxHeight(&buf[0], 0, g, sn, px, pz, pw, ph);
+        approxHeight(&buf[0], px, pz, pw, ph);
     }
     else
     {
@@ -507,7 +557,7 @@ bool sampleHeightGrid(std::vector<float>& height, Range r,
                 int samplex = floorDiv4((int64_t)((px + i) << ps) * r.scale);
                 int samplez = floorDiv4((int64_t)((pz + j) << ps) * r.scale);
                 float y = 0;
-                mapApproxHeight(&y, 0, g, sn, samplex, samplez, 1, 1);
+                approxHeight(&y, samplex, samplez, 1, 1);
                 buf[j*pw+i] = y;
             }
         }

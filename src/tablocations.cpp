@@ -1,3 +1,5 @@
+#include "widgets.h"
+#include "appactivity.h"
 #include "tablocations.h"
 #include "ui_tablocations.h"
 
@@ -75,19 +77,20 @@ QString AnalysisLocations::set(WorldInfo wi, const std::vector<Condition>& conds
     this->wi = wi;
     QString err = condtree.set(conds, wi.mc);
     if (err.isEmpty())
-        err = env.init(wi.mc, wi.large, condtree);
+        err = env.init(wi.mc, wi.genFlags(), condtree);
     return err;
 }
 
 void AnalysisLocations::run()
 {
+    BusyActivity busy; // not to be throttled while out of view
     workers.reset();
     const uint64_t total = uint64_t(seeds.size()) * pos.size();
     workDone = 0;
     std::atomic_uint64_t next(0);
     auto scan = [&](size_t) {
         SearchThreadEnv localEnv;
-        if (!localEnv.init(wi.mc, wi.large, condtree).isEmpty())
+        if (!localEnv.init(wi.mc, wi.genFlags(), condtree).isEmpty())
             return;
         localEnv.stop = &stop;
         uint64_t activeSeed = 0;
@@ -150,12 +153,14 @@ TabLocations::TabLocations(MainWindow *parent)
     , maxresults(1)
 {
     ui->setupUi(this);
+    ui->pushStart->setProperty("primary", true);
+    setEmptyHint(ui->treeWidget, tr("No locations yet. Press Analyze."));
     connect(parent->formCond, &FormConditions::changed, this, [this]() {
         thread.stop = true;
         resultsInvalidated = true;
         ui->treeWidget->clearResults();
         ui->pushExport->setEnabled(false);
-        ui->labelStatus->setText(tr("Filters changed. Analyze again."));
+        ui->labelStatus->setText(tr("Conditions changed. Analyze again."));
     });
     ui->treeWidget->header()->setMinimumSectionSize(24);
     ui->treeWidget->header()->setSectionResizeMode(QHeaderView::Stretch);
@@ -246,7 +251,7 @@ void TabLocations::onAnalysisFinished()
     ui->pushStart->setChecked(false);
     ui->pushStart->setText(tr("Analyze"));
     ui->labelStatus->setText(resultsInvalidated
-        ? tr("Filters changed. Analyze again.") : thread.stop
+        ? tr("Conditions changed. Analyze again.") : thread.stop
         ? tr("Analysis stopped. %1 results.").arg(ui->treeWidget->topLevelItemCount())
         : tr("Analysis complete. %1 results.").arg(ui->treeWidget->topLevelItemCount()));
     if (parent)
@@ -524,4 +529,10 @@ void TabLocations::on_pushExport_clicked()
         ui->treeWidget->writeCsv(csv,
             { tr("id"), tr("seed/condition"), tr("x"), tr("z"), tr("distance") });
     });
+}
+
+void TabLocations::stopWork()
+{
+    if (thread.isRunning())
+        thread.stop = true;
 }

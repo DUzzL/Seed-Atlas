@@ -1,0 +1,212 @@
+{
+  "testpack:amber_plains": {
+    "r": 116,
+    "g": 135,
+    "b": 188
+  },
+  "testpack:azure_marsh": {
+    "r": 70,
+    "g": 58,
+    "b": 88
+  },
+  "testpack:cobalt_steppe": {
+    "r": 215,
+    "g": 47,
+    "b": 97
+  },
+  "testpack:crimson_heath": {
+    "r": 77,
+    "g": 126,
+    "b": 101
+  },
+  "testpack:emerald_basin": {
+    "r": 217,
+    "g": 118,
+    "b": 177
+  },
+  "testpack:jade_thicket": {
+    "r": 185,
+    "g": 74,
+    "b": 201
+  },
+  "testpack:violet_moor": {
+    "r": 204,
+    "g": 161,
+    "b": 136
+  },
+  "testpack:basalt_flats": {
+    "r": 130,
+    "g": 66,
+    "b": 84
+  },
+  "testpack:ivory_tundra": {
+    "r": 235,
+    "g": 90,
+    "b": 40
+  },
+  "testpack:ochre_dunes": {
+    "r": 57,
+    "g": 235,
+    "b": 206
+  },
+  "testpack:pearl_coast": {
+    "r": 209,
+    "g": 190,
+    "b": 191
+  },
+  "testpack:quartz_ridge": {
+    "r": 213,
+    "g": 151,
+    "b": 66
+  },
+  "testpack:ruby_canyon": {
+    "r": 74,
+    "g": 193,
+    "b": 121
+  },
+  "testpack:slate_highland": {
+    "r": 234,
+    "g": 137,
+    "b": 184
+  },
+  "testpack:hot_ember": {
+    "r": 123,
+    "g": 152,
+    "b": 194
+  },
+  "testpack:hot_scorch": {
+    "r": 43,
+    "g": 217,
+    "b": 224
+  },
+  "testpack:hot_cinder": {
+    "r": 46,
+    "g": 94,
+    "b": 139
+  },
+  "testpack:umber_grotto": {
+    "r": 115,
+    "g": 176,
+    "b": 78
+  },
+  "testpack:obsidian_depths": {
+    "r": 95,
+    "g": 65,
+    "b": 73
+  },
+  "testpack:sky_mist": {
+    "r": 123,
+    "g": 90,
+    "b": 112
+  },
+  "testpack:sky_gale": {
+    "r": 217,
+    "g": 186,
+    "b": 223
+  },
+  "testpack:outer_rim": {
+    "r": 165,
+    "g": 175,
+    "b": 86
+  },
+  "testpack:outer_reach": {
+    "r": 188,
+    "g": 103,
+    "b": 231
+  },
+  "testpack:patch_a": {
+    "r": 188,
+    "g": 123,
+    "b": 181
+  },
+  "testpack:patch_b": {
+    "r": 92,
+    "g": 115,
+    "b": 209
+  },
+  "testpack:patch_c": {
+    "r": 220,
+    "g": 184,
+    "b": 159
+  },
+  "testpack:patch_d": {
+    "r": 104,
+    "g": 176,
+    "b": 135
+  },
+  "testpack:unreachable_cold": {
+    "r": 135,
+    "g": 227,
+    "b": 111
+  },
+  "testpack:equi_p": {
+    "r": 40,
+    "g": 171,
+    "b": 70
+  },
+  "testpack:equi_q": {
+    "r": 228,
+    "g": 163,
+    "b": 159
+  },
+  "testpack:tie1_a": {
+    "r": 212,
+    "g": 175,
+    "b": 216
+  },
+  "testpack:tie1_b": {
+    "r": 216,
+    "g": 228,
+    "b": 79
+  },
+  "testpack:tie2_a": {
+    "r": 200,
+    "g": 69,
+    "b": 168
+  },
+  "testpack:tie2_b": {
+    "r": 222,
+    "g": 109,
+    "b": 68
+  },
+  "testpack:tie3_a": {
+    "r": 131,
+    "g": 102,
+    "b": 199
+  },
+  "testpack:tie3_b": {
+    "r": 78,
+    "g": 191,
+    "b": 150
+  },
+  "testpack:tie4_a": {
+    "r": 135,
+    "g": 151,
+    "b": 229
+  },
+  "testpack:tie4_b": {
+    "r": 164,
+    "g": 56,
+    "b": 139
+  },
+  "testpack:tie5_a": {
+    "r": 103,
+    "g": 178,
+    "b": 173
+  },
+  "testpack:tie5_b": {
+    "r": 233,
+    "g": 178,
+    "b": 137
+  },
+  "testpack:tie6_a": {
+    "r": 70,
+    "g": 81,
+    "b": 217
+  },
+  "testpack:tie6_b": {
+    "r": 99,
+    "g": 203,
+    "b": 131
+  }
+}

@@ -1,6 +1,7 @@
-/* Seed Atlas modern cross-platform theme.
- * Color tokens are replaced at runtime so one layout follows light, dark,
- * and system appearance without maintaining two diverging stylesheets. */
+/* Seed Atlas "Atlas" theme: calm neutral chrome with grass green as the only
+ * accent, so the colourful map dominates. The color tokens between at-signs
+ * are replaced at runtime (MainWindow::onStyleChanged), so one layout follows
+ * light, dark and system appearance without two diverging stylesheets. */
 
 QWidget {
     color: @TEXT@;
@@ -26,14 +27,11 @@ QLabel {
     background: transparent;
 }
 
-QLabel#labelMC, QLabel#labelSeed, QLabel#labelY {
-    color: @MUTED@;
-    font-weight: 600;
-}
-
 QLabel#labelGen48Note {
     color: @MUTED@;
 }
+
+/* ---------------------------------------------------------------- inputs */
 
 QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox,
 QDateEdit, QTimeEdit, QDateTimeEdit, QComboBox, QFontComboBox {
@@ -61,6 +59,11 @@ QSpinBox:disabled, QDoubleSpinBox:disabled {
     color: @DISABLED_TEXT@;
     background-color: @DISABLED@;
     border-color: @BORDER@;
+}
+
+QLineEdit[invalid="true"] {
+    color: @DANGER@;
+    border-color: @DANGER@;
 }
 
 /* a plain list below the box; the overlay popup cut off short lists */
@@ -132,6 +135,8 @@ QComboBox QAbstractItemView {
     selection-color: @TEXT@;
 }
 
+/* --------------------------------------------------------------- buttons */
+
 QPushButton, QDialogButtonBox QPushButton {
     color: @TEXT@;
     background-color: @BUTTON@;
@@ -151,6 +156,7 @@ QPushButton:pressed, QPushButton:checked {
     border-color: @ACCENT@;
 }
 
+/* dialogs mark their confirming button as the default one */
 QPushButton:default {
     color: @ACCENT_TEXT@;
     background-color: @ACCENT@;
@@ -160,11 +166,58 @@ QPushButton:default {
 
 QPushButton:default:hover {
     background-color: @ACCENT_HOVER@;
+    border-color: @ACCENT_HOVER@;
 }
 
 QPushButton:disabled {
     color: @DISABLED_TEXT@;
     background-color: @DISABLED@;
+    border-color: @BORDER@;
+}
+
+/* the one primary action of a tool (Start search, Analyze) */
+QPushButton[primary="true"] {
+    color: @ACCENT_TEXT@;
+    background-color: @ACCENT@;
+    border-color: @ACCENT@;
+    font-weight: 700;
+    padding: 6px 18px;
+}
+
+QPushButton[primary="true"]:hover {
+    background-color: @ACCENT_HOVER@;
+    border-color: @ACCENT_HOVER@;
+}
+
+/* a running search: the same button now aborts it */
+QPushButton[primary="true"]:checked {
+    color: @ACCENT_STRONG@;
+    background-color: @ACCENT_SOFT@;
+    border-color: @ACCENT@;
+}
+
+QPushButton[primary="true"]:disabled {
+    color: @DISABLED_TEXT@;
+    background-color: @DISABLED@;
+    border-color: @BORDER@;
+}
+
+/* "+ Add" next to the quick filter: secondary, but clearly an action */
+QPushButton#quickAdd {
+    color: @ACCENT_STRONG@;
+    font-weight: 600;
+}
+
+QPushButton#quickAdd:disabled {
+    color: @DISABLED_TEXT@;
+}
+
+QPushButton::menu-indicator {
+    image: url(:/icons/arrow_down.png);
+    width: 10px;
+    height: 6px;
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
 }
 
 QCheckBox, QRadioButton {
@@ -172,16 +225,28 @@ QCheckBox, QRadioButton {
     padding: 2px;
 }
 
-QCheckBox::indicator {
-    width: 16px;
-    height: 16px;
+/* narrow "..." buttons next to a field */
+QPushButton#buttonDirSelect, QPushButton#buttonMore {
+    padding: 4px 0;
+    min-width: 26px;
+}
+
+QCheckBox::indicator, QGroupBox::indicator {
+    width: 15px;
+    height: 15px;
     background-color: @INPUT@;
-    border: 2px solid @TEXT@;
+    border: 1px solid @CONTROL_BORDER@;
     border-radius: 4px;
 }
 
-QCheckBox::indicator:hover {
+QCheckBox::indicator:hover, QGroupBox::indicator:hover {
     border-color: @ACCENT@;
+}
+
+QGroupBox::indicator:checked {
+    background-color: @ACCENT@;
+    border-color: @ACCENT@;
+    image: url(:/icons/checkmark.png);
 }
 
 QCheckBox::indicator:checked {
@@ -192,15 +257,20 @@ QCheckBox::indicator:checked {
 
 QCheckBox::indicator:disabled {
     background-color: @DISABLED@;
+    border-color: @BORDER@;
+}
+
+QCheckBox::indicator:checked:disabled {
+    background-color: @DISABLED_TEXT@;
     border-color: @DISABLED_TEXT@;
 }
 
 QRadioButton::indicator {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
     background-color: @INPUT@;
-    border: 2px solid @TEXT@;
-    border-radius: 10px;
+    border: 1px solid @CONTROL_BORDER@;
+    border-radius: 8px;
 }
 
 QRadioButton::indicator:hover {
@@ -208,53 +278,410 @@ QRadioButton::indicator:hover {
 }
 
 QRadioButton::indicator:checked {
-    background-color: @ACCENT@;
     border-color: @ACCENT@;
+    background-color: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
+        stop: 0 @ACCENT@, stop: 0.48 @ACCENT@, stop: 0.56 @INPUT@, stop: 1 @INPUT@);
+}
+
+QRadioButton::indicator:checked:disabled {
+    border-color: @BORDER@;
+    background-color: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
+        stop: 0 @DISABLED_TEXT@, stop: 0.48 @DISABLED_TEXT@, stop: 0.56 @DISABLED@, stop: 1 @DISABLED@);
 }
 
 QRadioButton::indicator:disabled {
     background-color: @DISABLED@;
-    border-color: @DISABLED_TEXT@;
+    border-color: @BORDER@;
 }
 
-QFrame#mapCoordinateFinder {
+/* ---------------------------------------------------------- tool rail */
+
+QFrame#toolRail {
+    background-color: @RAIL@;
+    border: 0;
+    border-right: 1px solid @BORDER@;
+}
+
+QToolButton#railButton {
+    background-color: transparent;
+    border: 0;
+    border-radius: 8px;
+    padding: 0;
+    margin: 0;
+}
+
+QToolButton#railButton:hover {
+    background-color: @BUTTON_HOVER@;
+}
+
+QToolButton#railButton:checked {
+    background-color: @ACCENT_SOFT@;
+}
+
+QToolButton#railButton::menu-indicator {
+    image: none;
+    width: 0;
+}
+
+QLabel#panelTitle {
+    color: @TEXT@;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+/* collapse handles at the panel edges */
+QToolButton#sidePanelToggle {
     background-color: @SURFACE@;
-    border: 1px solid @BORDER_HOVER@;
-    border-radius: 10px;
+    border: 1px solid @BORDER@;
+    border-radius: 5px;
+    padding: 0;
+    margin: 0;
 }
 
-QFrame#mapCoordinateFinder QLabel {
+QToolButton#sidePanelToggle:hover {
+    background-color: @BUTTON_HOVER@;
+    border-color: @BORDER_HOVER@;
+}
+
+/* ---------------------------------------------- sections inside the panel */
+
+/* quiet uppercase headings ("CONDITIONS · 2") instead of pills */
+Collapsible > QToolButton#sectionToggle {
+    color: @MUTED@;
+    background-color: transparent;
+    border: 0;
+    padding: 2px 0;
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+Collapsible > QToolButton#sectionToggle:hover {
+    color: @TEXT@;
+}
+
+Collapsible > QFrame#sectionLine {
+    background: transparent;
+    border: 0;
+}
+
+QLabel#labelNotice {
+    color: @TEXT@;
+    font-weight: 600;
+}
+
+QLabel#emptyHint {
+    color: @MUTED@;
+    padding: 12px;
+}
+
+QLabel#labelStatus, QLabel#labelProgress, QLabel#labelDescription {
+    color: @MUTED@;
+}
+
+/* the tick boxes of the biome list of the datapack condition editor */
+QListWidget#listDpBiomes::indicator {
+    width: 13px;
+    height: 13px;
+    background-color: @INPUT@;
+    border: 1px solid @CONTROL_BORDER@;
+    border-radius: 3px;
+}
+
+QListWidget#listDpBiomes::indicator:checked {
+    background-color: @ACCENT@;
+    border-color: @ACCENT@;
+    image: url(:/icons/checkmark.png);
+}
+
+/* what a search in a datapack world costs, above its conditions */
+QLabel#dpSearchNote {
+    color: @MUTED@;
+    padding: 2px 0 4px 0;
+}
+
+QLabel#labelProgress {
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------- the Datapacks tool */
+
+QScrollArea#datapackScroll, QWidget#datapackBody {
+    background: transparent;
+    border: 0;
+}
+
+/* one pack of the list: name, description, note, order and remove buttons */
+QFrame#packRow {
+    background-color: @SUBTLE@;
+    border: 1px solid @BORDER@;
+    border-radius: 7px;
+}
+
+QFrame#packRow[missing="true"] {
+    border-color: @DANGER@;
+}
+
+QFrame#packRow QLabel#packName {
+    color: @TEXT@;
+    font-weight: 600;
+}
+
+QFrame#packRow QLabel#packName:disabled {
+    color: @MUTED@;
+}
+
+QFrame#packRow QLabel#packNote {
+    color: @MUTED@;
+}
+
+QFrame#packRow QLabel#packNote[problem="true"] {
+    color: @DANGER@;
+}
+
+QToolButton#packRowButton {
+    background-color: transparent;
+    border: 0;
+    border-radius: 5px;
+    padding: 0;
+}
+
+QToolButton#packRowButton:hover {
+    background-color: @BUTTON_HOVER@;
+}
+
+QToolButton#packRowButton:disabled {
+    background-color: transparent;
+}
+
+/* the state of the datapack world: idle, busy, ok, problem */
+QLabel#datapackState {
+    color: @TEXT@;
+    font-weight: 600;
+}
+
+QLabel#datapackState[state="idle"], QLabel#datapackState[state="busy"] {
+    color: @MUTED@;
+}
+
+QLabel#datapackState[state="ok"] {
+    color: @ACCENT_STRONG@;
+}
+
+QLabel#datapackState[state="problem"] {
+    color: @DANGER@;
+}
+
+QLabel#datapackVanilla {
+    color: @MUTED@;
+}
+
+QTextBrowser#datapackIssues {
+    color: @TEXT@;
+    background-color: @SUBTLE@;
+    border: 1px solid @BORDER@;
+    border-radius: 7px;
+    padding: 4px 6px;
+}
+
+QListWidget#datapackBiomes::item {
+    padding: 3px 6px;
+    border-radius: 4px;
+}
+
+QListWidget#datapackBiomes::item:selected {
+    color: @TEXT@;
+    background-color: @ACCENT_SOFT@;
+}
+
+/* shown while data packs are dragged over the window */
+QFrame#dropHighlight {
+    background-color: @ACCENT_SOFT@;
+    border: 2px dashed @ACCENT@;
+    border-radius: 12px;
+}
+
+QLabel#dropHighlightLabel {
+    color: @ACCENT_STRONG@;
+    background-color: @CARD@;
+    border: 1px solid @ACCENT@;
+    border-radius: 9px;
+    padding: 10px 18px;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+/* ------------------------------------------------------ cards on the map */
+
+/* marks a datapack world in the world card; opens the Datapacks tool */
+QFrame#worldBar QToolButton#packChip {
+    color: @ACCENT_STRONG@;
+    background-color: @ACCENT_SOFT@;
+    border: 1px solid @ACCENT@;
+    border-radius: 9px;
+    padding: 2px 8px 2px 6px;
+    font-weight: 700;
+}
+
+QFrame#worldBar QToolButton#packChip:hover {
+    border-color: @ACCENT_HOVER@;
+}
+
+QFrame#worldBar QToolButton#packChip[problem="true"] {
+    color: @DANGER@;
+    background-color: transparent;
+    border-color: @DANGER@;
+}
+
+QFrame#worldBar, QFrame#mapStatusStrip {
+    background-color: @CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+}
+
+QFrame#worldBar QLabel, QFrame#mapStatusStrip QLabel {
     color: @MUTED@;
     font-weight: 600;
 }
 
-QFrame#mapCoordinateFinder QLabel#coordinateFinderTitle {
+QFrame#worldBar QLineEdit, QFrame#worldBar QComboBox,
+QFrame#mapStatusStrip QLineEdit {
+    padding: 3px 8px;
+    min-height: 18px;
+}
+
+QFrame#worldBar QLineEdit:focus, QFrame#worldBar QComboBox:focus,
+QFrame#mapStatusStrip QLineEdit:focus {
+    padding: 2px 7px;
+}
+
+QFrame#mapStatusStrip QLabel#mapBiomeName {
     color: @TEXT@;
-    padding-left: 2px;
-    padding-right: 3px;
-}
-
-QFrame#mapCoordinateFinder QLabel#coordinateFinderAxis {
-    color: @ACCENT@;
-    min-width: 12px;
-}
-
-QFrame#mapCoordinateFinder QLineEdit {
-    min-width: 86px;
-    max-width: 96px;
-    min-height: 22px;
-    padding: 6px 9px;
-    border-radius: 7px;
-}
-
-QFrame#mapCoordinateFinder QPushButton#coordinateFinderGo {
-    min-width: 34px;
-    max-width: 34px;
-    min-height: 22px;
-    padding: 6px 0;
-    border-radius: 7px;
     font-weight: 700;
 }
+
+QFrame#mapStatusStrip QLabel#mapCursorPos, QFrame#mapStatusStrip QLabel#mapScale {
+    font-weight: 500;
+}
+
+QFrame#mapStatusStrip QLineEdit {
+    min-width: 54px;
+    max-width: 78px;
+}
+
+QFrame#mapCoordinateFinder {
+    background: transparent;
+    border: 0;
+}
+
+QFrame#mapStripDivider {
+    background-color: @BORDER@;
+    border: 0;
+}
+
+QToolButton#mapStripButton, QPushButton#coordinateFinderGo {
+    color: @TEXT@;
+    background-color: @BUTTON@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+    padding: 3px;
+    margin: 0;
+    min-height: 0;
+}
+
+QToolButton#mapStripButton:hover, QPushButton#coordinateFinderGo:hover {
+    background-color: @BUTTON_HOVER@;
+    border-color: @BORDER_HOVER@;
+}
+
+QPushButton#coordinateFinderGo:disabled {
+    background-color: @DISABLED@;
+}
+
+/* ------------------------------------------------------- layer sidebar */
+
+ScrollableToolBar {
+    background-color: @SURFACE@;
+    border: 0;
+    border-left: 1px solid @BORDER@;
+    padding: 0;
+    spacing: 0;
+}
+
+QWidget#layerSidebar, QScrollArea#layerScroll, QWidget#layerStrip {
+    background-color: @SURFACE@;
+    border: 0;
+}
+
+QWidget#layerScrollGutter {
+    background-color: @SURFACE@;
+}
+
+QScrollBar#layerScrollBar:vertical {
+    width: 6px;
+    margin: 0;
+}
+
+QScrollBar#layerScrollBar::handle {
+    border-radius: 3px;
+    min-height: 24px;
+}
+
+QToolButton#layerButton {
+    color: @TEXT@;
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 4px;
+    margin: 0;
+    text-align: left;
+}
+
+QToolButton#layerButton:hover {
+    background-color: @BUTTON_HOVER@;
+    border-color: @BORDER@;
+}
+
+QToolButton#layerButton:checked {
+    color: @ACCENT_STRONG@;
+    background-color: @ACCENT_SOFT@;
+    border-color: @ACCENT@;
+    font-weight: 600;
+}
+
+QToolButton#layerButton:disabled {
+    color: @DISABLED_TEXT@;
+}
+
+QToolButton#rightSidebarToggle {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 4px;
+    margin: 0;
+}
+
+QToolButton#rightSidebarToggle:hover {
+    background-color: @BUTTON_HOVER@;
+    border-color: @BORDER@;
+}
+
+QLabel#layerSectionLabel, QLabel#layerSidebarTitle {
+    color: @MUTED@;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QLabel#layerSidebarTitle {
+    font-size: 11px;
+}
+
+QFrame#layerSeparator {
+    background-color: @BORDER@;
+    border: 0;
+}
+
+/* ----------------------------------------------------------- group boxes */
 
 QGroupBox {
     background-color: @SURFACE@;
@@ -274,34 +701,59 @@ QGroupBox::title {
     padding: 0 5px;
 }
 
+/* ------------------------------------------------------------------ tabs */
+
+/* The tool tabs are driven by the rail and hide their bar, so every visible
+ * tab bar is a second-level choice: drawn as a segmented control. */
 QTabWidget::pane {
-    background-color: @SURFACE@;
-    border: 1px solid @BORDER@;
-    border-radius: 9px;
-    top: -1px;
+    background-color: transparent;
+    border: 0;
+    top: 0;
+}
+
+QTabWidget::tab-bar {
+    left: 0;
+}
+
+QTabBar {
+    qproperty-drawBase: 0;
 }
 
 QTabBar::tab {
     color: @MUTED@;
-    background-color: transparent;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    padding: 8px 15px;
-    margin: 0 2px;
+    background-color: @SUBTLE@;
+    border: 1px solid @BORDER@;
+    border-left: 0;
+    padding: 5px 13px;
+    margin: 0 0 8px 0;
     font-weight: 600;
+}
+
+QTabBar::tab:first, QTabBar::tab:only-one {
+    border-left: 1px solid @BORDER@;
+    border-top-left-radius: 7px;
+    border-bottom-left-radius: 7px;
+}
+
+QTabBar::tab:last, QTabBar::tab:only-one {
+    border-top-right-radius: 7px;
+    border-bottom-right-radius: 7px;
 }
 
 QTabBar::tab:hover {
     color: @TEXT@;
-    background-color: @SUBTLE@;
-    border-top-left-radius: 7px;
-    border-top-right-radius: 7px;
 }
 
 QTabBar::tab:selected {
-    color: @ACCENT@;
-    border-bottom-color: @ACCENT@;
+    color: @ACCENT_STRONG@;
+    background-color: @ACCENT_SOFT@;
 }
+
+QTabBar::tab:disabled {
+    color: @DISABLED_TEXT@;
+}
+
+/* ---------------------------------------------------- toolbars and menus */
 
 QToolBar {
     background-color: @SURFACE@;
@@ -383,11 +835,17 @@ QMenu::item:selected {
     background-color: @ACCENT_SOFT@;
 }
 
+QMenu::item:disabled {
+    color: @DISABLED_TEXT@;
+}
+
 QMenu::separator {
     background-color: @BORDER@;
     height: 1px;
     margin: 5px 8px;
 }
+
+/* ------------------------------------------------------- lists and tables */
 
 QAbstractItemView, QTableView, QTreeView, QListView, QTableWidget, QTreeWidget, ResultTable {
     color: @TEXT@;
@@ -407,7 +865,7 @@ QHeaderView::section {
     border: 0;
     border-right: 1px solid @BORDER@;
     border-bottom: 1px solid @BORDER@;
-    padding: 6px 8px;
+    padding: 5px 8px;
     font-weight: 600;
 }
 
@@ -429,6 +887,17 @@ QProgressBar {
 QProgressBar::chunk {
     background-color: @ACCENT@;
     border-radius: 5px;
+}
+
+/* a thin bar below a status line that carries the text */
+QProgressBar[thin="true"] {
+    min-height: 4px;
+    max-height: 4px;
+    border-radius: 2px;
+}
+
+QProgressBar[thin="true"]::chunk {
+    border-radius: 2px;
 }
 
 QScrollBar:vertical {
@@ -461,10 +930,18 @@ QScrollBar::add-page, QScrollBar::sub-page {
 }
 
 QSplitter::handle {
-    background-color: @BORDER@;
+    background-color: transparent;
 }
 
 QSplitter::handle:hover {
+    background-color: @ACCENT_SOFT@;
+}
+
+QSplitter#splitterMap::handle {
+    background-color: @BORDER@;
+}
+
+QSplitter#splitterMap::handle:hover {
     background-color: @ACCENT@;
 }
 
@@ -480,4 +957,52 @@ QToolTip {
     border: 1px solid @BORDER_HOVER@;
     border-radius: 6px;
     padding: 5px 7px;
+}
+
+/* ------------------------------------------------------ condition editor */
+
+QLabel#conditionQuestion {
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#conditionVersion, QLabel#conditionHint, QLabel#conditionChosenBrief,
+QLabel#conditionUnit {
+    color: @MUTED@;
+}
+
+/* the chosen type: a card above its settings */
+QFrame#conditionChosen {
+    background-color: @SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+}
+
+QLabel#conditionChosenName {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QLabel#conditionChosenWarning {
+    color: @DANGER@;
+    font-weight: 600;
+}
+
+/* the live sentence of the condition, right above the buttons */
+QLabel#conditionSummary {
+    color: @ACCENT_STRONG@;
+    background-color: @ACCENT_SOFT@;
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-weight: 600;
+}
+
+QTreeWidget#conditionTypes::item {
+    padding: 3px 2px;
+}
+
+/* the area shapes: a segmented choice inside the form, without the gap
+   below that the tab bars of pages keep */
+QTabBar#shapeBar::tab {
+    margin: 0;
 }

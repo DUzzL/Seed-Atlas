@@ -36,7 +36,7 @@ bool getLayerOptionInfo(LayerOptInfo *info, int mode, int disp, WorldInfo wi)
     if (nptype != -1 && disp >= 0)
     {
         BiomeNoise bn;
-        initBiomeNoise(&bn, wi.mc);
+        initBiomeNoiseEx(&bn, wi.mc, wi.amplified);
         setBiomeSeed(&bn, wi.seed, wi.large);
 
         DoublePerlinNoise *dpn = bn.climate + nptype;

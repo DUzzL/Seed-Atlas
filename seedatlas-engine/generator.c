@@ -89,7 +89,7 @@ void setupGenerator(Generator *g, int mc, uint32_t flags)
     }
     else if (mc >= MC_1_18)
     {
-        initBiomeNoise(&g->bn, mc);
+        initBiomeNoiseEx(&g->bn, mc, (flags & AMPLIFIED) != 0);
     }
     else
     {
@@ -607,6 +607,23 @@ int genArea(const Layer *layer, int *out, int areaX, int areaZ, int areaWidth, i
 }
 
 
+int mapReliefHeight(float *y, const Generator *g, const SurfaceNoise *sn,
+    ReliefNoise *rn, int x, int z, int w, int h)
+{
+    if (g->dim != DIM_OVERWORLD || g->mc < MC_1_18 || g->bn.nptype != -1)
+        return mapApproxHeight(y, NULL, g, sn, x, z, w, h);
+    if (g->bn.amplified && !rn)
+        return mapApproxHeight(y, NULL, g, sn, x, z, w, h); // the same heights
+    int64_t i, j;
+    for (j = 0; j < h; j++)
+    {
+        for (i = 0; i < w; i++)
+            y[j*w+i] = sampleBiomeNoiseRelief(&g->bn, rn, g->seed, x+i, z+j);
+    }
+    return 0;
+}
+
+
 int mapApproxHeight(float *y, int *ids, const Generator *g, const SurfaceNoise *sn,
     int x, int z, int w, int h)
 {
@@ -625,6 +642,25 @@ int mapApproxHeight(float *y, int *ids, const Generator *g, const SurfaceNoise *
         if (g->bn.nptype != -1 && g->bn.nptype != NP_DEPTH)
             return 1;
         int64_t i, j;
+        if (g->bn.amplified)
+        {   // In an Amplified world the depth says little about the surface
+            // (the 3D noise dominates), so this is the surface of the real
+            // terrain density. Its noises are seeded from g->seed, once per
+            // thread and seed. As below, a generator that is set to the depth
+            // parameter samples the climate without the shift.
+            const TerrainNoise *tn = getThreadTerrainNoise(g->seed);
+            uint32_t flags = g->bn.nptype == NP_DEPTH ? SAMPLE_NO_SHIFT : 0;
+            for (j = 0; j < h; j++)
+            {
+                for (i = 0; i < w; i++)
+                {
+                    y[j*w+i] = sampleTerrainSurface(&g->bn, tn, x+i, z+j, flags) + 0.5;
+                    if (ids)
+                        ids[j*w+i] = sampleBiomeNoise(&g->bn, NULL, x+i, 0, z+j, 0, 0);
+                }
+            }
+            return 0;
+        }
         if (!ids && g->bn.nptype == -1)
         {   // the depth only: no temperature, humidity or biome lookup
             for (j = 0; j < h; j++)

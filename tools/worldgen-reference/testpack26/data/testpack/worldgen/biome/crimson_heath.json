@@ -1,0 +1,10 @@
+{
+  "carvers": [],
+  "downfall": 0.45,
+  "effects": {
+    "water_color": "#4d7e65"
+  },
+  "features": [],
+  "has_precipitation": true,
+  "temperature": 0.75
+}

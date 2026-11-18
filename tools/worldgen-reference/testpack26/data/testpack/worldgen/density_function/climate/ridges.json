@@ -1,0 +1,16 @@
+{
+  "left": "testpack:ridges/spline",
+  "right": {
+    "left": -0.7,
+    "right": {
+      "left": 2.0,
+      "right": {
+        "input": "testpack:ridges/warped",
+        "type": "minecraft:abs"
+      },
+      "type": "minecraft:mul"
+    },
+    "type": "minecraft:add"
+  },
+  "type": "minecraft:add"
+}

@@ -76,7 +76,16 @@ CONFIG(debug, debug|release): {
 ENGINE_PATH         = $$PWD/seedatlas-engine
 ENGINE_ARCHIVER     =
 macx: ENGINE_ARCHIVER = AR=\"/usr/bin/libtool\" ARFLAGS=\"-static -o\"
-QMAKE_PRE_LINK      += $(MAKE) -C $$shell_quote($$ENGINE_PATH) -f $$shell_quote($$ENGINE_PATH/makefile) CC=\"$$QMAKE_CC\" CFLAGS=\"$(CFLAGS) $$QMAKE_CFLAGS\" $$ENGINE_ARCHIVER $$CUTARGET
+# The engine only needs the flags above (plus the architecture flags that the
+# compiler flags of macOS carry). On Windows the compiler flags also hold all
+# defines of the application, and MinGW's make crashes with an access
+# violation when the value of CFLAGS grows this long, so pass only those.
+win32 {
+    ENGINE_CFLAGS = $$QMAKE_CFLAGS
+} else {
+    ENGINE_CFLAGS = $(CFLAGS) $$QMAKE_CFLAGS
+}
+QMAKE_PRE_LINK      += $(MAKE) -C $$shell_quote($$ENGINE_PATH) -f $$shell_quote($$ENGINE_PATH/makefile) CC=\"$$QMAKE_CC\" CFLAGS=\"$$ENGINE_CFLAGS\" $$ENGINE_ARCHIVER $$CUTARGET
 QMAKE_CLEAN         += $$ENGINE_PATH/*.o $$ENGINE_PATH/libseedatlas-engine.a
 LIBS                += $$ENGINE_PATH/libseedatlas-engine.a -lm
 
@@ -158,8 +167,15 @@ SOURCES += \
         src/conditiondialog.cpp \
         src/config.cpp \
         src/configdialog.cpp \
+        src/datapackworld.cpp \
+        src/dpsearch.cpp \
+        src/dpmap.cpp \
+        src/dpcheck.cpp \
+        src/dpstructuresdialog.cpp \
+        src/formdpconditions.cpp \
         src/extgendialog.cpp \
         src/exportdialog.cpp \
+        src/conditiontext.cpp \
         src/formconditions.cpp \
         src/formgen48.cpp \
         src/formsearchcontrol.cpp \
@@ -177,28 +193,36 @@ SOURCES += \
         src/search.cpp \
         src/searchthread.cpp \
         src/tabbiomes.cpp \
+        src/tabdatapacks.cpp \
         src/tablocations.cpp \
+        src/tabportals.cpp \
+        src/eyesearchdriver.cpp \
+        src/eyesearchgpu.cpp \
         src/tabslime.cpp \
         src/tabstructures.cpp \
         src/terrainmap.cpp \
         src/mainwindow.cpp \
         src/main.cpp \
+        src/glyphs.cpp \
         src/util.cpp \
+        src/vanilladata.cpp \
         src/widgets.cpp \
         src/world.cpp \
         src/gpufilter.cpp
 
-# Experimental GPU prefilter: Metal on macOS, Vulkan (loaded at run time) on
-# Windows and Linux, none in WebAssembly. The kernels are generated from
-# src/gpufilter.comp with tools/gen-gpu-kernels.sh.
+# Experimental GPU prefilter and the GPU stage of the End portal eye search:
+# Metal on macOS, Vulkan (loaded at run time) on Windows and Linux, none in
+# WebAssembly. The kernels are generated from src/gpufilter.comp and
+# src/eyesearchgpu.comp with tools/gen-gpu-kernels.sh.
 macx {
-    OBJECTIVE_SOURCES += src/gpufilter_metal.mm
+    OBJECTIVE_SOURCES += src/gpufilter_metal.mm src/eyesearchgpu_metal.mm \
+        src/appactivity_mac.mm
     QMAKE_OBJECTIVE_CFLAGS += -fobjc-arc
     LIBS += -framework Metal -framework Foundation
 } else:wasm {
-    SOURCES += src/gpufilter_stub.cpp
+    SOURCES += src/gpufilter_stub.cpp src/eyesearchgpu_stub.cpp
 } else {
-    SOURCES += src/gpufilter_vulkan.cpp
+    SOURCES += src/gpufilter_vulkan.cpp src/eyesearchgpu_vulkan.cpp
     HEADERS += src/vkmini.h
     unix: LIBS += -ldl
 }
@@ -207,6 +231,8 @@ HEADERS += \
         src/gpufilter.h \
         src/gpufilter_backend.h \
         $$ENGINE_PATH/finders.h \
+        $$ENGINE_PATH/strongholds.h \
+        $$ENGINE_PATH/eyesearch.h \
         $$ENGINE_PATH/generator.h \
         $$ENGINE_PATH/layers.h \
         $$ENGINE_PATH/biomes.h \
@@ -245,8 +271,15 @@ HEADERS += \
         src/conditiondialog.h \
         src/config.h \
         src/configdialog.h \
+        src/datapackworld.h \
+        src/dpsearch.h \
+        src/dpmap.h \
+        src/dpcheck.h \
+        src/dpstructuresdialog.h \
+        src/formdpconditions.h \
         src/extgendialog.h \
         src/exportdialog.h \
+        src/conditiontext.h \
         src/formconditions.h \
         src/formgen48.h \
         src/formsearchcontrol.h \
@@ -266,13 +299,21 @@ HEADERS += \
         src/searchthread.h \
         src/seedtables.h \
         src/tabbiomes.h \
+        src/tabdatapacks.h \
         src/tablocations.h \
+        src/tabportals.h \
+        src/eyesearchdriver.h \
+        src/eyesearchgpu.h \
+        src/eyesearchgpu_backend.h \
         src/tabslime.h \
         src/tabstructures.h \
         src/terrainmap.h \
         src/mainwindow.h \
         src/mappingworkers.h \
+        src/appactivity.h \
+        src/glyphs.h \
         src/util.h \
+        src/vanilladata.h \
         src/widgets.h \
         src/world.h
 
@@ -295,6 +336,11 @@ FORMS += \
         src/tablocations.ui \
         src/tabstructures.ui
 
+# the MCP server (seed-atlas --mcp, see src/mcpserver.h)
+SOURCES += src/mcpserver.cpp src/mcptools.cpp src/mcpsearch.cpp src/mcpdatapacks.cpp \
+        src/mcpsettings.cpp
+HEADERS += src/mcpserver.h src/mcptools.h src/mcpsettings.h
+
 RESOURCES += \
         rc/icons.qrc \
         rc/style.qrc \
@@ -302,10 +348,18 @@ RESOURCES += \
         rc/qh.qrc
 
 
-# Desktop builds check the manually maintained GitHub release for updates.
+# Datapack worlds: the generator that is driven by the worldgen files of data
+# packs (src/datapack, namespace dp). Its sources include the engine headers
+# by their plain names. It is compiled with the flags above, i.e. without
+# fused multiply-adds, like the engine.
+INCLUDEPATH += $$ENGINE_PATH
+include(src/datapack/datapack.pri)
+
+# Desktop builds check the manually maintained GitHub release for updates and
+# can download the vanilla data of a version for datapack worlds.
 !wasm: {
     QT += network
-    DEFINES += "WITH_UPDATER=1"
+    DEFINES += "WITH_UPDATER=1" "WITH_NETWORK=1"
     SOURCES += src/updater.cpp
     HEADERS += src/updater.h
 }

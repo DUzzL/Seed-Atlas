@@ -20,6 +20,8 @@ class ItemDelegate : public QStyledItemDelegate
     Q_OBJECT
 
 public:
+    enum { TagRole = Qt::UserRole + 2, DisabledRole = Qt::UserRole + 3 };
+
     explicit ItemDelegate(QObject *parent = nullptr);
     virtual ~ItemDelegate();
 
@@ -49,6 +51,8 @@ public:
 
     QListWidgetItem *lockItem(QListWidgetItem *item);
     void setItemCondition(QListWidget *list, QListWidgetItem *item, Condition *cond);
+    // the plain sentences, icons and "#id" tags of the list
+    void refreshItemTexts();
     void editCondition(QListWidgetItem *item);
 
 signals:
@@ -85,6 +89,8 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    void setItemText(QListWidgetItem *item, const Condition& c,
+                     const std::vector<Condition>& all) const;
     void setupQuickFilters();
     void fillQuickWhat();
     void fillSavedMenu();

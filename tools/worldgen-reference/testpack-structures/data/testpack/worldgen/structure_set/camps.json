@@ -1,0 +1,29 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 1002,
+    "spacing": 14,
+    "separation": 5,
+    "spread_type": "triangular",
+    "frequency": 0.5,
+    "frequency_reduction_method": "legacy_type_1",
+    "exclusion_zone": {
+      "other_set": "testpack:towers",
+      "chunk_count": 2
+    }
+  },
+  "structures": [
+    {
+      "structure": "testpack:camp_a",
+      "weight": 2
+    },
+    {
+      "structure": "testpack:camp_b",
+      "weight": 1
+    },
+    {
+      "structure": "testpack:keep",
+      "weight": 1
+    }
+  ]
+}

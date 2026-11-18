@@ -1,0 +1,29 @@
+{
+  "input": {
+    "axis": "y",
+    "coordinate": 0,
+    "input": {
+      "input": {
+        "input": {
+          "left": {
+            "type": "minecraft:blend_alpha"
+          },
+          "right": {
+            "left": {
+              "left": 0.8,
+              "right": "minecraft:overworld/offset",
+              "type": "minecraft:mul"
+            },
+            "right": "testpack:depth/terrace",
+            "type": "minecraft:add"
+          },
+          "type": "minecraft:mul"
+        },
+        "type": "minecraft:cache"
+      },
+      "type": "minecraft:cache"
+    },
+    "type": "minecraft:slice"
+  },
+  "type": "minecraft:cache"
+}

@@ -7,6 +7,7 @@
 #include <QAbstractButton>
 
 #include "config.h"
+#include "mcpsettings.h"
 
 namespace Ui {
 class ConfigDialog;
@@ -44,6 +45,7 @@ private:
 private:
     Ui::ConfigDialog *ui;
     QCheckBox *checkGpu;
+    McpSettingsPage mcpPage;
     Config conf;
 };
 

@@ -1,5 +1,7 @@
 #include "world.h"
 #include "config.h"
+#include "datapackworld.h"
+#include "dpmap.h"
 
 #include "terrainmap.h"
 #include "util.h"
@@ -12,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace {
 
@@ -286,7 +289,8 @@ QStringList VarPos::detail() const
 Quad::Quad(const Level* l, int64_t i, int64_t j)
     : wi(l->wi),dim(l->dim),lopt(l->lopt),g(&l->g),sn(&l->sn),highres(l->highres),scale(l->scale)
     , ti(i),tj(j),blocks(l->blocks),pixs(l->pixs),sopt(l->sopt),biomeHighlights(l->world->biomeHighlights)
-    , biomes(),img(),spos()
+    , dpHighlights(l->world->dpHighlights)
+    , biomes(),dpMask(l->dpMask),img(),spos()
 {
     isdel = l->isdel;
     setAutoDelete(false);
@@ -303,6 +307,7 @@ Quad::~Quad()
     if (biomes) free(biomes);
     delete img;
     delete spos;
+    delete dpstarts;
 }
 
 uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
@@ -320,7 +325,7 @@ uint64_t getStructs(std::vector<VarPos> *out, const StructureConfig sconf,
     Generator g;
     if (!nogen)
     {
-        setupGenerator(&g, wi.mc, wi.large);
+        setupGenerator(&g, wi.mc, wi.genFlags());
         applySeed(&g, dim, wi.seed);
     }
     // the terrain test of End cities needs the End surface noise, which does
@@ -429,11 +434,18 @@ void applyHeightShading(unsigned char *rgb, Range r,
     std::vector<float> height;
     if (!sampleHeightGrid(height, r, g, sn, stepbits, bicubic, abort))
         return;
-    shadeHeights(rgb, r, height, mode);
+    shadeHeights(rgb, r, height, mode, heightGrayTop(g));
+}
+
+float heightGrayTop(const Generator *g)
+{
+    if (g->mc >= MC_1_18 && g->dim == DIM_OVERWORLD && (g->flags & AMPLIFIED))
+        return 320;
+    return 255;
 }
 
 void shadeHeights(unsigned char *rgb, Range r, const std::vector<float>& height,
-        int mode)
+        int mode, float graytop)
 {
     int w = r.sx, h = r.sz;
     // apply shading based on height changes
@@ -463,7 +475,9 @@ void shadeHeights(unsigned char *rgb, Range r, const std::vector<float>& height,
                     col[0] = 0xff; col[1] = col[2] = 0;
                     continue;
                 }
-                float v = t11;
+                // one gray level per block, unless the terrain can be
+                // taller than that shows
+                float v = graytop > 255 ? t11 * (255.0f / graytop) : t11;
                 uchar c = (v <= 0) ? 0 : (v > 0xff) ? 0xff : (uchar)(v);
                 col[0] = col[1] = col[2] = c;
                 continue;
@@ -489,10 +503,72 @@ void shadeHeights(unsigned char *rgb, Range r, const std::vector<float>& height,
     }
 }
 
+// The image of a tile of a datapack world: the colours of the packs' biomes,
+// with the same highlight as the built-in biome map, and for the height and
+// terrain layers the heights of the tile (see Quad::run()).
+static QImage *renderDatapackImage(const DatapackWorld& world, const Quad& q)
+{
+    const int *biomes = q.biomes;
+    const int w = q.r.sx, h = q.r.sz;
+    const DatapackHighlights& highlights = q.dpHighlights;
+    const std::vector<QRgb>& colors = world.colors;
+    const int count = (int) colors.size();
+    const bool highlight = highlights && !highlights->empty();
+    const int marked = highlight ? (int) highlights->size() : 0;
+    const size_t npix = size_t(w) * size_t(h);
+    std::vector<uchar> rgb(npix * 3);
+    for (size_t i = 0; i < npix; i++)
+    {
+        const int id = biomes[i];
+        // no biome here (outside of the dimension's height): a dark neutral
+        const QRgb col = id >= 0 && id < count ? colors[id] : qRgb(16, 18, 17);
+        rgb[3*i+0] = qRed(col);
+        rgb[3*i+1] = qGreen(col);
+        rgb[3*i+2] = qBlue(col);
+    }
+    const bool heights = !q.dpFloor.empty();
+    if (q.lopt.mode == LOPT_TERRAIN && heights)
+        dpTerrainStyle(rgb.data(), world, biomes, q.r.x, q.r.z, w, h, q.scale, q.wi.seed,
+            q.dpFloor, q.dpSurface);
+    if (highlight)
+    {
+        for (size_t i = 0; i < npix; i++)
+        {
+            const int id = biomes[i];
+            uchar *col = &rgb[3*i];
+            if (id >= 0 && id < marked && (*highlights)[id])
+            {   // as in Quad::renderImage(): vivid and slightly brighter
+                for (int k = 0; k < 3; k++)
+                    col[k] = (uchar) std::min(255, 24 + (int) col[k]);
+            }
+            else
+            {
+                int gray = (54*col[0] + 183*col[1] + 19*col[2]) >> 8;
+                gray = 18 + gray / 5;
+                col[0] = col[1] = col[2] = (uchar) gray;
+            }
+        }
+    }
+    if (q.lopt.mode == LOPT_HEIGHT && heights)
+        dpShadeHeights(rgb.data(), w, h, q.scale, q.dpFloor, q.lopt.disp[LOPT_HEIGHT],
+            world.minY(), world.maxY(), q.wi.y);
+    QImage *image = new QImage(w, h, QImage::Format_RGB32);
+    for (int j = 0; j < h; j++)
+    {
+        QRgb *line = reinterpret_cast<QRgb*>(image->scanLine(j));
+        const uchar *src = &rgb[size_t(3) * size_t(j) * size_t(w)];
+        for (int i = 0; i < w; i++, src += 3)
+            line[i] = qRgb(src[0], src[1], src[2]);
+    }
+    return image;
+}
+
 QImage *Quad::renderImage()
 {
     if (!biomes)
         return nullptr;
+    if (wi.dp)
+        return renderDatapackImage(*wi.dp, *this);
     const size_t npix = size_t(r.sx) * size_t(r.sz);
     std::vector<uchar> rgbbuf(npix * 3);
     uchar *rgb = rgbbuf.data();
@@ -522,7 +598,7 @@ QImage *Quad::renderImage()
                 // At 1:1 the heights come from the 1:4 grid, interpolated smoothly.
                 bool fine = dim == DIM_OVERWORLD && r.scale == 1;
                 int stepbits = fine ? 2 : scale >= 16 ? 1 : 0;
-                if (!sampleHeightGrid(terrainHeight, r, g, sn, stepbits, fine, isdel))
+                if (!sampleHeightGrid(terrainHeight, r, g, sn, stepbits, fine, isdel, true))
                     return nullptr;
             }
             terrainSampled = true;
@@ -601,7 +677,7 @@ QImage *Quad::renderImage()
                     return nullptr;
                 shadeSampled = true;
             }
-            shadeHeights(rgb, r, shadeHeight, lopt.disp[lopt.mode]);
+            shadeHeights(rgb, r, shadeHeight, lopt.disp[lopt.mode], heightGrayTop(g));
         }
     }
 
@@ -634,7 +710,45 @@ void Quad::run()
         return;
     }
 
-    if (pixs > 0)
+    if (pixs > 0 && wi.dp)
+    {
+        // A datapack world: the biomes come from the datapack generator, as
+        // indices of the world's own biomes. Its levels are in blocks at
+        // every scale.
+        int x = ti*pixs, z = tj*pixs, w = pixs, h = pixs;
+        r = {scale, x, z, w, h, wi.y, 1};
+        dp::Sampler *sampler = datapackSampler(wi.dp, wi.seed);
+        int *ids = (int*) malloc(sizeof(int) * size_t(w) * size_t(h));
+        if (!sampler || !ids)
+        {
+            free(ids);
+            return;
+        }
+        if (!sampler->genBiomes(ids, scale, x, z, w, h, wi.y, isdel) || *isdel)
+        {   // interrupted: the tile is generated again
+            free(ids);
+            return;
+        }
+        // the height layers: the heights are sampled here, once, so that
+        // recolouring (on the GUI thread) only colours
+        if ((lopt.mode == LOPT_HEIGHT || lopt.mode == LOPT_TERRAIN) && sampler->hasTerrain())
+        {
+            const int top = dpHeightTop(*wi.dp, wi.y);
+            const bool ok = lopt.mode == LOPT_TERRAIN
+                ? dpTileBothHeights(sampler, scale, x, z, w, h, top, &dpFloor, &dpSurface, isdel)
+                : dpTileHeights(sampler, scale, x, z, w, h, dp::HEIGHT_OCEAN_FLOOR, top, &dpFloor, isdel);
+            if (!ok || *isdel)
+            {
+                free(ids);
+                dpFloor.clear();
+                dpSurface.clear();
+                return;
+            }
+        }
+        biomes = ids;
+        img = renderImage();
+    }
+    else if (pixs > 0)
     {
         if ((lopt.mode == LOPT_STRUCTS && dim == DIM_OVERWORLD) ||
             (g->mc <= MC_1_17 && scale > 256 && dim == DIM_OVERWORLD))
@@ -673,6 +787,29 @@ void Quad::run()
             return;
         }
         img = image;
+    }
+    else if (pixs < 0 && sopt == D_DATAPACK_STRUCTS)
+    {
+        // the structure starts of a datapack world: all of the tile, the map
+        // only filters what it shows
+        if (!wi.dp || !wi.dp->usable())
+        {
+            dpstarts = new std::vector<dp::StructureStart>();
+            done = true;
+            return;
+        }
+        DpFinderLease finder(wi.dp, wi.seed, isdel);
+        if (!finder.get())
+            return; // interrupted: the tile is generated again
+        const int x0 = ti*blocks, z0 = tj*blocks;
+        std::vector<dp::StructureStart> *st = new std::vector<dp::StructureStart>();
+        if (!dpStartsInArea(finder.get(), x0, z0, x0 + blocks - 1, z0 + blocks - 1,
+                dpMask.get(), false, st, isdel) || *isdel)
+        {
+            delete st;
+            return;
+        }
+        dpstarts = st;
     }
     else if (pixs < 0)
     {
@@ -714,7 +851,7 @@ Level::Level()
     : cells(),g(),sn(),entry(),lopt(),wi(),dim()
     , tx(),tz(),tw(),th()
     , highres(),scale(),blocks(),pixs()
-    , sopt()
+    , sopt(),vis(1),isdel()
 {
 }
 
@@ -778,12 +915,12 @@ void Level::init4map(QWorld *w, int pix, int layerscale)
 
     if (lopt.mode == LOPT_RIVER_4 && wi.mc >= MC_1_13 && wi.mc <= MC_1_17)
     {
-        setupGenerator(&g, wi.mc, wi.large);
+        setupGenerator(&g, wi.mc, wi.genFlags());
         g.ls.entry_4 = &g.ls.layers[L_RIVER_MIX_4];
     }
     else if (lopt.mode == LOPT_OCEAN_256 && wi.mc >= MC_1_13 && wi.mc <= MC_1_17)
     {
-        setupGenerator(&g, wi.mc, wi.large);
+        setupGenerator(&g, wi.mc, wi.genFlags());
         g.ls.entry_256 = &g.ls.layers[L_OCEAN_TEMP_256];
     }
     else if (lopt.mode == LOPT_NOOCEAN_1 && wi.mc <= MC_B1_7)
@@ -792,7 +929,7 @@ void Level::init4map(QWorld *w, int pix, int layerscale)
     }
     else
     {
-        setupGenerator(&g, wi.mc, wi.large | FORCE_OCEAN_VARIANTS);
+        setupGenerator(&g, wi.mc, wi.genFlags() | FORCE_OCEAN_VARIANTS);
     }
 
     applySeed(&g, dim, wi.seed);
@@ -835,6 +972,20 @@ void Level::init4struct(QWorld *w, int sopt)
     this->sopt = sopt;
     this->lopt = w->lopt;
     this->vis = 1.0 / w->mconfig.scale(sopt);
+    this->isdel = &w->isdel;
+}
+
+void Level::init4datapack(QWorld *w)
+{
+    this->world = w;
+    this->wi = w->wi;
+    this->dim = DIM_OVERWORLD;
+    this->blocks = DP_STRUCT_TILE;
+    this->pixs = -1;
+    this->scale = -1;
+    this->sopt = D_DATAPACK_STRUCTS;
+    this->lopt = w->lopt;
+    this->vis = 1.0 / DP_STRUCT_MAX_SCALE;
     this->isdel = &w->isdel;
 }
 
@@ -1002,7 +1153,7 @@ QWorld::QWorld(WorldInfo wi, int dim, LayerOpt lopt)
     , selvp(Pos{0,0}, -1)
     , qual()
 {
-    setupGenerator(&g, wi.mc,  wi.large);
+    setupGenerator(&g, wi.mc,  wi.genFlags());
 
     memlimit = 512ULL * 1024*1024;
     for (MapWorker& w : workers)
@@ -1020,6 +1171,13 @@ QWorld::QWorld(WorldInfo wi, int dim, LayerOpt lopt)
     for (int opt = D_DESERT; opt < D_SPAWN; opt++)
         if (mconfig.enabled(opt))
             lvs[opt].init4struct(this, opt);
+    if (wi.dp && wi.dp->usable())
+    {
+        lvdp.init4datapack(this);
+        dpCatalog = dpStructureCatalog(wi.dp);
+        if (dpCatalog)
+            dpShow.assign(dpCatalog->entries.size(), 0);
+    }
     memset(sshow, 0, sizeof(sshow));
 }
 
@@ -1118,6 +1276,7 @@ void QWorld::setSelectPos(QPoint pos)
     selz = pos.y();
     seldo = true;
     selopt = D_NONE;
+    dpSelected = false;
 }
 
 int QWorld::getBiome(Pos p)
@@ -1144,8 +1303,40 @@ int QWorld::getBiome(Pos p)
     return id;
 }
 
+int QWorld::getDatapackBiome(Pos p)
+{
+    if (!wi.dp || !wi.dp->usable())
+        return -1;
+    int scale = 1;
+    if (activelv >= 0 && activelv < (int)lvb.size())
+    {
+        const auto floorDiv = [](int value, int divisor) {
+            int quotient = value / divisor;
+            return quotient - (value % divisor < 0);
+        };
+        scale = lvb[activelv].blocks / lvb[activelv].pixs;
+        p.x = floorDiv(p.x, scale);
+        p.z = floorDiv(p.z, scale);
+    }
+    if (!dpCursor)
+        dpCursor.reset(new dp::Sampler(wi.dp->world, wi.dp->dimension, wi.seed));
+    return dpCursor->valid() ? dpCursor->biomeAt(scale, p.x, wi.y, p.z) : -1;
+}
+
 QString QWorld::getBiomeName(Pos p)
 {
+    if (wi.dp)
+    {
+        const int id = getDatapackBiome(p);
+        QString name = id >= 0 && id < (int) wi.dp->labels.size() ? wi.dp->labels[id] : QString();
+        if (!name.isEmpty() && (lopt.mode == LOPT_HEIGHT || lopt.mode == LOPT_TERRAIN))
+        {
+            const int y = getDatapackHeight(p);
+            if (y != dp::NO_HEIGHT)
+                name = QString::asprintf("Y %d ", y) + name;
+        }
+        return name;
+    }
     if (dim == 0 && lopt.mode == LOPT_STRUCTS)
         return "";
     int id = getBiome(p);
@@ -1182,6 +1373,53 @@ QString QWorld::getBiomeName(Pos p)
     return ret;
 }
 
+void QWorld::setDatapackShow(const std::vector<char>& show)
+{
+    dpShow = show;
+    dpShowAny = std::find(show.begin(), show.end(), 1) != show.end();
+    bool more = false;
+    const std::vector<char> *made = lvdp.dpMask.get();
+    for (size_t i = 0; i < show.size() && !more; i++)
+        more = show[i] && (!made || i >= made->size() || !(*made)[i]);
+    if (!more)
+        return; // the tiles have all that is shown
+    // the tiles of the structure level are made again, for what is shown now
+    clear();
+    mutex.lock();
+    for (Quad *&q : cachedstruct)
+    {
+        if (q && q->sopt == D_DATAPACK_STRUCTS)
+        {
+            delete q;
+            q = nullptr;
+        }
+    }
+    rebuildCacheIndex(cachedstruct);
+    mutex.unlock();
+    lvdp.dpMask = std::make_shared<const std::vector<char>>(show);
+}
+
+int QWorld::getDatapackHeight(Pos p)
+{
+    if (!wi.dp || !wi.dp->usable())
+        return dp::NO_HEIGHT;
+    if (!dpCursor)
+        dpCursor.reset(new dp::Sampler(wi.dp->world, wi.dp->dimension, wi.seed));
+    if (!dpCursor->valid() || !dpCursor->hasTerrain())
+        return dp::NO_HEIGHT;
+    // the column the map shows at this zoom (the lowest corner of the pixel)
+    int scale = 1;
+    if (activelv >= 0 && activelv < (int)lvb.size())
+        scale = lvb[activelv].blocks / lvb[activelv].pixs;
+    const auto floorTo = [scale](int v) {
+        int q = v / scale - ((v % scale != 0) && (v < 0));
+        return q * scale;
+    };
+    // (with the aquifers and the surface rules at every zoom: one column)
+    return dpCursor->surfaceHeight(floorTo(p.x), floorTo(p.z), dp::HEIGHT_OCEAN_FLOOR,
+        dpHeightTop(*wi.dp, wi.y), dp::HEIGHTS_SURFACE);
+}
+
 int QWorld::estimateSurface(Pos p)
 {
     float y = 0;
@@ -1209,6 +1447,7 @@ void QWorld::recolorCachedQuads()
     {
         if (!q) continue;
         q->biomeHighlights = biomeHighlights;
+        q->dpHighlights = dpHighlights;
         if (q->done)
             q->recolor = true;
     }
@@ -1242,6 +1481,32 @@ void QWorld::setBiomeHighlights(const QVector<int>& biomeIds)
     recolorCachedQuads();
 }
 
+void QWorld::setDatapackHighlights(const std::vector<int>& biomes)
+{
+    DatapackHighlights highlights;
+    if (wi.dp && wi.dp->world && !biomes.empty())
+    {
+        std::vector<char> flags(wi.dp->world->biomes().size(), 0);
+        bool any = false;
+        for (int biome : biomes)
+        {
+            if (biome >= 0 && biome < (int) flags.size())
+            {
+                flags[biome] = 1;
+                any = true;
+            }
+        }
+        if (any)
+            highlights = std::make_shared<const std::vector<char>>(std::move(flags));
+    }
+    const bool same = (!highlights && !dpHighlights)
+        || (highlights && dpHighlights && *highlights == *dpHighlights);
+    if (same)
+        return;
+    dpHighlights = highlights;
+    recolorCachedQuads();
+}
+
 void QWorld::clear()
 {
     mutex.lock();
@@ -1270,6 +1535,7 @@ void QWorld::clear()
         l.setInactive(cachedbiomes);
     for (Level& l : lvs)
         l.setInactive(cachedstruct);
+    lvdp.setInactive(cachedstruct);
     for (Quad *q : cachedbiomes)
     {
         if (!q) continue;
@@ -1484,7 +1750,7 @@ struct SpawnStronghold : public Scheduled
     void run()
     {
         Generator g;
-        setupGenerator(&g, wi.mc, wi.large);
+        setupGenerator(&g, wi.mc, wi.genFlags());
         applySeed(&g, 0, wi.seed);
 
         Pos *p = new Pos;
@@ -1572,9 +1838,14 @@ static bool draw_grid_rec(QPainter& painter, QColor col, QRect &rec, qreal pix, 
         !visible.contains(textrec) || textrec.width() + gap > visible.width())
         return false;
 
-    painter.fillRect(textrec, QBrush(QColor(0, 0, 0, 128), Qt::SolidPattern));
+    // a small translucent chip instead of a hard black box
+    const QRectF chip = QRectF(textrec).adjusted(-3, 0, 3, 0);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 0, 0, 92));
+    painter.drawRoundedRect(chip, 3, 3);
+    painter.setBrush(Qt::NoBrush);
 
-    painter.setPen(QColor(255, 255, 255));
+    painter.setPen(QColor(255, 255, 255, 225));
     painter.drawText(textrec, s);
     return true;
 }
@@ -1986,6 +2257,68 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
             painter.drawPixmapFragments(it.second.data(), it.second.size(), *it.first);
     }
 
+    // the structures of a datapack world: unknown starts first, faded, so
+    // that the valid ones are drawn on top of them
+    if (wi.dp && dpCatalog && dpShowAny && lvdp.vis <= blocks2pix)
+    {
+        const std::vector<DpStructureEntry>& entries = dpCatalog->entries;
+        for (int pass = 0; pass < 2; pass++)
+        {
+            const bool unknownPass = pass == 0;
+            std::map<const QPixmap*, std::vector<QPainter::PixmapFragment>> frags;
+            // where a structure is dense at this zoom, one marker per spot
+            std::unordered_set<uint64_t> spots;
+            for (Quad *q : lvdp.cells)
+            {
+                const std::vector<dp::StructureStart> *starts = q->dpstarts;
+                if (!starts)
+                    continue;
+                for (const dp::StructureStart& st : *starts)
+                {
+                    if ((st.state == dp::StructureStart::Unknown) != unknownPass)
+                        continue;
+                    if (st.structure < 0 || st.structure >= (int) entries.size()
+                            || st.structure >= (int) dpShow.size() || !dpShow[st.structure])
+                        continue;
+                    const QPixmap& icon = dpStructureIcon(entries[st.structure], unknownPass);
+                    const QSizeF isz = icon.deviceIndependentSize();
+                    const qreal x = vw/2.0 + (st.x - focusx) * blocks2pix;
+                    const qreal y = vh/2.0 + (st.z - focusz) * blocks2pix;
+                    if (x < -isz.width() || x >= vw + isz.width() ||
+                        y < -isz.height() || y >= vh + isz.height())
+                        continue;
+                    const QPointF d(x, y);
+                    const double cell = std::max(4.0, isz.width() * 0.9);
+                    const uint64_t spot = (uint64_t(uint32_t(st.structure)) << 42)
+                        ^ (uint64_t(uint32_t(int(std::floor(x / cell)) & 0x1fffff)) << 21)
+                        ^ uint64_t(uint32_t(int(std::floor(y / cell)) & 0x1fffff));
+                    if (!spots.insert(spot).second)
+                        continue;
+                    if (seldo)
+                    {
+                        QRectF r(QPointF(0, 0), isz);
+                        r.moveCenter(d);
+                        if (r.contains(selx, selz))
+                        {
+                            dpSelected = true;
+                            dpSel = st;
+                            selopt = D_NONE;
+                        }
+                    }
+                    if (dpSelected && dpSel.structure == st.structure && dpSel.x == st.x
+                            && dpSel.z == st.z && dpSel.chunkX == st.chunkX && dpSel.chunkZ == st.chunkZ)
+                        continue; // drawn as the selection
+                    QRectF source(QPointF(0, 0), QSizeF(icon.size()));
+                    QPainter::PixmapFragment f = QPainter::PixmapFragment::create(d, source,
+                        1.0 / icon.devicePixelRatio(), 1.0 / icon.devicePixelRatio());
+                    frags[&icon].push_back(f);
+                }
+            }
+            for (auto& it : frags)
+                painter.drawPixmapFragments(it.second.data(), it.second.size(), *it.first);
+        }
+    }
+
     Pos* sp = spawn; // atomic fetch
     if (sp && sp != (Pos*)-1 && sshow[D_SPAWN] && dim == 0 && lopt.mode != LOPT_STRUCTS)
     {
@@ -2042,6 +2375,10 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
         else if (l.vis * 4 > blocks2pix)
             l.setInactive(cachedstruct);
     }
+    if (wi.dp && dpShowAny && lvdp.vis <= blocks2pix)
+        lvdp.update(cachedstruct, bx0, bz0, bx1, bz1, motionx, motionz);
+    else if (wi.dp)
+        lvdp.setInactive(cachedstruct);
     for (int li = lvb.size()-1; li >= 0; --li)
     {
         Level& l = lvb[li];
@@ -2051,7 +2388,9 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
             l.setInactive(cachedbiomes);
     }
 
-    if (spawn == NULL && lopt.mode != LOPT_STRUCTS)
+    // (spawn, strongholds and quad structures come from the built-in
+    // generator: a datapack world has none of them)
+    if (spawn == NULL && lopt.mode != LOPT_STRUCTS && !wi.dp)
     {   // start the spawn and stronghold worker thread if this is the first run
         if (sshow[D_SPAWN] || sshow[D_STRONGHOLD] || (showBB && blocks2pix >= 1.0))
         {
@@ -2118,6 +2457,68 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
         }
     }
 
+    if (dpSelected && dpCatalog && dpSel.structure >= 0
+        && dpSel.structure < (int) dpCatalog->entries.size())
+    {   // the selected structure of a datapack world, with what is known of it
+        const DpStructureEntry& e = dpCatalog->entries[dpSel.structure];
+        const bool unknown = dpSel.state == dp::StructureStart::Unknown;
+        const QPixmap& icon = dpStructureIcon(e, unknown);
+        const QSizeF isz = icon.deviceIndependentSize();
+        qreal x = vw/2.0 + (dpSel.x - focusx) * blocks2pix;
+        qreal y = vh/2.0 + (dpSel.z - focusz) * blocks2pix;
+        const qreal w = isz.width() * 1.49, h = isz.height() * 1.49;
+        painter.drawPixmap(QRectF(x-w/2, y-h/2, w, h), icon, QRectF(QPointF(0, 0), QSizeF(icon.size())));
+
+        // a card beside the marker (the corners of the map hold the world
+        // card and the status strip): name and position, then what it is
+        // and whether it starts there
+        QFont f = QFont();
+        f.setBold(true);
+        const QFontMetrics tfm(f);
+        QFont small = QFont();
+        small.setPointSize(std::max(8, small.pointSize() - 2));
+        const QFontMetrics sfm(small);
+        const QString title = QString("%1   %2, %3").arg(e.name).arg(dpSel.x).arg(dpSel.z);
+        QStringList info;
+        info << e.id << e.pack;
+        if (!e.type.isEmpty())
+            info << e.type;
+        QString state = dpStartStateText(dpSel);
+        if (dpSel.hasY)
+            state += QString("  y %1").arg(dpSel.y);
+        else if (dpSel.estimatedY)
+            state += QString("  y ~%1").arg(dpSel.y);
+        const QString line2 = info.join("  \u00b7  ");
+        const int pad = 7;
+        const int cw = std::max({tfm.horizontalAdvance(title), sfm.horizontalAdvance(line2),
+            sfm.horizontalAdvance(state)}) + 2 * pad;
+        const int ch = tfm.height() + 2 * sfm.height() + 4 + 2 * pad;
+        qreal cx = x + w / 2 + 8, cy = y - ch / 2.0;
+        if (cx + cw > vw - 4)
+            cx = x - w / 2 - 8 - cw;   // left of the marker
+        cx = std::clamp<qreal>(cx, 4, std::max<qreal>(4, vw - cw - 4));
+        cy = std::clamp<qreal>(cy, 64, std::max<qreal>(64, vh - ch - 60));
+        const QRectF card(cx, cy, cw, ch);
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(20, 22, 26, 215));
+        painter.drawRoundedRect(card, 6, 6);
+        painter.setFont(f);
+        painter.setPen(QColor(255, 255, 255));
+        painter.drawText(QRectF(cx + pad, cy + pad, cw - 2 * pad, tfm.height()),
+            Qt::AlignLeft | Qt::AlignVCenter, title);
+        painter.setFont(small);
+        painter.setPen(QColor(220, 224, 230));
+        painter.drawText(QRectF(cx + pad, cy + pad + tfm.height() + 2, cw - 2 * pad, sfm.height()),
+            Qt::AlignLeft | Qt::AlignVCenter, line2);
+        painter.setPen(unknown ? QColor(255, 214, 120) : QColor(150, 230, 160));
+        painter.drawText(QRectF(cx + pad, cy + pad + tfm.height() + sfm.height() + 4, cw - 2 * pad,
+            sfm.height()), Qt::AlignLeft | Qt::AlignVCenter, state);
+        painter.restore();
+        painter.setFont(oldfont);
+    }
+
     if (activelv < 0)
         activelv = 0;
     if (activelv >= (int)lvb.size()-1)
@@ -2127,18 +2528,11 @@ void QWorld::draw(QPainter& painter, int vw, int vh, qreal focusx, qreal focusz,
     // that keep heights (terrain, height shading, End land)
     unsigned int pixbytes = (lopt.mode == LOPT_TERRAIN || lopt.mode == LOPT_HEIGHT ||
         dim == DIM_END) ? 4+4+4 : 4+4;
+    // datapack worlds keep the heights as ints, both kinds for the terrain
+    if (wi.dp && lopt.mode == LOPT_TERRAIN)
+        pixbytes = 4+4+4+4;
     unsigned int cachesize = memlimit / pixs / pixs / pixbytes;
 
     cleancache(cachedbiomes, cachesize);
     cleancache(cachedstruct, cachesize);
-
-    if (0)
-    {   // debug outline
-        qreal rx0 = vw/2.0 + (bx0 - focusx) * blocks2pix;
-        qreal rz0 = vh/2.0 + (bz0 - focusz) * blocks2pix;
-        qreal rx1 = vw/2.0 + (bx1 - focusx) * blocks2pix;
-        qreal rz1 = vh/2.0 + (bz1 - focusz) * blocks2pix;
-        painter.setPen(QPen(QColor(255, 0, 0, 255), 1));
-        painter.drawRect(QRect(rx0, rz0, rx1-rx0, rz1-rz0));
-    }
 }

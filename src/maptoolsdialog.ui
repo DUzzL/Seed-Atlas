@@ -3,7 +3,7 @@
  <class>MapToolsDialog</class>
  <widget class="QDialog" name="MapToolsDialog">
   <property name="windowTitle">
-   <string>Toolbar Tools</string>
+   <string>Map buttons</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">
@@ -52,7 +52,7 @@
        <item row="2" column="2">
         <widget class="QLabel" name="label_4">
          <property name="text">
-          <string>Zoom In/Out</string>
+          <string>Zoom in/out buttons</string>
          </property>
         </widget>
        </item>
@@ -64,8 +64,11 @@
            <verstretch>0</verstretch>
           </sizepolicy>
          </property>
+         <property name="toolTip">
+          <string>Icons are hidden when the map shows more blocks per pixel than this, so zoomed-out maps stay readable</string>
+         </property>
          <property name="text">
-          <string>Maximum visible scale
+          <string>Show icons up to
 (blocks per pixel)</string>
          </property>
         </widget>
@@ -80,7 +83,7 @@
        <item row="0" column="0" colspan="3">
         <widget class="QLabel" name="label">
          <property name="text">
-          <string>Enabled tools</string>
+          <string>Show button</string>
          </property>
         </widget>
        </item>

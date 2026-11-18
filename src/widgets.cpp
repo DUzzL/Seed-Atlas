@@ -2,6 +2,7 @@
 
 #include "util.h"
 
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QBoxLayout>
 #include <QFont>
@@ -11,6 +12,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QListWidgetItem>
 #include <QListView>
 #include <QMouseEvent>
@@ -28,10 +30,13 @@
 #include <QStyleOptionSlider>
 #include <QStylePainter>
 #include <QTextEdit>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include <QSet>
+
+#include <cmath>
 
 namespace {
 
@@ -46,61 +51,418 @@ QString compactToolbarLabel(const QAction *action)
     return text;
 }
 
+// Draws one chrome glyph on a 20x20 unit canvas.
+void drawChromeGlyph(QPainter& p, const QString& kind, const QColor& color)
+{
+    QPen pen(color, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+
+    if (kind == "search")
+    {
+        p.drawEllipse(QPointF(8.6, 8.6), 5.1, 5.1);
+        p.setPen(QPen(color, 2.2, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(12.5, 12.5), QPointF(16.6, 16.6));
+    }
+    else if (kind == "biomes")
+    {   // four patches of land, like a small map
+        for (const QRectF& r : {QRectF(3, 3, 6, 6), QRectF(11, 3, 6, 6),
+                                QRectF(3, 11, 6, 6), QRectF(11, 11, 6, 6)})
+            p.drawRoundedRect(r, 1.6, 1.6);
+        p.setPen(Qt::NoPen);
+        p.setBrush(color);
+        p.drawRoundedRect(QRectF(11, 3, 6, 6), 1.6, 1.6);
+        p.drawRoundedRect(QRectF(3, 11, 6, 6), 1.6, 1.6);
+    }
+    else if (kind == "structures")
+    {   // a house
+        p.drawPolyline(QPolygonF({QPointF(2.8, 9.6), QPointF(10, 3.4), QPointF(17.2, 9.6)}));
+        p.drawPolyline(QPolygonF({QPointF(4.8, 8.4), QPointF(4.8, 16.6),
+                                  QPointF(15.2, 16.6), QPointF(15.2, 8.4)}));
+        p.drawPolyline(QPolygonF({QPointF(8.4, 16.6), QPointF(8.4, 12.2),
+                                  QPointF(11.6, 12.2), QPointF(11.6, 16.6)}));
+    }
+    else if (kind == "slime")
+    {   // a slime cube with a face
+        p.drawRoundedRect(QRectF(3.2, 4.2, 13.6, 12.6), 3.2, 3.2);
+        p.setPen(Qt::NoPen);
+        p.setBrush(color);
+        p.drawRect(QRectF(6.6, 8.2, 2.4, 2.4));
+        p.drawRect(QRectF(11.0, 8.2, 2.4, 2.4));
+        p.drawRect(QRectF(9.0, 12.6, 2.0, 1.6));
+    }
+    else if (kind == "eye")
+    {   // The End Portals tool: an eye of ender as a small pixel-art orb. A
+        // stepped round rim, a dim body, a bright iris and a tall slit pupil
+        // cut out of it; three tones of the one rail color. 9x9 cells of 2
+        // units on the 20-unit canvas, whole pixels at 1x, 2x and 3x.
+        static const char *const rows[9] = {
+            "  #####  ",
+            " #.ooo.# ",
+            "#.oo oo.#",
+            "#.oo oo.#",
+            "#.oo oo.#",
+            "#.oo oo.#",
+            "#.oo oo.#",
+            " #.ooo.# ",
+            "  #####  ",
+        };
+        QColor rim = color, body = color;
+        rim.setAlphaF(color.alphaF() * 0.78);
+        body.setAlphaF(color.alphaF() * 0.36);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.setPen(Qt::NoPen);
+        for (int y = 0; y < 9; y++)
+        {
+            for (int x = 0; x < 9; x++)
+            {
+                const char cell = rows[y][x];
+                if (cell == ' ')
+                    continue;
+                p.fillRect(QRectF(1 + 2*x, 1 + 2*y, 2, 2),
+                    cell == 'o' ? color : cell == '#' ? rim : body);
+            }
+        }
+    }
+    else if (kind == "menu")
+    {
+        for (qreal y : {5.0, 10.0, 15.0})
+            p.drawLine(QPointF(3.5, y), QPointF(16.5, y));
+    }
+    else if (kind == "settings")
+    {   // a gear: a ring with eight teeth and a hole
+        p.setPen(QPen(color, 2.4, Qt::SolidLine, Qt::FlatCap));
+        for (int i = 0; i < 8; i++)
+        {
+            const qreal a = i * M_PI / 4;
+            p.drawLine(QPointF(10 + 5.2*cos(a), 10 + 5.2*sin(a)),
+                       QPointF(10 + 8.0*cos(a), 10 + 8.0*sin(a)));
+        }
+        p.setPen(pen);
+        p.drawEllipse(QPointF(10, 10), 5.2, 5.2);
+        p.drawEllipse(QPointF(10, 10), 2.0, 2.0);
+    }
+    else if (kind == "origin")
+    {   // crosshair on the world origin
+        p.drawEllipse(QPointF(10, 10), 4.6, 4.6);
+        p.drawLine(QPointF(10, 1.8), QPointF(10, 5.2));
+        p.drawLine(QPointF(10, 14.8), QPointF(10, 18.2));
+        p.drawLine(QPointF(1.8, 10), QPointF(5.2, 10));
+        p.drawLine(QPointF(14.8, 10), QPointF(18.2, 10));
+        p.setPen(Qt::NoPen);
+        p.setBrush(color);
+        p.drawEllipse(QPointF(10, 10), 1.5, 1.5);
+    }
+    else if (kind == "plus")
+    {
+        p.drawLine(QPointF(10, 4.5), QPointF(10, 15.5));
+        p.drawLine(QPointF(4.5, 10), QPointF(15.5, 10));
+    }
+    else if (kind == "minus")
+    {
+        p.drawLine(QPointF(4.5, 10), QPointF(15.5, 10));
+    }
+    else if (kind == "go")
+    {
+        p.drawLine(QPointF(4, 10), QPointF(15.5, 10));
+        p.drawPolyline(QPolygonF({QPointF(10.5, 5), QPointF(15.5, 10), QPointF(10.5, 15)}));
+    }
+    else if (kind == "chevron-left" || kind == "chevron-right")
+    {
+        const qreal d = kind == "chevron-left" ? 1 : -1;
+        p.drawPolyline(QPolygonF({QPointF(10 + 2.5*d, 5), QPointF(10 - 2.5*d, 10),
+                                  QPointF(10 + 2.5*d, 15)}));
+    }
+    else if (kind == "datapacks")
+    {   // the Datapacks tool: a pack, i.e. a box with a lid seen from the
+        // front (the outline of an open-topped cube with its centre edges)
+        p.drawPolygon(QPolygonF({QPointF(10, 2.6), QPointF(16.8, 6.2), QPointF(16.8, 13.8),
+                                 QPointF(10, 17.4), QPointF(3.2, 13.8), QPointF(3.2, 6.2)}));
+        p.drawPolyline(QPolygonF({QPointF(3.2, 6.2), QPointF(10, 9.8), QPointF(16.8, 6.2)}));
+        p.drawLine(QPointF(10, 9.8), QPointF(10, 17.4));
+    }
+    else if (kind == "arrow-up" || kind == "arrow-down")
+    {
+        const qreal d = kind == "arrow-up" ? 1 : -1;
+        p.drawLine(QPointF(10, 10 - 5.5*d), QPointF(10, 10 + 5.5*d));
+        p.drawPolyline(QPolygonF({QPointF(5, 10 - 0.5*d), QPointF(10, 10 - 5.5*d),
+                                  QPointF(15, 10 - 0.5*d)}));
+    }
+    else if (kind == "close")
+    {
+        p.drawLine(QPointF(5, 5), QPointF(15, 15));
+        p.drawLine(QPointF(15, 5), QPointF(5, 15));
+    }
+    else if (kind == "layers")
+    {
+        QPolygonF top({QPointF(10, 3), QPointF(17, 7), QPointF(10, 11), QPointF(3, 7)});
+        p.drawPolygon(top);
+        p.drawPolyline(QPolygonF({QPointF(3, 10.5), QPointF(10, 14.5), QPointF(17, 10.5)}));
+        p.drawPolyline(QPolygonF({QPointF(3, 14), QPointF(10, 18), QPointF(17, 14)}));
+    }
+}
+
+QPixmap chromePixmap(const QString& kind, const QColor& color, int side)
+{
+    QPixmap pixmap(side, side);
+    pixmap.fill(Qt::transparent);
+    QPainter p(&pixmap);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.scale(side / 20.0, side / 20.0);
+    drawChromeGlyph(p, kind, color);
+    return pixmap;
+}
+
+// The pixel-art source at an integer nearest-neighbour scale that fits side,
+// centered on a square canvas. Larger sources are scaled down smoothly.
+QPixmap pixelArtPixmap(const QImage& source, int side)
+{
+    QImage canvas(side, side, QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(Qt::transparent);
+    if (source.isNull())
+        return QPixmap::fromImage(canvas);
+    const int extent = qMax(source.width(), source.height());
+    QImage scaled;
+    const int factor = side / extent;
+    if (factor >= 1)
+        scaled = source.scaled(source.size() * factor, Qt::KeepAspectRatio, Qt::FastTransformation);
+    else
+        scaled = source.scaled(side, side, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QPainter p(&canvas);
+    p.drawImage((side - scaled.width()) / 2, (side - scaled.height()) / 2, scaled);
+    p.end();
+    return QPixmap::fromImage(canvas);
+}
+
+// A grey version of a layer icon whose tones stay within a range that is
+// legible on the sidebar background: the black outlines of the pixel art
+// would vanish on the dark theme, the white highlights on the light one.
+QImage inactiveLayerImage(const QImage& source, bool darkTheme)
+{
+    QImage image = source.convertToFormat(QImage::Format_ARGB32);
+    const int low = darkTheme ? 96 : 64;
+    const int high = darkTheme ? 198 : 168;
+    for (int y = 0; y < image.height(); y++)
+    {
+        QRgb *line = reinterpret_cast<QRgb *>(image.scanLine(y));
+        for (int x = 0; x < image.width(); x++)
+        {
+            const int gray = low + qGray(line[x]) * (high - low) / 255;
+            line[x] = qRgba(gray, gray, gray, qAlpha(line[x]));
+        }
+    }
+    return image;
+}
+
+class EmptyHint : public QLabel
+{
+public:
+    EmptyHint(QAbstractItemView *view, const QString& text)
+        : QLabel(text, view->viewport())
+        , view(view)
+    {
+        setObjectName("emptyHint");
+        setAlignment(Qt::AlignCenter);
+        setWordWrap(true);
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        view->viewport()->installEventFilter(this);
+        view->installEventFilter(this);
+        watchModel();
+    }
+
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (watched == view->viewport() && event->type() == QEvent::Resize)
+            place();
+        else if (watched == view && (event->type() == QEvent::Show ||
+                 event->type() == QEvent::Polish))
+            watchModel();
+        return false;
+    }
+
+private:
+    void place()
+    {
+        setGeometry(view->viewport()->rect().adjusted(12, 8, -12, -8));
+    }
+
+    void watchModel()
+    {
+        QAbstractItemModel *current = view->model();
+        if (current != model)
+        {
+            if (model)
+                disconnect(model, nullptr, this, nullptr);
+            model = current;
+            if (model)
+            {
+                const auto update = [this]() { refresh(); };
+                connect(model, &QAbstractItemModel::rowsInserted, this, update);
+                connect(model, &QAbstractItemModel::rowsRemoved, this, update);
+                connect(model, &QAbstractItemModel::modelReset, this, update);
+                connect(model, &QAbstractItemModel::layoutChanged, this, update);
+            }
+        }
+        refresh();
+    }
+
+    void refresh()
+    {
+        place();
+        setVisible(!model || model->rowCount() == 0);
+    }
+
+    QAbstractItemView *view;
+    QPointer<QAbstractItemModel> model;
+};
+
 } // namespace
 
+QIcon chromeIcon(const QString& kind, const QColor& color, int size, const QColor& checkedColor)
+{
+    QIcon icon;
+    for (int scale : {1, 2, 3})
+    {
+        icon.addPixmap(chromePixmap(kind, color, size * scale), QIcon::Normal, QIcon::Off);
+        if (checkedColor.isValid())
+            icon.addPixmap(chromePixmap(kind, checkedColor, size * scale), QIcon::Normal, QIcon::On);
+    }
+    return icon;
+}
+
+QIcon layerIcon(const QString& rcbase, int size, bool darkTheme)
+{
+    const QImage active(":/icons/" + rcbase + ".png");
+    const QImage inactive = inactiveLayerImage(active, darkTheme);
+    QIcon icon;
+    for (int scale : {1, 2, 3})
+    {
+        const int side = size * scale;
+        const QPixmap on = pixelArtPixmap(active, side);
+        const QPixmap off = pixelArtPixmap(inactive, side);
+        icon.addPixmap(on, QIcon::Normal, QIcon::On);
+        icon.addPixmap(off, QIcon::Normal, QIcon::Off);
+        // disabled layers keep the calm grey look instead of Qt's washed-out one
+        icon.addPixmap(off, QIcon::Disabled, QIcon::Off);
+        icon.addPixmap(off, QIcon::Disabled, QIcon::On);
+    }
+    return icon;
+}
+
+void setEmptyHint(QAbstractItemView *view, const QString& text)
+{
+    if (!view)
+        return;
+    if (QLabel *existing = view->viewport()->findChild<QLabel*>("emptyHint",
+            Qt::FindDirectChildrenOnly))
+    {
+        existing->setText(text);
+        return;
+    }
+    new EmptyHint(view, text);
+}
+
+
+// width of the scroll bar column at the right edge of the layer sidebar
+static const int GUTTER_WIDTH = 10;
 
 ScrollableToolBar::ScrollableToolBar(QWidget *parent)
     : QToolBar(parent)
-    , scroll(new QScrollArea(this))
+    , panel(new QWidget(this))
+    , title(new QLabel(tr("LAYERS"), panel))
+    , headerLayout(new QHBoxLayout)
+    , scroll(new QScrollArea(panel))
+    , gutter(new QWidget(panel))
+    , scrollBar(new QScrollBar(Qt::Vertical, gutter))
     , strip(new QWidget)
     , stripLayout(new QBoxLayout(QBoxLayout::TopToBottom, strip))
     , buttons()
+    , sectionLabels()
     , separators()
-    , toggleButton(new QToolButton(parent ? parent : this))
+    , toggleButton(new QToolButton(panel))
     , widthAnimation(new QPropertyAnimation(this, "sidebarWidth", this))
+    , chromeColor(Qt::gray)
     , currentWidth(200)
     , collapsed(false)
 {
-    stripLayout->setContentsMargins(4, 4, 4, 4);
+    panel->setObjectName("layerSidebar");
+    scroll->setObjectName("layerScroll");
+    strip->setObjectName("layerStrip");
+    title->setObjectName("layerSidebarTitle");
+
+    QVBoxLayout *panelLayout = new QVBoxLayout(panel);
+    panelLayout->setContentsMargins(0, 6, 0, 0);
+    panelLayout->setSpacing(4);
+    headerLayout->setContentsMargins(8, 0, 6, 0);
+    headerLayout->setSpacing(4);
+    headerLayout->addWidget(title, 1);
+    headerLayout->addWidget(toggleButton);
+    panelLayout->addLayout(headerLayout);
+    QHBoxLayout *body = new QHBoxLayout;
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(0);
+    body->addWidget(scroll, 1);
+    body->addWidget(gutter);
+    panelLayout->addLayout(body, 1);
+
+    // the gutter keeps its width whether or not the list scrolls
+    gutter->setObjectName("layerScrollGutter");
+    gutter->setFixedWidth(GUTTER_WIDTH);
+    QVBoxLayout *gutterLayout = new QVBoxLayout(gutter);
+    gutterLayout->setContentsMargins(1, 2, 3, 6);
+    gutterLayout->addWidget(scrollBar);
+    scrollBar->setObjectName("layerScrollBar");
+    scrollBar->setRange(0, 0);
+    scrollBar->hide();
+    QScrollBar *inner = scroll->verticalScrollBar();
+    connect(inner, &QScrollBar::rangeChanged, this, [this, inner](int minimum, int maximum) {
+        scrollBar->setRange(minimum, maximum);
+        scrollBar->setPageStep(inner->pageStep());
+        scrollBar->setSingleStep(inner->singleStep());
+        scrollBar->setVisible(maximum > minimum);
+    });
+    connect(inner, &QScrollBar::valueChanged, scrollBar, &QScrollBar::setValue);
+    connect(scrollBar, &QScrollBar::valueChanged, inner, &QScrollBar::setValue);
+
+    stripLayout->setContentsMargins(6, 0, 6, 8);
     stripLayout->setSpacing(3);
-    stripLayout->setSizeConstraint(QLayout::SetMinAndMaxSize);
+    stripLayout->addStretch(1);
     scroll->setWidget(strip);
-    scroll->setWidgetResizable(false);
+    scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    scroll->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    QToolBar::addWidget(scroll);
+    // still scrolls (wheel, keyboard, ensureVisible), drawn in the gutter
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    QToolBar::addWidget(panel);
+
     toggleButton->setObjectName("rightSidebarToggle");
-    toggleButton->setFixedSize(18, 72);
-    toggleButton->setAutoRaise(false);
+    toggleButton->setProperty("keepIconSize", true);
+    toggleButton->setAutoRaise(true);
     toggleButton->setCursor(Qt::PointingHandCursor);
-    toggleButton->setStyleSheet(
-        "QToolButton { background: palette(window); border: 1px solid palette(mid); "
-        "border-radius: 4px; padding: 0; margin: 0; }"
-        "QToolButton:hover { background: palette(button); }");
+    toggleButton->setIconSize(QSize(16, 16));
     connect(toggleButton, &QToolButton::clicked, this, [this]() {
         setCollapsed(!collapsed);
     });
-    widthAnimation->setDuration(220);
+    widthAnimation->setDuration(200);
     widthAnimation->setEasingCurve(QEasingCurve::OutCubic);
-    connect(this, &QToolBar::orientationChanged, this, &ScrollableToolBar::updateDirection);
     connect(this, &QToolBar::iconSizeChanged, this, &ScrollableToolBar::updateButtons);
-    updateDirection(orientation());
+    setMinimumWidth(currentWidth);
+    setMaximumWidth(currentWidth);
     updateToggleButton();
 }
 
 QAction *ScrollableToolBar::addAction(QAction *action)
 {
     QToolButton *button = new QToolButton(strip);
-    button->setToolButtonStyle(collapsed ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
+    button->setObjectName("layerButton");
+    button->setProperty("keepIconSize", true);
     button->setIconSize(iconSize());
-    button->setMinimumWidth(collapsed ? 0 : 164);
-    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    button->setStyleSheet("QToolButton { text-align: left; padding: 5px 8px; }");
+    button->setCursor(Qt::PointingHandCursor);
     const auto update = [button, action]() {
         button->setIcon(action->icon());
         button->setText(compactToolbarLabel(action));
+        // the tooltip names the layer, which matters most while collapsed
         button->setToolTip(action->toolTip().isEmpty() ? action->text() : action->toolTip());
         button->setEnabled(action->isEnabled());
         button->setVisible(action->isVisible());
@@ -110,32 +472,40 @@ QAction *ScrollableToolBar::addAction(QAction *action)
     update();
     connect(action, &QAction::changed, button, update);
     connect(button, &QToolButton::clicked, action, [action]() { action->trigger(); });
-    stripLayout->addWidget(button);
+    stripLayout->insertWidget(stripLayout->count() - 1, button);
     buttons.append(button);
-    strip->adjustSize();
-    scroll->updateGeometry();
-    updateGeometry();
-    if (collapsed)
-        setSidebarWidth(collapsedWidth());
+    applyCollapsedLayout();
     return action;
 }
 
 QAction *ScrollableToolBar::addSeparator()
 {
-    QFrame *separator = new QFrame(strip);
-    if (orientation() == Qt::Horizontal)
-    {
-        separator->setFrameShape(QFrame::VLine);
-        separator->setFixedWidth(6);
-    }
-    else
-    {
-        separator->setFrameShape(QFrame::HLine);
-        separator->setFixedHeight(6);
-    }
-    stripLayout->addWidget(separator);
-    separators.append(separator);
+    addSection(QString());
     return nullptr;
+}
+
+void ScrollableToolBar::addSection(const QString& text)
+{
+    if (!buttons.isEmpty())
+    {
+        QFrame *separator = new QFrame(strip);
+        separator->setObjectName("layerSeparator");
+        separator->setFrameShape(QFrame::NoFrame);
+        separator->setFixedHeight(1);
+        stripLayout->insertSpacing(stripLayout->count() - 1, 4);
+        stripLayout->insertWidget(stripLayout->count() - 1, separator);
+        stripLayout->insertSpacing(stripLayout->count() - 1, 2);
+        separators.append(separator);
+    }
+    if (!text.isEmpty())
+    {
+        QLabel *label = new QLabel(text.toUpper(), strip);
+        label->setObjectName("layerSectionLabel");
+        label->setContentsMargins(4, 4, 0, 1);
+        stripLayout->insertWidget(stripLayout->count() - 1, label);
+        sectionLabels.append(label);
+    }
+    applyCollapsedLayout();
 }
 
 void ScrollableToolBar::resizeEvent(QResizeEvent *event)
@@ -143,34 +513,63 @@ void ScrollableToolBar::resizeEvent(QResizeEvent *event)
     QToolBar::resizeEvent(event);
     if (QToolButton *extension = findChild<QToolButton *>("qt_toolbar_ext_button"))
         extension->hide();
-    QWidget *overlayParent = toggleButton->parentWidget();
-    const QPoint origin = mapTo(overlayParent, QPoint(0, 0));
-    toggleButton->move(origin.x() - toggleButton->width()/2,
-        origin.y() + qMax(0, (height() - toggleButton->height()) / 2));
-    toggleButton->raise();
+    // the frame of the tool bar is only known once it is laid out
+    if (collapsed && widthAnimation->state() == QAbstractAnimation::Stopped)
+    {
+        const int target = collapsedWidth();
+        if (target != currentWidth)
+            QTimer::singleShot(0, this, [this]() {
+                if (collapsed && widthAnimation->state() == QAbstractAnimation::Stopped)
+                    setSidebarWidth(collapsedWidth());
+            });
+    }
+}
+
+void ScrollableToolBar::applyCollapsedLayout()
+{
+    const int side = iconSize().height() + 10;
+    for (QToolButton *button : buttons)
+    {
+        button->setToolButtonStyle(collapsed ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
+        if (collapsed)
+        {
+            button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+            button->setFixedSize(side, side);
+            stripLayout->setAlignment(button, Qt::AlignHCenter);
+        }
+        else
+        {
+            button->setMinimumSize(0, side);
+            button->setMaximumSize(QWIDGETSIZE_MAX, side);
+            button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            stripLayout->setAlignment(button, Qt::Alignment());
+        }
+    }
+    for (QLabel *label : sectionLabels)
+        label->setVisible(!collapsed);
+    title->setVisible(!collapsed);
+    headerLayout->setContentsMargins(collapsed ? 0 : 10, 0, collapsed ? 0 : 6, 0);
+    headerLayout->setAlignment(toggleButton, collapsed ? Qt::AlignHCenter : Qt::AlignRight);
 }
 
 void ScrollableToolBar::setCollapsed(bool value, bool animated)
 {
     if (collapsed == value &&
         (widthAnimation->state() == QAbstractAnimation::Stopped || !animated))
+    {
+        setSidebarWidth(collapsed ? collapsedWidth() : expandedWidth());
         return;
+    }
 
     const int startWidth = width();
     widthAnimation->stop();
     collapsed = value;
-    for (QToolButton *button : buttons)
-    {
-        button->setToolButtonStyle(collapsed ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
-        button->setMinimumWidth(collapsed ? 0 : 164);
-    }
-    scroll->setMinimumWidth(orientation() == Qt::Horizontal ? 0 : (collapsed ? 0 : 190));
-    strip->adjustSize();
+    applyCollapsedLayout();
     const int targetWidth = collapsed ? collapsedWidth() : expandedWidth();
     updateToggleButton();
     emit collapsedChanged(collapsed);
 
-    if (!animated || startWidth == targetWidth)
+    if (!animated || startWidth == targetWidth || !isVisible())
     {
         setSidebarWidth(targetWidth);
         return;
@@ -190,69 +589,44 @@ void ScrollableToolBar::setSidebarWidth(int width)
     updateGeometry();
 }
 
+void ScrollableToolBar::setChromeColor(const QColor& color)
+{
+    chromeColor = color;
+    updateToggleButton();
+}
+
 int ScrollableToolBar::expandedWidth() const
 {
-    return qMax(200, qMax(width(), scroll->minimumSizeHint().width()));
+    return 200;
 }
 
 int ScrollableToolBar::collapsedWidth() const
 {
-    int buttonWidth = 0;
-    for (const QToolButton *button : buttons)
-        buttonWidth = qMax(buttonWidth, button->sizeHint().width());
-
+    // the icon buttons with even strip margins, the scroll bar gutter and the
+    // tool bar's own frame (its left border line)
+    const int side = iconSize().height() + 10;
     const QMargins margins = stripLayout->contentsMargins();
-    const int scrollBarWidth = style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, scroll);
-    return qMax(toggleButton->width(), buttonWidth + margins.left() + margins.right() + scrollBarWidth);
+    int frame = 1;
+    if (panel->width() > 0 && width() > panel->width())
+        frame = qMin(width() - panel->width(), 8);
+    return side + margins.left() + margins.right() + GUTTER_WIDTH + frame;
 }
 
 void ScrollableToolBar::updateToggleButton()
 {
-    toggleButton->setArrowType(collapsed ? Qt::LeftArrow : Qt::RightArrow);
-    toggleButton->setToolTip(collapsed ? tr("Expand side panel") : tr("Collapse side panel"));
-    toggleButton->raise();
-}
-
-void ScrollableToolBar::updateDirection(Qt::Orientation orientation)
-{
-    const QBoxLayout::Direction direction = orientation == Qt::Horizontal
-        ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom;
-    stripLayout->setDirection(direction);
-    const bool horizontal = orientation == Qt::Horizontal;
-    scroll->setHorizontalScrollBarPolicy(horizontal ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
-    scroll->setVerticalScrollBarPolicy(horizontal ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
-    strip->setSizePolicy(horizontal ? QSizePolicy::Minimum : QSizePolicy::Maximum,
-        horizontal ? QSizePolicy::Maximum : QSizePolicy::Minimum);
-    scroll->setMinimumWidth(horizontal ? 0 : (collapsed ? 0 : 190));
-    if (!collapsed)
-        setMinimumWidth(horizontal ? 0 : 200);
-    setMinimumHeight(horizontal ? iconSize().height() + 16 : 0);
-    for (QFrame *separator : separators)
-    {
-        separator->setMinimumSize(0, 0);
-        separator->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
-        if (horizontal)
-        {
-            separator->setFrameShape(QFrame::VLine);
-            separator->setFixedWidth(6);
-        }
-        else
-        {
-            separator->setFrameShape(QFrame::HLine);
-            separator->setFixedHeight(6);
-        }
-    }
+    toggleButton->setIcon(chromeIcon(collapsed ? "chevron-left" : "chevron-right", chromeColor, 16));
+    toggleButton->setToolTip(collapsed ? tr("Show layer names") : tr("Hide layer names"));
+    toggleButton->setAccessibleName(toggleButton->toolTip());
 }
 
 void ScrollableToolBar::updateButtons(const QSize& size)
 {
     for (QToolButton *button : buttons)
-    {
         button->setIconSize(size);
-        button->setMinimumHeight(size.height() + 10);
-    }
+    applyCollapsedLayout();
+    if (widthAnimation->state() == QAbstractAnimation::Stopped)
+        setSidebarWidth(collapsed ? collapsedWidth() : expandedWidth());
 }
-
 
 Collapsible::Collapsible(QWidget *parent)
     : QWidget(parent)
@@ -264,16 +638,19 @@ Collapsible::Collapsible(QWidget *parent)
 {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
 
-    QFont font = toggleButton->font();
-    font.setBold(true);
-    toggleButton->setFont(font);
+    // a quiet uppercase heading; font size and weight come from the style sheet
+    toggleButton->setObjectName("sectionToggle");
+    toggleButton->setProperty("keepIconSize", true);
     toggleButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toggleButton->setArrowType(Qt::ArrowType::RightArrow);
+    toggleButton->setIconSize(QSize(9, 9));
     toggleButton->setCheckable(true);
+    toggleButton->setCursor(Qt::PointingHandCursor);
 
-
+    // only a spacer now that pushes the help button to the right edge
+    frameBar->setObjectName("sectionLine");
     frameBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
-    frameBar->setFrameShape(QFrame::HLine);
+    frameBar->setFrameShape(QFrame::NoFrame);
 
     QVBoxLayout *vbox = new QVBoxLayout();
     layoutBar = new QHBoxLayout();
@@ -283,12 +660,12 @@ Collapsible::Collapsible(QWidget *parent)
     vbox->addLayout(layoutBar);
 
     layoutContent = new QHBoxLayout();
-    layoutContent->setContentsMargins(20, 0, 0, 0);
+    layoutContent->setContentsMargins(0, 0, 0, 0);
     vbox->addLayout(layoutContent);
 
     vbox->setSizeConstraint(QLayout::SetMaximumSize);
-    vbox->setContentsMargins(0, 0, 0, 8);
-    vbox->setSpacing(0);
+    vbox->setContentsMargins(0, 0, 0, 6);
+    vbox->setSpacing(4);
     setLayout(vbox);
 
     connect(toggleButton, &QToolButton::toggled, this, &Collapsible::toggle);
@@ -348,13 +725,22 @@ void Collapsible::finishAnimation()
 
 void Collapsible::init(const QString& title, QWidget *widget, bool collapsed)
 {
-    toggleButton->setText(title);
+    this->title = title;
+    toggleButton->setText(title.toUpper());
     layoutContent->addWidget(widget);
     contentHeight = widget->sizeHint().height();
     content = widget;
     animgroup->addAnimation(new QPropertyAnimation(content, "minimumHeight"));
     animgroup->addAnimation(new QPropertyAnimation(content, "maximumHeight"));
     setCollapsed(collapsed);
+}
+
+void Collapsible::setCount(int count)
+{
+    QString text = title.toUpper();
+    if (count >= 0)
+        text += QString::fromUtf8(" \u00b7 ") + QLocale().toString(count);
+    toggleButton->setText(text);
 }
 
 void Collapsible::setCollapsed(bool collapsed)
@@ -954,11 +1340,12 @@ int SpinInstances::valueFromText(const QString &text) const
 
 QString SpinInstances::textFromValue(int value) const
 {
+    // the number comes first, valueFromText() reads only that
     QString txt = QSpinBox::textFromValue(value);
     if (value == 0)
-        txt += " " + tr("(exclude)");
-    if (value > 1)
-        txt += " " + tr("(cluster)");
+        txt += " " + tr("(none allowed)");
+    else
+        txt += " " + tr("or more");
     return txt;
 }
 
@@ -1009,6 +1396,13 @@ void ComboBoxDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
         painter->drawText(r.adjusted(0, 0, -6, 0), Qt::AlignRight | Qt::AlignVCenter,
             index.data(ShortcutRole).toString());
         painter->restore();
+    }
+    else if (!(index.flags() & Qt::ItemIsEnabled))
+    {   // an entry that cannot be chosen: the style sheet gives the list one
+        // text color for all states, so mute it here
+        QStyleOptionViewItem opt = option;
+        opt.palette.setColor(QPalette::Text, opt.palette.color(QPalette::PlaceholderText));
+        QStyledItemDelegate::paint(painter, opt, index);
     }
     else
     {
@@ -1070,15 +1464,36 @@ QSize ComboBoxDelegate::sizeHint(const QStyleOptionViewItem &option, const QMode
         size.setHeight(h);
     return size;
 }
+int StyledComboBox::widthForContents(int width) const
+{
+    QStyleOptionComboBox opt;
+    initStyleOption(&opt);
+    const QSize contents(width, qMax(fontMetrics().height(), 14) + 2);
+    return style()->sizeFromContents(QStyle::CT_ComboBox, &opt, contents, this).width();
+}
+
 void StyledComboBox::paintEvent(QPaintEvent *e)
 {
-    if (isEditable() || !currentText().contains('\t'))
+    if (isEditable())
+        return QComboBox::paintEvent(e);
+    QStyleOptionComboBox opt;
+    initStyleOption(&opt);
+    QString text = opt.currentText.split('\t').join("   ");
+    // An item with a note in brackets, e.g. "256 (surface)", that does not
+    // fit the box shows without the note instead of being cut off.
+    const int paren = text.indexOf(" (");
+    if (paren > 0)
+    {
+        const QRect field = style()->subControlRect(QStyle::CC_ComboBox, &opt,
+            QStyle::SC_ComboBoxEditField, this);
+        if (fontMetrics().horizontalAdvance(text) > field.width())
+            text.truncate(paren);
+    }
+    if (text == opt.currentText)
         return QComboBox::paintEvent(e);
     QStylePainter painter(this);
     painter.setPen(palette().color(QPalette::Text));
-    QStyleOptionComboBox opt;
-    initStyleOption(&opt);
-    opt.currentText = opt.currentText.split('\t').join("   ");
+    opt.currentText = text;
     painter.drawComplexControl(QStyle::CC_ComboBox, opt);
     painter.drawControl(QStyle::CE_ComboBoxLabel, opt);
 }

@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:add",
+  "argument1": {
+    "type": "minecraft:add",
+    "argument1": {
+      "type": "minecraft:mul",
+      "argument1": 0.55,
+      "argument2": "minecraft:overworld/continents"
+    },
+    "argument2": "testpack:continents/bias"
+  },
+  "argument2": "testpack:continents/local"
+}

@@ -112,7 +112,7 @@ bool FormGen48::setList48(QString path, bool quiet)
         else if (!quiet)
         {
             int button = warn(this, tr("Warning"),
-                tr("Failed to load 48-bit seed list from file:\n\"%1\"").arg(path),
+                tr("Could not load the structure seed list from:\n\"%1\"").arg(path),
                 tr("Reset list path?"), QMessageBox::Reset | QMessageBox::Ignore);
             if (button != QMessageBox::Ignore)
             {
@@ -275,7 +275,7 @@ void FormGen48::updateAutoUi()
             ? tr("[Quad-monument (95% area)]")
             : tr("[Quad-monument (90% area)]");
     else
-        modestr = tr("[None] - no 48-bit generator");
+        modestr = tr("[None] - no quad condition, so no seeds are skipped");
 
     ui->labelAuto->setText(modestr);
 
@@ -390,7 +390,7 @@ void FormGen48::on_buttonBrowse_clicked()
     };
     QFileDialog::getOpenFileContent(filter, fileOpenCompleted);
 #else
-    QString fnam = QFileDialog::getOpenFileName(this, tr("Load seed list"), parent->prevdir, filter);
+    QString fnam = QFileDialog::getOpenFileName(this, tr("Load structure seed list"), parent->prevdir, filter);
     if (!fnam.isEmpty())
         setList48(fnam, false);
 #endif

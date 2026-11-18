@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:interpolated",
+  "argument": {
+    "type": "minecraft:noise",
+    "noise": "testpack:volume",
+    "xz_scale": 1.0,
+    "y_scale": 1.5
+  }
+}

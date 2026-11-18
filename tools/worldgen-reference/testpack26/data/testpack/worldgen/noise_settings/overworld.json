@@ -1,0 +1,34 @@
+{
+  "default_block": "minecraft:stone",
+  "default_fluid": "minecraft:water",
+  "disable_mob_generation": false,
+  "legacy_random_source": false,
+  "material_rule": "minecraft:bedrock_floor",
+  "noise": {
+    "height": 384,
+    "min_y": -64
+  },
+  "noise_router": {
+    "chunk_surface_level": 64.0,
+    "continents": "testpack:climate/continents",
+    "depth": "testpack:climate/depth",
+    "erosion": "testpack:climate/erosion",
+    "final_density": "testpack:terrain/final_density",
+    "ridges": "testpack:climate/ridges",
+    "temperature": "testpack:climate/temperature",
+    "vegetation": "testpack:climate/vegetation"
+  },
+  "sea_level": 63,
+  "spawn_target": [
+    {
+      "testpack:climate/continents": [
+        0.05,
+        1.0
+      ],
+      "testpack:climate/erosion": [
+        -0.8,
+        1.0
+      ]
+    }
+  ]
+}

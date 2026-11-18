@@ -3,7 +3,7 @@
  <class>ExtGenDialog</class>
  <widget class="QDialog" name="ExtGenDialog">
   <property name="windowTitle">
-   <string>Advanced World Settings</string>
+   <string>Advanced world settings</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">
@@ -12,8 +12,11 @@
   <layout class="QGridLayout" name="gridLayout">
    <item row="3" column="0" colspan="2">
     <widget class="QGroupBox" name="groupSalts">
+     <property name="toolTip">
+      <string>A salt is a fixed number that each structure type adds to the seed to pick its positions. Change it to match servers or data packs that use different salts.</string>
+     </property>
      <property name="title">
-      <string>Override structure salt</string>
+      <string>Override structure salts</string>
      </property>
      <property name="checkable">
       <bool>true</bool>
@@ -35,15 +38,21 @@
    </item>
    <item row="2" column="0" colspan="2">
     <widget class="QCheckBox" name="checkEstimate">
+     <property name="toolTip">
+      <string>Leave out structures that cannot generate because of the terrain, using an estimate of the surface height. Applies to the map and the Seed Finder in 1.18 and newer.</string>
+     </property>
      <property name="text">
-      <string>Estimate terrain (1.18+)</string>
+      <string>Check the terrain at structures (1.18+)</string>
      </property>
     </widget>
    </item>
    <item row="1" column="0" colspan="2">
     <widget class="QCheckBox" name="checkExperimental">
+     <property name="toolTip">
+      <string>Also list Minecraft versions whose world generation is only partly supported</string>
+     </property>
      <property name="text">
-      <string>Enable experimentally supported versions</string>
+      <string>Show versions with experimental support</string>
      </property>
     </widget>
    </item>

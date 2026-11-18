@@ -1,0 +1,12 @@
+{
+  "left": {
+    "axis": "y",
+    "from_coordinate": -32,
+    "from_value": 1.25,
+    "to_coordinate": 256,
+    "to_value": -1.0,
+    "type": "minecraft:gradient"
+  },
+  "right": "testpack:depth/offset",
+  "type": "minecraft:add"
+}

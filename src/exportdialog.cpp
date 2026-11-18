@@ -1,6 +1,8 @@
 #include "exportdialog.h"
+#include "appactivity.h"
 #include "ui_exportdialog.h"
 
+#include "datapackworld.h"
 #include "mainwindow.h"
 #include "mapview.h"
 #include "message.h"
@@ -25,8 +27,30 @@
 bool renderExportRange(unsigned char *rgb, const WorldInfo& wi, int dim,
         uint64_t seed, Range r, int heightvis, const std::atomic_bool *stop)
 {
+    if (wi.dp)
+    {
+        // A datapack world: the biomes of its own generator in the colours of
+        // the packs, as on the map. Its levels are in blocks at every scale,
+        // and it has no height model (heightvis does not apply).
+        dp::Sampler *sampler = datapackSampler(wi.dp, seed);
+        if (!sampler)
+            return false;
+        std::vector<int> ids(size_t(r.sx) * size_t(r.sz));
+        if (!sampler->genBiomes(ids.data(), r.scale, r.x, r.z, r.sx, r.sz, wi.y, stop))
+            return stop && *stop; // interrupted, or failed
+        const std::vector<QRgb>& colors = wi.dp->colors;
+        for (size_t i = 0; i < ids.size(); i++)
+        {
+            const QRgb col = ids[i] >= 0 && ids[i] < (int) colors.size()
+                ? colors[ids[i]] : qRgb(16, 18, 17);
+            rgb[3*i+0] = qRed(col);
+            rgb[3*i+1] = qGreen(col);
+            rgb[3*i+2] = qBlue(col);
+        }
+        return true;
+    }
     Generator g;
-    setupGenerator(&g, wi.mc, wi.large | FORCE_OCEAN_VARIANTS);
+    setupGenerator(&g, wi.mc, wi.genFlags() | FORCE_OCEAN_VARIANTS);
     applySeed(&g, dim, seed);
     std::unique_ptr<int, decltype(&free)> ids(allocCache(&g, r), &free);
     if (!ids)
@@ -127,6 +151,7 @@ bool ExportWorker::runWorkItem(const ExportWorkItem& work)
 
 void ExportWorker::run()
 {
+    BusyActivity busy; // not to be throttled while out of view
     ExportWorkItem work;
     while (parent->requestWork(&work))
     {
@@ -346,12 +371,30 @@ void ExportDialog::update()
     mainwindow->getSeed(&wi, true);
     int dim = mainwindow->getDim();
 
+    // A datapack world: the current seed and its biomes only. The seed list
+    // holds results for vanilla worlds, and there is no height model.
+    const bool datapack = wi.datapack();
+    if (datapack && ui->comboSeed->currentIndex() != 0)
+        ui->comboSeed->setCurrentIndex(0);
+    ui->comboSeed->setEnabled(!datapack);
+    ui->comboHeightVis->setEnabled(!datapack);
+    for (QComboBox *combo : {ui->comboSeed, ui->comboHeightVis})
+    {
+        if (!combo->property("plainTip").isValid())
+            combo->setProperty("plainTip", combo->toolTip());
+        combo->setToolTip(datapack ? tr("Not available for datapack worlds.")
+            : combo->property("plainTip").toString());
+    }
+
     const char *p_mcs = mc2str(wi.mc);
     QString wgen = (p_mcs ? p_mcs : "");
     wgen += ", ";
-    if (dim == 0) {
+    if (datapack) {
+        wgen += tr("datapack world, %1").arg(wi.dp->dimensionId);
+    } else if (dim == 0) {
         wgen += tr("Overworld");
         if (wi.large) wgen += tr("/large");
+        if (wi.amplified) wgen += tr("/amplified");
     } else if (dim == -1) {
         wgen += tr("Nether");
     } else if (dim == +1) {
@@ -384,7 +427,7 @@ void ExportDialog::on_buttonFromVisible_clicked()
 void ExportDialog::on_buttonDirSelect_clicked()
 {
     QString dir = QFileDialog::getExistingDirectory(
-            this, tr("Select Export Directory"),
+            this, tr("Select export folder"),
             ui->lineDir->text(),
             QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
     if (dir.isEmpty())
@@ -414,6 +457,14 @@ void ExportDialog::on_buttonBox_clicked(QAbstractButton *button)
 
         WorldInfo wi;
         mainwindow->getSeed(&wi, true);
+        if (wi.dp && !wi.dp->usable())
+        {
+            warn(this, tr("The datapack world is not loaded, so there is no map to export. "
+                "Open Datapacks to see what is missing."));
+            return;
+        }
+        if (wi.dp)
+            seedmode = 0; // matching seeds are results for vanilla worlds
 
         std::vector<uint64_t> seeds;
         if (seedmode == 0)
@@ -477,7 +528,7 @@ void ExportDialog::on_buttonBox_clicked(QAbstractButton *button)
         this->h = int(z1 - z0);
         this->y = y;
         this->tilesize = -1;
-        this->heightvis = ui->comboHeightVis->currentIndex() - 1;
+        this->heightvis = wi.dp ? -1 : ui->comboHeightVis->currentIndex() - 1;
         this->bgmode = 0;
         this->paths.clear();
         bool existwarn = false;
@@ -514,7 +565,7 @@ void ExportDialog::on_buttonBox_clicked(QAbstractButton *button)
             if (x1 - x0 >= maxsiz || z1 - z0 >= maxsiz)
             {
                 int button = warn(this, tr("Warning"),
-                        tr("Consider tiling very large images into smaller sections."),
+                        tr("This image is very large. Consider splitting it into tiles."),
                         tr("Continue?"), QMessageBox::Cancel | QMessageBox::Yes);
                 if (button != QMessageBox::Yes)
                 {
@@ -553,7 +604,7 @@ void ExportDialog::on_buttonBox_clicked(QAbstractButton *button)
         if (existwarn)
         {
             int button = warn(this, tr("Warning"),
-                    tr("One or more of files already exist."),
+                    tr("Some of the files already exist."),
                     tr("Continue and overwrite?"), QMessageBox::Cancel | QMessageBox::Yes);
             if (button != QMessageBox::Yes)
             {

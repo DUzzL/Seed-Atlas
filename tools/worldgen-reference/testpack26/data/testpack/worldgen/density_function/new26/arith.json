@@ -1,0 +1,94 @@
+{
+  "alpha": {
+    "input": {
+      "left": 0.5,
+      "right": {
+        "noise": "testpack:legacy",
+        "type": "minecraft:noise",
+        "xz_scale": 0.37,
+        "y_scale": 0.0
+      },
+      "type": "minecraft:add"
+    },
+    "max": 1.0,
+    "min": 0.0,
+    "type": "minecraft:clamp"
+  },
+  "first": {
+    "left": {
+      "base": {
+        "input": {
+          "noise": "testpack:plain",
+          "type": "minecraft:noise",
+          "xz_scale": 0.25,
+          "y_scale": 0.0
+        },
+        "type": "minecraft:abs"
+      },
+      "exponent": 1.7,
+      "type": "minecraft:pow"
+    },
+    "right": {
+      "left": {
+        "input": {
+          "left": 2.0,
+          "right": {
+            "input": {
+              "noise": "testpack:plain",
+              "type": "minecraft:noise",
+              "xz_scale": 0.11,
+              "y_scale": 0.0
+            },
+            "type": "minecraft:abs"
+          },
+          "type": "minecraft:add"
+        },
+        "type": "minecraft:log"
+      },
+      "right": 3.0,
+      "type": "minecraft:div"
+    },
+    "type": "minecraft:sub"
+  },
+  "second": {
+    "left": {
+      "input": {
+        "noise": "testpack:raw",
+        "type": "minecraft:noise",
+        "xz_scale": 0.5,
+        "y_scale": 0.0
+      },
+      "type": "minecraft:sign"
+    },
+    "right": {
+      "input": {
+        "input": {
+          "input": {
+            "left": {
+              "noise": "testpack:raw",
+              "type": "minecraft:noise",
+              "xz_scale": 0.31,
+              "y_scale": 0.0
+            },
+            "right": {
+              "left": 1.5,
+              "right": {
+                "noise": "testpack:legacy",
+                "type": "minecraft:noise",
+                "xz_scale": 0.2,
+                "y_scale": 0.0
+              },
+              "type": "minecraft:add"
+            },
+            "type": "minecraft:div"
+          },
+          "type": "minecraft:abs"
+        },
+        "type": "minecraft:sqrt"
+      },
+      "type": "minecraft:negate"
+    },
+    "type": "minecraft:mul"
+  },
+  "type": "minecraft:lerp"
+}

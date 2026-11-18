@@ -51,6 +51,7 @@ public:
 
     virtual void save(QSettings& settings) override;
     virtual void load(QSettings& settings) override;
+    void stopWork() override;
 
     // simple mode hides the sampling pattern and its spread
     void setAdvanced(bool advanced);

@@ -98,7 +98,8 @@ void ConfigDialog::setupCategories()
     performanceLayout->addRow(ui->label_9, ui->spinThreads);
     checkGpu = new QCheckBox(tr("Use the GPU for seed searches"), performance);
     checkGpu->setToolTip(tr("Long searches with climate or biome sample conditions let the "
-        "graphics card rule out seeds first, where that is faster than the CPU. The results "
+        "graphics card rule out seeds first, where that is faster than the CPU. The End "
+        "portal search uses the graphics card for its eye tests in the same way. The results "
         "are the same either way."));
     performanceLayout->addRow(checkGpu);
 
@@ -113,7 +114,8 @@ void ConfigDialog::setupCategories()
     mapVisualsLayout->addLayout(iconLayout);
     mapVisualsLayout->addWidget(ui->checkBBoxes);
     mapVisualsLayout->addWidget(ui->checkSmooth);
-    QPushButton *editTools = new QPushButton(tr("Toolbar tools..."), mapVisuals);
+    QPushButton *editTools = new QPushButton(tr("Map buttons..."), mapVisuals);
+    editTools->setToolTip(tr("Choose which layers get a button in the layer sidebar, and up to which zoom level their icons are shown"));
     connect(editTools, &QPushButton::clicked, this, &ConfigDialog::openMapTools);
     mapVisualsLayout->addWidget(editTools);
 
@@ -126,7 +128,7 @@ void ConfigDialog::setupCategories()
     QVBoxLayout *finding = addCategory(tr("Seed Finder"));
     moveGroup(finding, ui->groupSearch);
 
-    QVBoxLayout *mapping = addCategory(tr("Seed Mapping"));
+    QVBoxLayout *mapping = addCategory(tr("Map"));
     moveGroup(mapping, ui->groupBox_2);
 
     QVBoxLayout *perf = addCategory(tr("Performance"));
@@ -135,6 +137,9 @@ void ConfigDialog::setupCategories()
     QVBoxLayout *visual = addCategory(tr("Visuals"));
     moveGroup(visual, ui->groupInterface);
     visual->insertWidget(visual->count()-1, mapVisuals);
+
+    QVBoxLayout *mcp = addCategory(tr("MCP"));
+    mcp->insertWidget(mcp->count()-1, mcpPage.create(this));
 
     ui->gridLayout_8->replaceWidget(ui->scrollArea, tabs);
     ui->scrollArea->deleteLater();
@@ -193,6 +198,11 @@ void ConfigDialog::initConfig(Config *config)
     ui->spinFontSizeNorm->setValue(config->fontNorm.pointSize());
     ui->spinFontSizeMono->setValue(config->fontMono.pointSize());
     ui->lineIconScale->setText(QString::number(config->iconScale));
+
+    McpSettings mcp;
+    QSettings settings(appSettingsId(), appSettingsId());
+    mcp.load(settings);
+    mcpPage.show(mcp);
 }
 
 Config ConfigDialog::getConfig()
@@ -253,11 +263,14 @@ void ConfigDialog::on_buttonBox_clicked(QAbstractButton *button)
         conf.reset();
         conf.biomeColorPath = biomeColorPath; // edited in its own dialog
         initConfig(&conf);
+        mcpPage.show(McpSettings());
         setModified(true); // the defaults are not saved until applied
     }
     else if (role == QDialogButtonBox::AcceptRole || role == QDialogButtonBox::ApplyRole)
     {
         getConfig().save();
+        QSettings settings(appSettingsId(), appSettingsId());
+        mcpPage.value().save(settings);
         emit updateConfig();
         setModified(false);
     }

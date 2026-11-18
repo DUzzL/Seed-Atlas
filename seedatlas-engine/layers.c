@@ -1836,8 +1836,11 @@ void mapVoronoiPlane(uint64_t sha, int *out, int *src,
     int x, int z, int w, int h, int y, int px, int pz, int pw, int ph)
 {
     x -= 2;
-    y -= 2;
     z -= 2;
+    // The 1:4 cell layer below block y and the fraction of y inside it, in
+    // the fixed-point units of the jitter (a quarter cell is 10*1024).
+    int cy = (y - 2) >> 2;
+    int fy = ((y - 2) & 3) * 10*1024;
     int x000, x001, x010, x011, x100, x101, x110, x111;
     int y000, y001, y010, y011, y100, y101, y110, y111;
     int z000, z001, z010, z011, z100, z101, z110, z111;
@@ -1886,16 +1889,16 @@ void mapVoronoiPlane(uint64_t sha, int *out, int *src,
             }
             if (prev_skip)
             {
-                getVoronoiCell(sha, pix, y-1, pjz+0, &x000, &y000, &z000);
-                getVoronoiCell(sha, pix, y+0, pjz+0, &x001, &y001, &z001);
-                getVoronoiCell(sha, pix, y-1, pjz+1, &x100, &y100, &z100);
-                getVoronoiCell(sha, pix, y+0, pjz+1, &x101, &y101, &z101);
+                getVoronoiCell(sha, pix, cy, pjz+0, &x000, &y000, &z000);
+                getVoronoiCell(sha, pix, cy+1, pjz+0, &x001, &y001, &z001);
+                getVoronoiCell(sha, pix, cy, pjz+1, &x100, &y100, &z100);
+                getVoronoiCell(sha, pix, cy+1, pjz+1, &x101, &y101, &z101);
                 prev_skip = 0;
             }
-            getVoronoiCell(sha, pix+1, y-1, pjz+0, &x010, &y010, &z010);
-            getVoronoiCell(sha, pix+1, y+0, pjz+0, &x011, &y011, &z011);
-            getVoronoiCell(sha, pix+1, y-1, pjz+1, &x110, &y110, &z110);
-            getVoronoiCell(sha, pix+1, y+0, pjz+1, &x111, &y111, &z111);
+            getVoronoiCell(sha, pix+1, cy, pjz+0, &x010, &y010, &z010);
+            getVoronoiCell(sha, pix+1, cy+1, pjz+0, &x011, &y011, &z011);
+            getVoronoiCell(sha, pix+1, cy, pjz+1, &x110, &y110, &z110);
+            getVoronoiCell(sha, pix+1, cy+1, pjz+1, &x111, &y111, &z111);
 
 
             for (jj = 0; jj < 4; jj++)
@@ -1908,7 +1911,6 @@ void mapVoronoiPlane(uint64_t sha, int *out, int *src,
                     if (i < 0 || i >= w) continue;
 
                     const int A = 40*1024;
-                    const int B = 20*1024;
                     dx = ii * 10*1024;
                     dz = jj * 10*1024;
                     dmin = (uint64_t)-1;
@@ -1916,45 +1918,45 @@ void mapVoronoiPlane(uint64_t sha, int *out, int *src,
                     v = v00;
                     d = 0;
                     r = x000 - 0 + dx;  d += r*r;
-                    r = y000 + B;       d += r*r;
+                    r = y000 + fy;      d += r*r;
                     r = z000 - 0 + dz;  d += r*r;
                     if (d < dmin) { dmin = d; }
                     d = 0;
                     r = x001 - 0 + dx;  d += r*r;
-                    r = y001 - B;       d += r*r;
+                    r = y001 + fy - A;  d += r*r;
                     r = z001 - 0 + dz;  d += r*r;
                     if (d < dmin) { dmin = d; }
 
                     d = 0;
                     r = x010 - A + dx;  d += r*r;
-                    r = y010 + B;       d += r*r;
+                    r = y010 + fy;      d += r*r;
                     r = z010 - 0 + dz;  d += r*r;
                     if (d < dmin) { dmin = d; v = v01; }
                     d = 0;
                     r = x011 - A + dx;  d += r*r;
-                    r = y011 - B;       d += r*r;
+                    r = y011 + fy - A;  d += r*r;
                     r = z011 - 0 + dz;  d += r*r;
                     if (d < dmin) { dmin = d; v = v01; }
 
                     d = 0;
                     r = x100 - 0 + dx;  d += r*r;
-                    r = y100 + B;       d += r*r;
+                    r = y100 + fy;      d += r*r;
                     r = z100 - A + dz;  d += r*r;
                     if (d < dmin) { dmin = d; v = v10; }
                     d = 0;
                     r = x101 - 0 + dx;  d += r*r;
-                    r = y101 - B;       d += r*r;
+                    r = y101 + fy - A;  d += r*r;
                     r = z101 - A + dz;  d += r*r;
                     if (d < dmin) { dmin = d; v = v10; }
 
                     d = 0;
                     r = x110 - A + dx;  d += r*r;
-                    r = y110 + B;       d += r*r;
+                    r = y110 + fy;      d += r*r;
                     r = z110 - A + dz;  d += r*r;
                     if (d < dmin) { dmin = d; v = v11; }
                     d = 0;
                     r = x111 - A + dx;  d += r*r;
-                    r = y111 - B;       d += r*r;
+                    r = y111 + fy - A;  d += r*r;
                     r = z111 - A + dz;  d += r*r;
                     if (d < dmin) { dmin = d; v = v11; }
 
@@ -1998,10 +2000,7 @@ int mapVoronoi(const Layer * l, int * out, int x, int z, int w, int h)
 
     int *src = out + (int64_t)w*h;
     memmove(src, out, sizeof(int)*pw*ph);
-    // mapVoronoiPlane() shifts the block coordinates itself and evaluates the
-    // cell layers y-1 and y (after its own shift by 2) at the fraction of a
-    // block y with (y-2) & 3 == 2: the argument 2 is block y = 0.
-    mapVoronoiPlane(l->startSalt, out, src, x,z,w,h, 2, px,pz,pw,ph);
+    mapVoronoiPlane(l->startSalt, out, src, x,z,w,h, 0, px,pz,pw,ph);
 
     return 0;
 }

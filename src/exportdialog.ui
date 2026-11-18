@@ -3,7 +3,7 @@
  <class>ExportDialog</class>
  <widget class="QDialog" name="ExportDialog">
   <property name="windowTitle">
-   <string>Biome Image Export</string>
+   <string>Export biome images</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">
@@ -19,15 +19,18 @@
    </item>
    <item row="7" column="4" colspan="2">
     <widget class="QPushButton" name="buttonFromVisible">
+     <property name="toolTip">
+      <string>Fill in the area that the map currently shows</string>
+     </property>
      <property name="text">
-      <string>From visible</string>
+      <string>Use map view</string>
      </property>
     </widget>
    </item>
    <item row="5" column="1" colspan="5">
     <widget class="QLabel" name="label_9">
      <property name="text">
-      <string>%S - seed; %x, %z - tile coordinates</string>
+      <string>%S = seed, %x and %z = tile coordinates</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
@@ -37,7 +40,7 @@
    <item row="3" column="1">
     <widget class="QLabel" name="labelDir">
      <property name="text">
-      <string>Export directory:</string>
+      <string>Export folder:</string>
      </property>
     </widget>
    </item>
@@ -129,7 +132,7 @@
      </item>
      <item>
       <property name="text">
-       <string>From matching seeds list</string>
+       <string>All matching seeds</string>
       </property>
      </item>
     </widget>
@@ -406,15 +409,21 @@
    </item>
    <item row="1" column="1">
     <widget class="QLabel" name="label_3">
+     <property name="toolTip">
+      <string>How many blocks one image pixel covers along each side: at 1:4, one pixel stands for 4 by 4 blocks</string>
+     </property>
      <property name="text">
-      <string>Scale (pixel:blocks):</string>
+      <string>Scale (pixels : blocks):</string>
      </property>
     </widget>
    </item>
    <item row="2" column="1">
     <widget class="QLabel" name="label_13">
+     <property name="toolTip">
+      <string>Show the approximate terrain height in Overworld images</string>
+     </property>
      <property name="text">
-      <string>Heightmap:</string>
+      <string>Height map:</string>
      </property>
     </widget>
    </item>

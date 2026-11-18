@@ -1,4 +1,7 @@
 #include "tabslime.h"
+#include "appactivity.h"
+#include "datapackworld.h"
+#include "dpmap.h"
 
 #include "message.h"
 #include "resultlist.h"
@@ -35,6 +38,7 @@ static int blockToChunk(int block)
 
 void AnalysisSlime::run()
 {
+    BusyActivity busy; // not to be throttled while out of view
     workers.reset();
     resultCount.store(0, std::memory_order_relaxed);
     const int64_t width64 = int64_t(x2) - x1 + 1;
@@ -179,15 +183,20 @@ TabSlime::TabSlime(MainWindow *parent)
     labelDimension = new QLabel(tr("Slime chunks only exist in the Overworld. "
         "Switch the map to the Overworld to use this tool."), this);
     labelDimension->setWordWrap(true);
-    labelDimension->setContentsMargins(9, 6, 9, 0);
-    labelDimension->setStyleSheet("QLabel { font-weight: 600; }");
+    labelDimension->setContentsMargins(0, 0, 0, 6);
+    labelDimension->setObjectName("labelNotice");
     labelDimension->hide();
     outer->addWidget(labelDimension);
     body = new QWidget(this);
+    body->setObjectName("slimeBody");
     outer->addWidget(body, 1);
 
     QVBoxLayout *layout = new QVBoxLayout(body);
-    layout->addWidget(new QLabel(tr("Find dense slime-chunk areas in the Overworld."), this));
+    layout->setContentsMargins(0, 0, 0, 0);
+    QLabel *description = new QLabel(tr("Find dense slime-chunk areas in the Overworld."), this);
+    description->setObjectName("labelDescription");
+    description->setWordWrap(true);
+    layout->addWidget(description);
 
     const auto inputWithInfo = [this](QLineEdit *&edit, const QString& value,
             const QString& info) {
@@ -214,27 +223,36 @@ TabSlime::TabSlime(MainWindow *parent)
         return box;
     };
 
-    QGridLayout *options = new QGridLayout;
-    options->addWidget(new QLabel(tr("Chunk X₁:"), this), 0, 0);
-    options->addWidget(inputWithInfo(lineX1, "-500",
+    // the area corners in one grid, the search options in a second one, so
+    // the long option labels do not squeeze the coordinate fields
+    QGridLayout *area = new QGridLayout;
+    area->addWidget(new QLabel(tr("Chunk X₁:"), this), 0, 0);
+    area->addWidget(inputWithInfo(lineX1, "-500",
         tr("First X corner of the search area, in chunks.")), 0, 1);
-    options->addWidget(new QLabel(tr("Chunk Z₁:"), this), 0, 2);
-    options->addWidget(inputWithInfo(lineZ1, "-500",
+    area->addWidget(new QLabel(tr("Chunk Z₁:"), this), 0, 2);
+    area->addWidget(inputWithInfo(lineZ1, "-500",
         tr("First Z corner of the search area, in chunks.")), 0, 3);
-    options->addWidget(new QLabel(tr("Chunk X₂:"), this), 1, 0);
-    options->addWidget(inputWithInfo(lineX2, "500",
+    area->addWidget(new QLabel(tr("Chunk X₂:"), this), 1, 0);
+    area->addWidget(inputWithInfo(lineX2, "500",
         tr("Second X corner of the search area, in chunks.")), 1, 1);
-    options->addWidget(new QLabel(tr("Chunk Z₂:"), this), 1, 2);
-    options->addWidget(inputWithInfo(lineZ2, "500",
+    area->addWidget(new QLabel(tr("Chunk Z₂:"), this), 1, 2);
+    area->addWidget(inputWithInfo(lineZ2, "500",
         tr("Second Z corner of the search area, in chunks.")), 1, 3);
-    QPushButton *fromVisible = new QPushButton(tr("From visible"), this);
-    options->addWidget(fromVisible, 0, 4, 2, 1);
-    options->addWidget(new QLabel(tr("Window (chunks):"), this), 2, 0);
+    area->setColumnStretch(1, 1);
+    area->setColumnStretch(3, 1);
+    layout->addLayout(area);
+
+    QGridLayout *options = new QGridLayout;
+    QPushButton *fromVisible = new QPushButton(tr("Use map view"), this);
+    fromVisible->setToolTip(tr("Fill in the area that the map currently shows"));
+    options->addWidget(new QLabel(tr("Window (chunks):"), this), 0, 0);
     options->addWidget(spinWithInfo(spinWindow, 10, 256,
-        tr("Tests every possible square with this side length. A value of 10 means a 10 by 10 chunk square.")), 2, 1);
-    options->addWidget(new QLabel(tr("Minimum slime chunks:"), this), 3, 0);
+        tr("Tests every possible square with this side length. A value of 10 means a 10 by 10 chunk square.")), 0, 1);
+    options->addWidget(fromVisible, 0, 3);
+    options->addWidget(new QLabel(tr("Minimum slime chunks:"), this), 1, 0);
     options->addWidget(spinWithInfo(spinMinimum, 15, 65536,
-        tr("Only squares with at least this many slime chunks are listed. Higher values return fewer, denser places.")), 3, 1);
+        tr("Only squares with at least this many slime chunks are listed. Higher values return fewer, denser places.")), 1, 1);
+    options->setColumnStretch(2, 1);
     layout->addLayout(options);
 
     results = new ResultTable({tr("slime"), tr("window"), tr("chunk X1"), tr("chunk Z1"),
@@ -245,8 +263,10 @@ TabSlime::TabSlime(MainWindow *parent)
     results->header()->setMinimumSectionSize(24);
     results->header()->setStretchLastSection(true);
     results->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    results->setEmptyText(tr("No slime-chunk areas yet. Press Analyze."));
     layout->addWidget(results, 1);
     labelStatus = new QLabel(tr("Ready"), this);
+    labelStatus->setObjectName("labelStatus");
     labelStatus->setWordWrap(true);
     layout->addWidget(labelStatus);
 
@@ -254,6 +274,7 @@ TabSlime::TabSlime(MainWindow *parent)
     pushExport = new QPushButton(tr("Export..."), this);
     pushExport->setEnabled(false);
     pushStart = new QPushButton(tr("Analyze"), this);
+    pushStart->setProperty("primary", true);
     actions->addWidget(pushExport);
     actions->addWidget(pushStart);
     layout->addLayout(actions);
@@ -320,8 +341,16 @@ void TabSlime::refresh()
         pushExport->setEnabled(false);
         labelStatus->setText(tr("Seed changed. Analyze again."));
     }
-    const bool overworld = parent->getDim() == DIM_OVERWORLD;
+    // a datapack world: the dimension of the Datapacks tool (slime chunks
+    // only exist in Overworld-like dimensions)
+    const bool overworld = current.dp ? dpEngineDim(*current.dp) == DIM_OVERWORLD
+        : parent->getDim() == DIM_OVERWORLD;
     body->setEnabled(overworld);
+    labelDimension->setText(current.dp
+        ? tr("Slime chunks only exist in the Overworld. Pick an Overworld-like dimension in "
+             "Datapacks to use this tool.")
+        : tr("Slime chunks only exist in the Overworld. "
+             "Switch the map to the Overworld to use this tool."));
     labelDimension->setVisible(!overworld);
 }
 

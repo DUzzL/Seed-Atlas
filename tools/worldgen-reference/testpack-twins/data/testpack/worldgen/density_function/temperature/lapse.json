@@ -1,0 +1,42 @@
+{
+  "type": "minecraft:add",
+  "argument1": {
+    "type": "minecraft:mul",
+    "argument1": {
+      "type": "minecraft:blend_alpha"
+    },
+    "argument2": {
+      "type": "minecraft:cache_2d",
+      "argument": {
+        "type": "minecraft:range_choice",
+        "input": "minecraft:y",
+        "min_inclusive": 64.0,
+        "max_exclusive": 128.0,
+        "when_in_range": {
+          "type": "minecraft:y_clamped_gradient",
+          "from_y": 64,
+          "to_y": 128,
+          "from_value": 0.3,
+          "to_value": -0.3
+        },
+        "when_out_of_range": {
+          "type": "minecraft:y_clamped_gradient",
+          "from_y": -64,
+          "to_y": 320,
+          "from_value": 0.2,
+          "to_value": -0.2
+        }
+      }
+    }
+  },
+  "argument2": {
+    "type": "minecraft:mul",
+    "argument1": {
+      "type": "minecraft:cache_once",
+      "argument": {
+        "type": "minecraft:blend_offset"
+      }
+    },
+    "argument2": 3.0
+  }
+}

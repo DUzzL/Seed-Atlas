@@ -1,0 +1,142 @@
+{
+  "left": {
+    "left": 0.4,
+    "right": {
+      "input": {
+        "left": 3.0,
+        "right": {
+          "noise": "testpack:plain",
+          "type": "minecraft:noise",
+          "xz_scale": 0.13,
+          "y_scale": 0.0
+        },
+        "type": "minecraft:mul"
+      },
+      "type": "minecraft:floor"
+    },
+    "type": "minecraft:mul"
+  },
+  "right": {
+    "left": {
+      "input": {
+        "noise": "testpack:raw",
+        "type": "minecraft:noise",
+        "xz_scale": 0.07,
+        "y_scale": 0.0
+      },
+      "multiple": 0.25,
+      "type": "minecraft:round"
+    },
+    "right": {
+      "left": {
+        "left": {
+          "input": {
+            "noise": "testpack:plain",
+            "type": "minecraft:noise",
+            "xz_scale": 0.09,
+            "y_scale": 0.0
+          },
+          "type": "minecraft:ceil"
+        },
+        "right": {
+          "input": {
+            "left": 2.5,
+            "right": {
+              "noise": "testpack:legacy",
+              "type": "minecraft:noise",
+              "xz_scale": 0.05,
+              "y_scale": 0.0
+            },
+            "type": "minecraft:mul"
+          },
+          "type": "minecraft:truncate"
+        },
+        "type": "minecraft:mul"
+      },
+      "right": {
+        "left": {
+          "axis": "x",
+          "from_coordinate": -3000,
+          "from_value": -0.5,
+          "tiling": "repeat",
+          "to_coordinate": 4000,
+          "to_value": 0.5,
+          "type": "minecraft:gradient"
+        },
+        "right": {
+          "left": {
+            "axis": "z",
+            "from_coordinate": 5000,
+            "from_value": 0.4,
+            "tiling": "mirrored_repeat",
+            "to_coordinate": -2500,
+            "to_value": -0.4,
+            "type": "minecraft:gradient"
+          },
+          "right": {
+            "left": {
+              "left": {
+                "metric": "manhattan",
+                "point": [
+                  1200,
+                  0,
+                  -900
+                ],
+                "type": "minecraft:distance_to_point"
+              },
+              "right": -20000.0,
+              "type": "minecraft:div"
+            },
+            "right": {
+              "left": {
+                "axis": "x",
+                "coordinate": 777,
+                "input": {
+                  "noise": "testpack:plain",
+                  "type": "minecraft:noise",
+                  "xz_scale": 0.21,
+                  "y_scale": 0.0
+                },
+                "type": "minecraft:slice"
+              },
+              "right": {
+                "functions": [
+                  -0.3,
+                  0.2,
+                  0.9,
+                  {
+                    "noise": "testpack:plain",
+                    "type": "minecraft:noise",
+                    "xz_scale": 0.6,
+                    "y_scale": 0.0
+                  },
+                  0.5
+                ],
+                "input": {
+                  "noise": "testpack:raw",
+                  "type": "minecraft:noise",
+                  "xz_scale": 0.17,
+                  "y_scale": 0.0
+                },
+                "thresholds": [
+                  -0.4,
+                  0.1,
+                  0.1,
+                  0.6
+                ],
+                "type": "minecraft:interval_select"
+              },
+              "type": "minecraft:add"
+            },
+            "type": "minecraft:add"
+          },
+          "type": "minecraft:add"
+        },
+        "type": "minecraft:add"
+      },
+      "type": "minecraft:add"
+    },
+    "type": "minecraft:add"
+  },
+  "type": "minecraft:add"
+}

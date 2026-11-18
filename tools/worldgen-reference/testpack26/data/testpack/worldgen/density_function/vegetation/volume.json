@@ -1,0 +1,11 @@
+{
+  "cell_size_xz": 8,
+  "cell_size_y": 4,
+  "input": {
+    "noise": "testpack:volume",
+    "type": "minecraft:noise",
+    "xz_scale": 1.0,
+    "y_scale": 1.5
+  },
+  "type": "minecraft:interpolated"
+}

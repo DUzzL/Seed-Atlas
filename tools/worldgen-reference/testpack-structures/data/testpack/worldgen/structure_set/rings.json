@@ -1,0 +1,16 @@
+{
+  "placement": {
+    "type": "minecraft:concentric_rings",
+    "salt": 0,
+    "distance": 6,
+    "spread": 4,
+    "count": 10,
+    "preferred_biomes": "#testpack:ring_preferred"
+  },
+  "structures": [
+    {
+      "structure": "testpack:ring_marker",
+      "weight": 1
+    }
+  ]
+}

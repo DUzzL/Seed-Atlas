@@ -1,0 +1,39 @@
+{
+  "pack": {
+    "pack_format": 48,
+    "supported_formats": [
+      41,
+      48
+    ],
+    "description": "Seed Atlas worldgen test pack: custom overworld climate and biome list"
+  },
+  "overlays": {
+    "entries": [
+      {
+        "formats": [
+          4,
+          12
+        ],
+        "directory": "overlay_old"
+      },
+      {
+        "formats": [
+          41,
+          48
+        ],
+        "directory": "overlay_a"
+      },
+      {
+        "formats": {
+          "min_inclusive": 41,
+          "max_inclusive": 48
+        },
+        "directory": "overlay_b"
+      },
+      {
+        "formats": 41,
+        "directory": "overlay_41"
+      }
+    ]
+  }
+}

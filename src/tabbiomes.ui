@@ -6,6 +6,18 @@
    <string>Form</string>
   </property>
   <layout class="QGridLayout" name="gridLayout">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
    <item row="0" column="0" colspan="2">
     <widget class="QLabel" name="labelDescription">
      <property name="text">
@@ -56,7 +68,7 @@
      </item>
      <item>
       <property name="text">
-       <string>From matching seeds list</string>
+       <string>All matching seeds</string>
       </property>
      </item>
     </widget>
@@ -159,8 +171,11 @@
      </item>
      <item row="0" column="1">
       <widget class="QPushButton" name="buttonFromVisible">
+       <property name="toolTip">
+        <string>Fill in the area that the map currently shows</string>
+       </property>
        <property name="text">
-        <string>From visible</string>
+        <string>Use map view</string>
        </property>
       </widget>
      </item>
@@ -186,10 +201,10 @@
        <item row="1" column="0">
         <widget class="QLabel" name="label_5">
          <property name="toolTip">
-          <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Minimum total biome area in 16x16-block chunks&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+          <string>Only list areas of the biome that cover at least this many chunks (16 by 16 blocks each)</string>
          </property>
          <property name="text">
-          <string>Minimum area (chunks):</string>
+          <string>Minimum area:</string>
          </property>
         </widget>
        </item>
@@ -209,14 +224,14 @@
           </sizepolicy>
          </property>
          <property name="text">
-          <string>sq. chunks</string>
+          <string>chunks</string>
          </property>
         </widget>
        </item>
        <item row="2" column="0">
         <widget class="QLabel" name="label_4">
          <property name="toolTip">
-          <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Merge biomes that are separated by a margin that is less than this&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+          <string>Count patches of the biome as one area when fewer than this many 4-block steps of other biomes lie between them. 0 and 1 merge nothing.</string>
          </property>
          <property name="text">
           <string>Border tolerance:</string>
@@ -330,15 +345,21 @@
         <layout class="QGridLayout" name="gridLayout_3">
          <item row="1" column="0">
           <widget class="QRadioButton" name="radioStochastic">
+           <property name="toolTip">
+            <string>Estimate the biome shares from this many random positions, sampled at 1:4 (one sample per 4 by 4 blocks). Faster for large areas.</string>
+           </property>
            <property name="text">
-            <string>Random samples (scale 1:4):</string>
+            <string>Random samples (1:4):</string>
            </property>
           </widget>
          </item>
          <item row="0" column="0">
           <widget class="QRadioButton" name="radioFullSample">
+           <property name="toolTip">
+            <string>Check the whole area. At 1:1 every block is checked, at 1:4 one position per 4 by 4 blocks, and so on.</string>
+           </property>
            <property name="text">
-            <string>Full area sampling with scale:</string>
+            <string>Whole area at scale:</string>
            </property>
            <property name="checked">
             <bool>true</bool>

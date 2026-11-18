@@ -1,0 +1,14 @@
+{
+  "type": "minecraft:flat_cache",
+  "argument": {
+    "type": "minecraft:cache_2d",
+    "argument": {
+      "type": "minecraft:mul",
+      "argument1": 20.0,
+      "argument2": {
+        "type": "minecraft:shift_a",
+        "argument": "testpack:shift"
+      }
+    }
+  }
+}

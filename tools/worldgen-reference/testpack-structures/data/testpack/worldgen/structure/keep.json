@@ -1,0 +1,10 @@
+{
+  "type": "minecraft:fortress",
+  "biomes": [
+    "testpack:pearl_coast",
+    "testpack:outer_rim",
+    "minecraft:river"
+  ],
+  "step": "underground_decoration",
+  "spawn_overrides": {}
+}

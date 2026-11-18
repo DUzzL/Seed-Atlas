@@ -32,7 +32,7 @@
     <property name="bottomMargin">
      <number>0</number>
     </property>
-    <item row="0" column="0">
+    <item row="0" column="1">
      <widget class="QSplitter" name="splitterMap">
       <property name="orientation">
        <enum>Qt::Horizontal</enum>
@@ -42,192 +42,225 @@
         <enum>QFrame::NoFrame</enum>
        </property>
        <layout class="QVBoxLayout" name="verticalLayout_5">
+        <property name="spacing">
+         <number>10</number>
+        </property>
         <property name="leftMargin">
-         <number>0</number>
+         <number>14</number>
         </property>
         <property name="topMargin">
-         <number>0</number>
+         <number>14</number>
         </property>
         <property name="rightMargin">
-         <number>0</number>
+         <number>14</number>
         </property>
         <property name="bottomMargin">
-         <number>0</number>
+         <number>12</number>
         </property>
         <item>
-         <layout class="QGridLayout" name="gridMCSeed">
-          <property name="horizontalSpacing">
-           <number>10</number>
+         <widget class="QFrame" name="worldBar">
+          <property name="frameShape">
+           <enum>QFrame::NoFrame</enum>
           </property>
-          <property name="verticalSpacing">
-           <number>8</number>
-          </property>
-          <property name="leftMargin">
-           <number>14</number>
-          </property>
-          <property name="topMargin">
-           <number>12</number>
-          </property>
-          <property name="rightMargin">
-           <number>14</number>
-          </property>
-          <property name="bottomMargin">
-           <number>10</number>
-          </property>
-          <item row="1" column="0" colspan="2">
-           <widget class="QCheckBox" name="checkLarge">
-            <property name="text">
-             <string>Large biomes</string>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="1">
-           <widget class="StyledComboBox" name="comboBoxMC">
-            <property name="toolTip">
-             <string>Minecraft version</string>
-            </property>
-            <property name="minimumContentsLength">
-             <number>8</number>
-            </property>
-            <property name="iconSize">
-             <size>
-              <width>0</width>
-              <height>16</height>
-             </size>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="7">
-           <widget class="StyledComboBox" name="comboY">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="maxVisibleItems">
-             <number>12</number>
-            </property>
-            <item>
-             <property name="text">
-              <string>256 (Surface)</string>
+          <layout class="QHBoxLayout" name="gridMCSeed">
+           <property name="spacing">
+            <number>6</number>
+           </property>
+           <property name="leftMargin">
+            <number>8</number>
+           </property>
+           <property name="topMargin">
+            <number>6</number>
+           </property>
+           <property name="rightMargin">
+            <number>8</number>
+           </property>
+           <property name="bottomMargin">
+            <number>6</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="labelMC">
+             <property name="toolTip">
+              <string>Minecraft version</string>
              </property>
-            </item>
-            <item>
              <property name="text">
-              <string>128 (Nether Roof)</string>
+              <string>Version</string>
              </property>
-            </item>
-            <item>
+            </widget>
+           </item>
+           <item>
+            <widget class="StyledComboBox" name="comboBoxMC">
+             <property name="toolTip">
+              <string>Minecraft version</string>
+             </property>
+             <property name="minimumContentsLength">
+              <number>6</number>
+             </property>
+             <property name="sizeAdjustPolicy">
+              <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
+             </property>
+             <property name="iconSize">
+              <size>
+               <width>0</width>
+               <height>16</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelSeed">
+             <property name="toolTip">
+              <string>The world seed: a number or any text, as in Minecraft. Leave it empty for a random seed.</string>
+             </property>
              <property name="text">
-              <string>62 (Sea Level)</string>
+              <string>Seed</string>
              </property>
-            </item>
-            <item>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="seedEdit">
+             <property name="toolTip">
+              <string>The world seed: a number or any text, as in Minecraft. Leave it empty for a random seed. Press Enter to open it.</string>
+             </property>
+             <property name="placeholderText">
+              <string>Seed</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelWorldType">
+             <property name="toolTip">
+              <string>World type, as chosen when the world was created</string>
+             </property>
              <property name="text">
-              <string>48</string>
+              <string>World</string>
              </property>
-            </item>
-            <item>
+            </widget>
+           </item>
+           <item>
+            <widget class="StyledComboBox" name="comboWorldType">
+             <property name="toolTip">
+              <string>World type, as chosen when the world was created</string>
+             </property>
+             <property name="minimumContentsLength">
+              <number>16</number>
+             </property>
+             <property name="sizeAdjustPolicy">
+              <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
+             </property>
+             <property name="iconSize">
+              <size>
+               <width>0</width>
+               <height>16</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelY">
+             <property name="toolTip">
+              <string>The height (Y level) at which the map shows biomes. In 1.18 and newer, cave biomes only appear at lower levels.</string>
+             </property>
              <property name="text">
-              <string>32</string>
+              <string>Y</string>
              </property>
-            </item>
-            <item>
-             <property name="text">
-              <string>16</string>
+             <property name="alignment">
+              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
              </property>
-            </item>
-            <item>
-             <property name="text">
-              <string>0</string>
+            </widget>
+           </item>
+           <item>
+            <widget class="StyledComboBox" name="comboY">
+             <property name="toolTip">
+              <string>The height (Y level) at which the map shows biomes. In 1.18 and newer, cave biomes only appear at lower levels.</string>
              </property>
-            </item>
-            <item>
-             <property name="text">
-              <string>-16</string>
+             <property name="sizeAdjustPolicy">
+              <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
              </property>
-            </item>
-            <item>
-             <property name="text">
-              <string>-32</string>
+             <property name="minimumContentsLength">
+              <number>4</number>
              </property>
-            </item>
-            <item>
-             <property name="text">
-              <string>-48</string>
+             <property name="maxVisibleItems">
+              <number>12</number>
              </property>
-            </item>
-            <item>
-             <property name="text">
-              <string>-64 (Bedrock)</string>
-             </property>
-            </item>
-           </widget>
-          </item>
-          <item row="0" column="0">
-           <widget class="QLabel" name="labelMC">
-            <property name="toolTip">
-             <string>Minecraft version</string>
-            </property>
-            <property name="text">
-             <string>MC</string>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="7">
-           <layout class="QHBoxLayout" name="horizontalLayout_2">
-            <property name="spacing">
-             <number>0</number>
-            </property>
-            <item>
-             <widget class="QLineEdit" name="seedEdit">
-              <property name="toolTip">
-               <string>Press enter to accept</string>
+             <item>
+              <property name="text">
+               <string>256 (surface)</string>
               </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item row="1" column="3">
-           <widget class="QLabel" name="labelY">
-            <property name="toolTip">
-             <string>Show map for this y-level</string>
-            </property>
-            <property name="text">
-             <string>Y:</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="2">
-           <widget class="QLabel" name="labelMono">
-            <property name="font">
-             <font>
-              <family>Courier New</family>
-             </font>
-            </property>
-            <property name="text">
-             <string/>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="2" colspan="2">
-           <widget class="QLabel" name="labelSeed">
-            <property name="toolTip">
-             <string>Seed can be an integer or text. Leave empty for a random seed</string>
-            </property>
-            <property name="text">
-             <string>seed:</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-            </property>
-           </widget>
-          </item>
-         </layout>
+             </item>
+             <item>
+              <property name="text">
+               <string>128 (Nether roof)</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>62 (sea level)</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>48</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>32</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>16</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>0</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>-16</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>-32</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>-48</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>-64 (bedrock)</string>
+              </property>
+             </item>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelMono">
+             <property name="font">
+              <font>
+               <family>Courier New</family>
+              </font>
+             </property>
+             <property name="text">
+              <string/>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="panelTitle">
+          <property name="text">
+           <string>Seed Finder</string>
+          </property>
+         </widget>
         </item>
         <item>
          <widget class="QTabWidget" name="tabContainer">
@@ -251,6 +284,15 @@
             <property name="leftMargin">
              <number>0</number>
             </property>
+            <property name="topMargin">
+             <number>0</number>
+            </property>
+            <property name="rightMargin">
+             <number>0</number>
+            </property>
+            <property name="bottomMargin">
+             <number>0</number>
+            </property>
             <item row="0" column="0">
              <widget class="QSplitter" name="splitterSearch">
               <property name="orientation">
@@ -267,7 +309,16 @@
               <widget class="QWidget" name="gridLayoutWidget">
                <layout class="QGridLayout" name="gridLayout">
                 <property name="leftMargin">
-                 <number>18</number>
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>6</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
                 </property>
                 <item row="0" column="0">
                  <widget class="QTabWidget" name="tabContainerSearch">
@@ -280,6 +331,12 @@
                    </attribute>
                    <layout class="QGridLayout" name="gridLayout_2">
                     <property name="leftMargin">
+                     <number>0</number>
+                    </property>
+                    <property name="topMargin">
+                     <number>0</number>
+                    </property>
+                    <property name="rightMargin">
                      <number>0</number>
                     </property>
                     <property name="bottomMargin">
@@ -349,16 +406,13 @@
    <property name="windowTitle">
     <string>Map controls</string>
    </property>
-   <property name="layoutDirection">
-    <enum>Qt::RightToLeft</enum>
-   </property>
    <property name="autoFillBackground">
     <bool>false</bool>
    </property>
    <property name="iconSize">
     <size>
-       <width>32</width>
-       <height>32</height>
+     <width>24</width>
+     <height>24</height>
     </size>
    </property>
    <property name="movable">
@@ -482,6 +536,9 @@
    <property name="text">
     <string>Open shadow seed</string>
    </property>
+   <property name="toolTip">
+    <string>Open the shadow seed of the current seed. Up to 1.17, a seed and its shadow seed have the same biome layout but different terrain and structures.</string>
+   </property>
   </action>
   <action name="actionSave">
    <property name="text">
@@ -504,22 +561,25 @@
     <string>Search seed list...</string>
    </property>
    <property name="toolTip">
-    <string>Load seeds from file for search</string>
+    <string>Search only the seeds listed in a text file</string>
    </property>
   </action>
   <action name="actionSearch_full_seed_space">
    <property name="text">
-    <string>Search full seed space</string>
+    <string>Search all seeds, structure seeds first</string>
+   </property>
+   <property name="toolTip">
+    <string>Search every possible seed instead of a seed list, grouped by structure seed (the lower 48 bits)</string>
    </property>
   </action>
   <action name="actionCopy">
    <property name="text">
-    <string>Copy seeds from list</string>
+    <string>Copy matching seeds</string>
    </property>
   </action>
   <action name="actionPaste">
    <property name="text">
-    <string>Paste seeds into list</string>
+    <string>Paste seeds into matching seeds</string>
    </property>
   </action>
   <action name="actionPreferences">
@@ -534,12 +594,18 @@
   </action>
   <action name="actionAddShadow">
    <property name="text">
-    <string>Add shadow for all seeds</string>
+    <string>Add shadow seeds of all matching seeds</string>
+   </property>
+   <property name="toolTip">
+    <string>Add the shadow seed of every matching seed to the list. Up to 1.17, a shadow seed has the same biome layout but different terrain and structures.</string>
    </property>
   </action>
   <action name="actionExtGen">
    <property name="text">
     <string>Advanced world settings...</string>
+   </property>
+   <property name="toolTip">
+    <string>Structure salt overrides, the terrain estimate and experimental versions</string>
    </property>
   </action>
   <action name="actionPresetLoad">
@@ -560,7 +626,10 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Biome scales (default)</string>
+    <string>Biomes (default)</string>
+   </property>
+   <property name="toolTip">
+    <string>The normal biome map. Alt+0 to Alt+4 switch between 1:1 and 1:256 (blocks per biome sample).</string>
    </property>
    <property name="shortcut">
     <string>Alt+B</string>
@@ -579,7 +648,10 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>(1.13 - 1.17) O. Temp. 1:256</string>
+    <string>(1.13 - 1.17) Ocean temperature (1:256)</string>
+   </property>
+   <property name="toolTip">
+    <string>The ocean temperature layer of 1.13 to 1.17 (warm, lukewarm, cold, frozen). At 1:256, one sample covers 256 by 256 blocks.</string>
    </property>
    <property name="shortcut">
     <string>Alt+O</string>
@@ -590,7 +662,10 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>(1.13 - 1.17) River Mix 1:4</string>
+    <string>(1.13 - 1.17) Biomes before ocean temperatures (1:4)</string>
+   </property>
+   <property name="toolTip">
+    <string>The 1.13 to 1.17 biome layer right after rivers are added, before oceans get their temperature variants. At 1:4, one sample covers 4 by 4 blocks.</string>
    </property>
    <property name="shortcut">
     <string>Alt+R</string>
@@ -603,7 +678,10 @@
   </action>
   <action name="actionToolbarConfig">
    <property name="text">
-    <string>Toolbar tools...</string>
+    <string>Map buttons...</string>
+   </property>
+   <property name="toolTip">
+    <string>Choose which layers get a button in the layer sidebar, and up to which zoom level their icons are shown</string>
    </property>
   </action>
   <action name="actionParaTemperature">
@@ -612,6 +690,9 @@
    </property>
    <property name="text">
     <string>(1.18+) Temperature</string>
+   </property>
+   <property name="toolTip">
+    <string>Show the temperature climate value, one of the values the 1.18+ generator uses to pick biomes</string>
    </property>
    <property name="shortcut">
     <string>Alt+T</string>
@@ -624,6 +705,9 @@
    <property name="text">
     <string>(1.18+) Humidity</string>
    </property>
+   <property name="toolTip">
+    <string>Show the humidity (vegetation) climate value, one of the values the 1.18+ generator uses to pick biomes</string>
+   </property>
    <property name="shortcut">
     <string>Alt+H</string>
    </property>
@@ -634,6 +718,9 @@
    </property>
    <property name="text">
     <string>(1.18+) Continentalness</string>
+   </property>
+   <property name="toolTip">
+    <string>Show the continentalness climate value: low values are ocean, high values are far inland</string>
    </property>
    <property name="shortcut">
     <string>Alt+C</string>
@@ -646,6 +733,9 @@
    <property name="text">
     <string>(1.18+) Erosion</string>
    </property>
+   <property name="toolTip">
+    <string>Show the erosion climate value: low values give mountainous terrain, high values flat terrain</string>
+   </property>
    <property name="shortcut">
     <string>Alt+E</string>
    </property>
@@ -656,6 +746,9 @@
    </property>
    <property name="text">
     <string>(1.18+) Weirdness</string>
+   </property>
+   <property name="toolTip">
+    <string>Show the weirdness climate value, which selects biome variants and where peaks and valleys form</string>
    </property>
    <property name="shortcut">
     <string>Alt+W</string>
@@ -668,6 +761,9 @@
    <property name="text">
     <string>(1.18+) Depth</string>
    </property>
+   <property name="toolTip">
+    <string>Show the depth value at the selected Y level, which the 1.18+ generator uses for cave biomes</string>
+   </property>
    <property name="shortcut">
     <string>Alt+D</string>
    </property>
@@ -677,7 +773,10 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Structure potential (48-bit)</string>
+    <string>Possible structure positions</string>
+   </property>
+   <property name="toolTip">
+    <string>Hide the Overworld biomes and show every position where a structure is attempted, before the biome check. These positions depend only on the structure seed (the lower 48 bits of the seed).</string>
    </property>
    <property name="shortcut">
     <string>Alt+S</string>
@@ -701,7 +800,10 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Approx. surface height</string>
+    <string>Approximate surface height</string>
+   </property>
+   <property name="toolTip">
+    <string>An estimate of the terrain height, computed without generating the full terrain</string>
    </property>
    <property name="shortcut">
     <string>Alt+Y</string>
@@ -720,7 +822,7 @@
   </action>
   <action name="actionLayerDisplay">
    <property name="text">
-    <string>Display options...</string>
+    <string>Layer display options...</string>
    </property>
   </action>
   <action name="actionNoOceans">
@@ -728,7 +830,10 @@
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>(Beta 1.7) No beta oceans</string>
+    <string>(Beta 1.7) Biomes without oceans</string>
+   </property>
+   <property name="toolTip">
+    <string>The Beta 1.7 biome map without its ocean overlay</string>
    </property>
   </action>
   <action name="actionBetaTemperature">
@@ -749,7 +854,10 @@
   </action>
   <action name="actionRedistribute">
    <property name="text">
-    <string>Redistribute condition IDs</string>
+    <string>Renumber condition IDs</string>
+   </property>
+   <property name="toolTip">
+    <string>Number the Seed Finder conditions 1, 2, 3, ... in list order. References between conditions are kept.</string>
    </property>
   </action>
  </widget>

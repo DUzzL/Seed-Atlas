@@ -1,0 +1,24 @@
+{
+  "type": "minecraft:flat_cache",
+  "argument": {
+    "type": "minecraft:cache_2d",
+    "argument": {
+      "type": "minecraft:cache_once",
+      "argument": {
+        "type": "minecraft:mul",
+        "argument1": {
+          "type": "minecraft:blend_alpha"
+        },
+        "argument2": {
+          "type": "minecraft:add",
+          "argument1": {
+            "type": "minecraft:mul",
+            "argument1": 0.8,
+            "argument2": "minecraft:overworld/offset"
+          },
+          "argument2": "testpack:depth/terrace"
+        }
+      }
+    }
+  }
+}

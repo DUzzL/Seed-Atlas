@@ -1,4 +1,5 @@
 #include "gotodialog.h"
+#include <QStyle>
 #include "ui_gotodialog.h"
 
 #include "mapview.h"
@@ -60,7 +61,10 @@ void GotoDialog::on_buttonBox_clicked(QAbstractButton *button)
 void GotoDialog::on_lineScale_textChanged(const QString &text)
 {
     qreal value = text.toDouble();
-    ui->lineScale->setStyleSheet(value < scalemin || value > scalemax ? "color: red" : "");
+    // the theme colors an invalid value (QLineEdit[invalid="true"])
+    ui->lineScale->setProperty("invalid", value < scalemin || value > scalemax);
+    ui->lineScale->style()->unpolish(ui->lineScale);
+    ui->lineScale->style()->polish(ui->lineScale);
 }
 
 void GotoDialog::keyPressEvent(QKeyEvent *event)

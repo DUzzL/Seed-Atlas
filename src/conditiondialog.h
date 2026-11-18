@@ -8,9 +8,13 @@
 #include "widgets.h"
 
 #include <QCheckBox>
+#include <QLabel>
+#include <QPushButton>
+#include <QTimer>
 #include <QDialog>
 #include <QMouseEvent>
 #include <QVBoxLayout>
+#include <QSpacerItem>
 
 class MainWindow;
 class MapView;
@@ -39,11 +43,67 @@ class VariantCheckBox : public QCheckBox
 {
     Q_OBJECT
 public:
-    VariantCheckBox(const StartPiece *sp) : QCheckBox(sp->name),sp(sp) {}
+    VariantCheckBox(const StartPiece *sp) : QCheckBox(displayName(sp->name)),sp(sp)
+    {
+        setToolTip(sp->name);
+    }
+    // "plains_meeting_point_1" -> "Plains meeting point 1"
+    static QString displayName(const char *name)
+    {
+        QString s = QString(name).replace('_', ' ');
+        if (!s.isEmpty())
+            s[0] = s[0].toUpper();
+        return s;
+    }
     virtual ~VariantCheckBox() {}
     const StartPiece *sp;
 };
 
+
+class QLineEdit;
+class QTabBar;
+class QTreeWidget;
+class QTreeWidgetItem;
+
+// The type picker of the condition editor: a search field above a list of
+// the condition types, grouped under headings. Expert types are listed only
+// when "Show expert types" is on (and the current type is always listed).
+class ConditionTypePicker : public QWidget
+{
+    Q_OBJECT
+public:
+    ConditionTypePicker(int mc, bool showExpert, QWidget *parent = nullptr);
+
+    void setCurrentType(int type);
+    void setShowExpert(bool show);
+    void setSearchText(const QString& text);
+    void focusSearch();
+
+signals:
+    void typeChosen(int type);
+    void expertToggled(bool show);
+    void cancelled();
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
+private:
+    void fill();
+    void applyFilter();
+    void chooseFirstMatch();
+
+public:
+    QLineEdit *search;
+    QTreeWidget *list;
+    QCheckBox *checkExpert;
+    QLabel *labelEmpty;
+    QPushButton *buttonKeep;
+
+private:
+    int mc;
+    int current = 0;
+    bool showExpert;
+};
 
 class ConditionDialog : public QDialog
 {
@@ -57,6 +117,12 @@ public:
     void addTempCat(int temp, QString name);
     void initComboY(QComboBox *cb, int y);
     void updateMode();
+    // the condition as the editor shows it, as it would be accepted
+    Condition currentCondition();
+    // opens the editor in a given state for screenshots (see main.cpp):
+    // "<type id or name>[:option...]", options: picker, search=<text>,
+    // circle, square, custom, count=<n>, include=<biome ids>, expert
+    void applyTestPreset(const QString& spec);
     void updateBiomeSelection();
     bool warnIfBad(Condition cond);
 
@@ -70,9 +136,18 @@ public:
 signals:
     void setCond(QListWidgetItem *item, Condition cond, int modified);
 
+private:
+    bool detailsGrow() const; // the details are a long list
+    // the height of the content where it is short, the full height otherwise
+    void fitHeight();
+    bool sized = false; // the constructor has set the first size
+
 private slots:
-    void on_comboCat_currentIndexChanged(int);
-    void on_comboType_activated(int);
+    void setType(int type);
+    void setPickerOpen(bool open);
+    void updateSummary();
+    void updateChosen();
+    void updateDetailsSpace();
     void on_comboScale_activated(int);
 
     void on_comboRelative_activated(int);
@@ -123,6 +198,17 @@ private:
 
     QFrame *separator;
     class QPushButton *typeInfoButton;
+    ConditionTypePicker *picker;
+    QLabel *labelHint;
+    QFrame *frameChosen;
+    QLabel *chosenIcon, *chosenName, *chosenBrief, *chosenWarning;
+    QPushButton *buttonChange;
+    QTabBar *shapeBar;
+    QSpacerItem *detailsSpacer = nullptr;
+    QTimer *summaryTimer = nullptr;
+    std::vector<Condition> others; // the other conditions of the list
+    int filterType = F_SELECT;
+    bool editing = false;
     std::map<int, QCheckBox*> biomecboxes;
     SpinExclude *tempsboxes[9];
     LabeledRange *climaterange[2][6];

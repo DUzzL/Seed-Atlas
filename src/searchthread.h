@@ -4,6 +4,7 @@
 #include "search.h"
 #include "config.h"
 #include "gpufilter.h"
+#include "dpsearch.h"
 
 #include <QThread>
 #include <QMutex>
@@ -29,6 +30,18 @@ struct Session
     Gen48Config gen48;
     std::vector<Condition> cv;
     std::vector<uint64_t> slist;
+    // The conditions for datapack worlds. They are kept in every session
+    // that has some ("#DpCond:" lines), so that they survive while the packs
+    // are switched off.
+    std::vector<DpCondition> dpcv;
+    // The session belongs to a datapack world: it was saved while packs were
+    // loaded, and its search uses dpcv ("#Datapacks:" line, with the file
+    // names of the packs for messages). wi.dp is set for a search, not by load().
+    bool datapack = false;
+    QStringList dppacks;
+    // the dimension of the datapack world ("#DpDimension:"); empty in files
+    // written before the line existed
+    QString dpdimension;
 };
 
 struct SearchWorker;
@@ -41,6 +54,8 @@ public:
     virtual ~SearchMaster();
 
     bool set(QWidget *widget, const Session& s);
+    // the checks and the setup of a search in a world of the built-in generator
+    bool setVanilla(QWidget *widget, const Session& s);
 
     void preSearch();
 
@@ -56,6 +71,10 @@ public:
     //  min,max : lower and upper search speed quartiles
     //  avg     : search speed average
     bool getProgress(QString *status, uint64_t *prog, uint64_t *end, uint64_t *seed, qreal *min, qreal *avg, qreal *max);
+    // The number of seeds that all workers together have tested since the
+    // search started, as of the last getProgress(). The progress position
+    // is lower: it is where the worker that is furthest behind stands.
+    uint64_t seedsChecked() const { return lastchecked; }
 
     bool requestItem(SearchWorker *item);
 
@@ -85,9 +104,13 @@ public:
 
     SearchThreadEnv             env;
 
+    // a search in a datapack world: the compiled datapack conditions (the
+    // vanilla conditions are not used then)
+    std::shared_ptr<const DpSearch> dpsearch;
+
     int                         searchtype;
     int                         mc;
-    int                         large;
+    uint32_t                    genflags;       // world type, see WorldInfo::genFlags()
     ConditionTree               condtree;
     int                         itemsize;   // number of seeds per search item
     int                         threadcnt;  // numbr of worker threads
@@ -96,6 +119,9 @@ public:
     uint64_t                    idx;        // index within candidate list
     uint64_t                    scnt;       // search space size
     uint64_t                    prog;       // search space progress tracker
+    uint64_t                    checked;    // seeds of the finished items
+    uint64_t                    lastchecked;// ... with those of the items in work
+    bool                        seedunits;  // the progress counts seeds
     uint64_t                    seed;       // current seed (next to be processed)
     uint64_t                    smin;
     uint64_t                    smax;
@@ -174,6 +200,8 @@ public:
     // (out) the first seed of the item whose results have not been reported
     // yet, read by getProgress() as the position to resume from
     std::atomic<uint64_t> seed;
+    // (out) seeds of the current item that are done
+    std::atomic<uint64_t> itemdone;
     // the end seed is the highest unsigned seed value in the search space
     // (or the last entry in the seed list)
 
@@ -181,7 +209,21 @@ private:
     SearchThreadEnv     env;
     QVector<uint64_t>   resbuf;     // results not reported yet
     void runIncGpu(GpuClimateFilter *gpu);
+    void runDatapack();
     int testSeed(uint64_t s);
+    // Progress inside an item. A GPU item has thousands of seeds, and with
+    // tests that take long for each seed it runs for minutes, during which
+    // the search would report neither progress nor results. itemProgress()
+    // moves the position of the worker to `next`, the first seed of the item
+    // that is not done yet, at most a few times a second. It reads the clock,
+    // which seeds that are fast to test should not pay for each time:
+    // clockDue() is called after each seed and tells when to call it.
+    bool clockDue();
+    void itemProgress(uint64_t next);
+    QElapsedTimer       cptimer;        // time since the last report
+    qint64              cpchecked = 0;  // when the clock was read last
+    int                 cpstride = 1;   // seeds between two looks at the clock
+    int                 cpcount = 0;
     // GPU against CPU: the measured time per seed of each (0: not measured)
     double              cpunsps = 0, gpunsps = 0;
     uint64_t            gpuitems = 0;

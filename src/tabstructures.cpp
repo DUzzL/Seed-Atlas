@@ -1,3 +1,5 @@
+#include "widgets.h"
+#include "appactivity.h"
 #include "tabstructures.h"
 #include "ui_tabstructures.h"
 
@@ -7,8 +9,12 @@
 #include "util.h"
 #include "seedatlas-engine/quadbase.h"
 #include "resultlist.h"
+#include "datapackworld.h"
+#include "dpmap.h"
 
 #include <QButtonGroup>
+#include <QCheckBox>
+#include <QGridLayout>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QIntValidator>
@@ -535,6 +541,15 @@ void StructureResultView::flush()
         sized = true;
         for (int c = 0, n = model->columnCount(); c < n; c++)
             resizeColumnToContents(c);
+        // the structure names sit under closed seed rows, which the above
+        // does not measure (datapack structures have long names)
+        int names = 0;
+        for (const StructSeedResultPtr& r : items)
+            for (const StructGroup& g : r->groups)
+                names = std::max(names, fontMetrics().horizontalAdvance(g.name));
+        if (names > 0)
+            setColumnWidth(C_STRUCT, std::max(columnWidth(C_STRUCT),
+                std::min(names + indentation() + 16, 320)));
     }
 }
 
@@ -662,13 +677,174 @@ void AnalysisStructures::emitStructs(const StructSeedResultPtr& result)
     emit itemDone(seeditem);
 }
 
+void AnalysisStructures::runDatapack()
+{
+    const std::shared_ptr<const DpStructureCatalog> catalog = dpStructureCatalog(dpw);
+    if (!catalog || seeds.empty())
+        return;
+    const size_t n = catalog->entries.size();
+    std::vector<char> mask(n, 0);
+    for (size_t i = 0; i < n; i++)
+        mask[i] = catalog->entries[i].supported && (dpMask.empty() || (i < dpMask.size() && dpMask[i]));
+
+    // the area in tiles of the map's structure level
+    struct Tile { int x0, z0, x1, z1; };
+    std::vector<Tile> tiles;
+    const int step = DP_STRUCT_TILE;
+    for (int64_t z = area.z1; z <= area.z2; z += step)
+        for (int64_t x = area.x1; x <= area.x2; x += step)
+            tiles.push_back({int(x), int(z), int(std::min<int64_t>(area.x2, x + step - 1)),
+                int(std::min<int64_t>(area.z2, z + step - 1))});
+
+    // one result per seed, the starts by structure
+    const auto makeResult = [&](uint64_t seed, const std::vector<dp::StructureStart>& starts,
+            bool incomplete) {
+        StructSeedResultPtr result(new StructSeedResult);
+        result->seed = seed;
+        result->incomplete = incomplete;
+        std::vector<std::vector<const dp::StructureStart*>> valid(n), unknown(n);
+        for (const dp::StructureStart& st : starts)
+        {
+            if (st.structure < 0 || st.structure >= (int) n)
+                continue;
+            if (st.state == dp::StructureStart::Valid)
+                valid[(size_t) st.structure].push_back(&st);
+            else if (st.state == dp::StructureStart::Unknown && dpUnknown)
+                unknown[(size_t) st.structure].push_back(&st);
+        }
+        const auto addGroup = [&](size_t i, const std::vector<const dp::StructureStart*>& list,
+                bool undecided) {
+            if (list.empty())
+                return;
+            StructGroup group;
+            group.dim = DIM_OVERWORLD;
+            group.name = undecided ? QCoreApplication::translate("TabStructures",
+                "%1 (not decided)").arg(catalog->entries[i].label) : catalog->entries[i].label;
+            group.count = list.size();
+            if (collect)
+            {
+                QHash<QString, int> details;
+                for (const dp::StructureStart *st : list)
+                {
+                    StructInstance in;
+                    in.p = Pos{st->x, st->z};
+                    QString text = dpStartStateText(*st);
+                    if (st->hasY)
+                        text += QString(" y %1").arg(st->y);
+                    else if (st->estimatedY)
+                        text += QString(" y ~%1").arg(st->y);
+                    auto it = details.find(text);
+                    if (it == details.end())
+                    {
+                        it = details.insert(text, group.details.size());
+                        group.details.append(text);
+                    }
+                    in.detail = it.value();
+                    group.items.push_back(in);
+                }
+                std::sort(group.items.begin(), group.items.end(), [](const StructInstance& a,
+                        const StructInstance& b) {
+                    return a.p.z != b.p.z ? a.p.z < b.p.z : a.p.x < b.p.x;
+                });
+            }
+            result->groups.push_back(std::move(group));
+        };
+        for (size_t i = 0; i < n; i++)
+        {
+            addGroup(i, valid[i], false);
+            addGroup(i, unknown[i], true);
+        }
+        resultCount.fetch_add(starts.size(), std::memory_order_relaxed);
+        return result;
+    };
+
+    if (seeds.size() == 1)
+    {   // one seed: its tiles in parallel, with finders of the map's pool
+        const uint64_t seed = seeds[0];
+        workTotal = tiles.size();
+        std::vector<std::vector<dp::StructureStart>> found(tiles.size());
+        std::atomic_size_t next(0);
+        std::atomic_bool failed(false);
+        runMappingWorkers(tiles.size(), workers, [&](size_t) {
+            DpFinderLease finder(dpw, seed, &stop);
+            if (!finder.get())
+                return;
+            while (!stop)
+            {
+                const size_t t = next.fetch_add(1);
+                if (t >= tiles.size())
+                    break;
+                if (!dpStartsInArea(finder.get(), tiles[t].x0, tiles[t].z0, tiles[t].x1, tiles[t].z1,
+                        &mask, false, &found[t], &stop))
+                    failed = true;
+                workDone.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+        workersUsed = workers.peak.load();
+        if (stop)
+            return;
+        std::vector<dp::StructureStart> all;
+        for (const auto& list : found)
+            all.insert(all.end(), list.begin(), list.end());
+        emitStructs(makeResult(seed, all, failed));
+        idx = 1;
+        return;
+    }
+
+    // a list of seeds: one finder per seed (its first query searches the
+    // stronghold rings of the seed)
+    struct Result { size_t order; StructSeedResultPtr r; };
+    std::mutex resultsMutex;
+    std::vector<Result> results;
+    std::atomic_size_t next(0);
+    workTotal = seeds.size();
+    runMappingWorkers(seeds.size(), workers, [&](size_t) {
+        while (!stop)
+        {
+            const size_t order = next.fetch_add(1);
+            if (order >= seeds.size())
+                break;
+            dp::StructureFinder finder(dpw->world, dpw->dimension, seeds[order]);
+            std::vector<dp::StructureStart> starts;
+            bool ok = true;
+            for (const Tile& t : tiles)
+                ok = ok && dpStartsInArea(&finder, t.x0, t.z0, t.x1, t.z1, &mask, false, &starts, &stop);
+            if (stop)
+                break;
+            StructSeedResultPtr r = makeResult(seeds[order], starts, !ok);
+            {
+                std::lock_guard<std::mutex> lock(resultsMutex);
+                results.push_back({order, r});
+            }
+            workDone.fetch_add(1, std::memory_order_relaxed);
+            idx.fetch_add(1);
+        }
+    });
+    workersUsed = workers.peak.load();
+    if (stop)
+        return;
+    std::sort(results.begin(), results.end(), [](const Result& a, const Result& b) {
+        return a.order < b.order;
+    });
+    for (const Result& r : results)
+        emitStructs(r.r);
+}
+
 void AnalysisStructures::run()
 {
+    BusyActivity busy; // not to be throttled while out of view
     workers.reset();
     workDone = 0;
     workTotal = 0;
     resultCount = 0;
     workersUsed = 0;
+
+    if (dpw)
+    {
+        idx = 0;
+        runDatapack();
+        return;
+    }
 
     if (fortress)
     {
@@ -691,7 +867,7 @@ void AnalysisStructures::run()
 
         auto scan = [&](size_t) {
             Generator g;
-            setupGenerator(&g, wi.mc, wi.large);
+            setupGenerator(&g, wi.mc, wi.genFlags());
             while (!stop)
             {
                 const size_t order = next.fetch_add(1);
@@ -801,7 +977,7 @@ void AnalysisStructures::run()
     }
 
     Generator g;
-    setupGenerator(&g, wi.mc, wi.large);
+    setupGenerator(&g, wi.mc, wi.genFlags());
     parallelInner = true;
 
     for (idx = 0; idx < (long)seeds.size(); idx++)
@@ -1121,7 +1297,7 @@ void AnalysisStructures::runQuads(Generator *g)
     std::atomic_size_t nextTask(0);
     auto scanTasks = [&]() {
         Generator local;
-        setupGenerator(&local, wi.mc, wi.large);
+        setupGenerator(&local, wi.mc, wi.genFlags());
         applySeed(&local, DIM_OVERWORLD, wi.seed);
         while (!shouldStop())
         {
@@ -1467,7 +1643,7 @@ void AnalysisStructures::runFortresses(Generator *g)
     std::atomic_size_t nextTask(0);
     const auto scan = [&]() {
         Generator local;
-        setupGenerator(&local, wi.mc, wi.large);
+        setupGenerator(&local, wi.mc, wi.genFlags());
         applySeed(&local, DIM_NETHER, wi.seed);
         Piece pieces[1024];
 
@@ -1636,6 +1812,10 @@ TabStructures::TabStructures(MainWindow *parent)
     , thread(this)
 {
     ui->setupUi(this);
+    ui->pushStart->setProperty("primary", true);
+    setEmptyHint(ui->treeStructs, tr("No structures yet. Press Analyze."));
+    setEmptyHint(ui->treeDensity, tr("No dense areas yet. Pick structures and press Analyze."));
+    setEmptyHint(ui->treeFortresses, tr("No fortress layouts yet. Pick a layout and press Analyze."));
     for (QLineEdit *line : {ui->lineX1, ui->lineZ1, ui->lineX2, ui->lineZ2})
         line->setValidator(new QIntValidator(-30000000, 30000000, this));
 
@@ -1682,6 +1862,17 @@ TabStructures::TabStructures(MainWindow *parent)
     connect(ui->treeFortresses, &QTreeWidget::itemClicked,
         this, &TabStructures::onTreeItemClicked);
     connect(parent, &MainWindow::mapUpdated, this, &TabStructures::refresh);
+
+    // datapack worlds: whether the starts that cannot be decided are listed
+    checkDpUnknown = new QCheckBox(tr("Starts not decided"), ui->tabStructures);
+    checkDpUnknown->setObjectName("checkDpUnknown");
+    checkDpUnknown->setChecked(true);
+    checkDpUnknown->setToolTip(tr("Datapack worlds: also list the structure starts that the app "
+        "cannot decide (e.g. where the start height depends on the terrain), as their own rows "
+        "\"(not decided)\"."));
+    checkDpUnknown->hide();
+    if (QGridLayout *options = findChild<QGridLayout*>("gridOptions"))
+        options->addWidget(checkDpUnknown, 1, 1);
     refreshFortressTab();
 }
 
@@ -1719,6 +1910,7 @@ void TabStructures::save(QSettings& settings)
     settings.setValue("analysis/densityminimum", ui->spinDensityMinimum->value());
     settings.setValue("analysis/fortress2x2", ui->checkFortress2x2->isChecked());
     settings.setValue("analysis/fortress3x1", ui->checkFortress3x1->isChecked());
+    settings.setValue("analysis/dpunknown", checkDpUnknown->isChecked());
 }
 
 static void loadCheck(QSettings *s, QCheckBox *cb, const char *key)
@@ -1748,6 +1940,7 @@ void TabStructures::load(QSettings& settings)
     ui->spinDensityMinimum->setValue(settings.value("analysis/densityminimum", ui->spinDensityMinimum->value()).toInt());
     loadCheck(&settings, ui->checkFortress2x2, "analysis/fortress2x2");
     loadCheck(&settings, ui->checkFortress3x1, "analysis/fortress3x1");
+    loadCheck(&settings, checkDpUnknown, "analysis/dpunknown");
     const bool mapOnly = settings.value("analysis/structureScopeExplicit", false).toBool()
         && settings.value("analysis/maponly", false).toBool();
     if (mapOnly)
@@ -1762,9 +1955,50 @@ void TabStructures::refresh()
     refreshFortressTab();
 }
 
+void TabStructures::refreshDatapackMode()
+{
+    // A datapack world lists the starts of its own structures; the density
+    // and fortress analyses need the built-in generator.
+    const bool datapack = parent->datapackMode();
+    checkDpUnknown->setVisible(datapack);
+    for (QWidget *page : {ui->tabDensity, ui->tabFortresses})
+    {
+        const int index = ui->tabWidget->indexOf(page);
+        if (datapack)
+        {
+            ui->tabWidget->setTabEnabled(index, false);
+            ui->tabWidget->setTabToolTip(index, tr("Not available for datapack worlds yet: it "
+                "needs the structure pieces of the built-in generator."));
+        }
+        else
+            ui->tabWidget->setTabToolTip(index, QString());
+    }
+    if (datapack && ui->tabWidget->currentWidget() != ui->tabStructures)
+        ui->tabWidget->setCurrentWidget(ui->tabStructures);
+    ui->radioMap->setToolTip(datapack
+        ? tr("Only the structures that the map shows (the sidebar entries and Pack structures)")
+        : tr("Only the structure types that are switched on in the layer sidebar"));
+    if (datapack != dpShown && !thread.isRunning())
+    {   // results of the other kind of world do not belong to this one
+        dpShown = datapack;
+        ui->treeStructs->clearResults();
+        ui->treeDensity->clearResults();
+        ui->treeFortresses->clearResults();
+        ui->pushExport->setEnabled(false);
+        ui->labelStatus->clear();
+    }
+}
+
 void TabStructures::refreshFortressTab()
 {
+    refreshDatapackMode();
+    if (parent->datapackMode())
+    {
+        on_tabWidget_currentChanged(-1);
+        return;
+    }
     const int index = ui->tabWidget->indexOf(ui->tabFortresses);
+    ui->tabWidget->setTabEnabled(ui->tabWidget->indexOf(ui->tabDensity), true);
     const bool nether = parent->getDim() == DIM_NETHER;
     ui->tabWidget->setTabEnabled(index, nether);
     if (!nether && ui->tabWidget->currentWidget() == ui->tabFortresses)
@@ -1837,7 +2071,8 @@ void TabStructures::onTreeItemClicked(QTreeWidgetItem *item, int column)
         WorldInfo wi;
         parent->getSeed(&wi);
         wi.seed = seed;
-        parent->setSeed(wi, dim);
+        // a datapack world keeps the dimension picked for vanilla worlds
+        parent->setSeed(wi, parent->datapackMode() ? DIM_UNDEF : dim);
     }
 
     dat = item->data(0, Qt::UserRole+2);
@@ -1859,7 +2094,7 @@ void TabStructures::onPositionClicked(uint64_t seed, int dim, Pos pos)
     WorldInfo wi;
     parent->getSeed(&wi);
     wi.seed = seed;
-    parent->setSeed(wi, dim);
+    parent->setSeed(wi, parent->datapackMode() ? DIM_UNDEF : dim);
     if (pos.x != INT_MIN)
         parent->getMapView()->setView(pos.x+0.5, pos.z+0.5);
 }
@@ -1882,7 +2117,7 @@ void TabStructures::on_pushStart_clicked()
     if (fortressMode && !ui->checkFortress2x2->isChecked() &&
             !ui->checkFortress3x1->isChecked())
     {
-        ui->labelStatus->setText(tr("Select at least one Fortress layout."));
+        ui->labelStatus->setText(tr("Select at least one fortress layout."));
         return;
     }
     elapsed.start();
@@ -1933,6 +2168,41 @@ void TabStructures::on_pushStart_clicked()
     thread.quad = false;
     thread.density = false;
     thread.fortress = false;
+    thread.dpw.reset();
+    thread.dpMask.clear();
+    if (parent->datapackMode())
+    {   // the structures of the datapack world
+        const std::shared_ptr<const DatapackWorld> world = parent->datapacks->current();
+        if (!world || !world->usable())
+        {
+            ui->labelStatus->setText(tr("The datapack world is not loaded."));
+            ui->pushStart->setChecked(false);
+            return;
+        }
+        // the area: at most what the search allows for a structure condition
+        const int64_t side = 1 << 16;
+        if (int64_t(x2) - x1 >= side || int64_t(z2) - z1 >= side)
+        {
+            ui->labelStatus->setText(tr("The area is too large for a datapack world: at most "
+                "%1 blocks on a side.").arg(side));
+            ui->pushStart->setChecked(false);
+            return;
+        }
+        thread.dpw = world;
+        thread.dpUnknown = checkDpUnknown->isChecked();
+        thread.dim = DIM_OVERWORLD;
+        if (ui->radioMap->isChecked())
+        {
+            thread.dpMask = parent->getMapView()->getDatapackStructureMask();
+            if (std::find(thread.dpMask.begin(), thread.dpMask.end(), 1) == thread.dpMask.end())
+            {
+                ui->labelStatus->setText(tr("The map shows no structures. Switch some on in the "
+                    "sidebar or in Pack structures, or analyze all structures."));
+                ui->pushStart->setChecked(false);
+                return;
+            }
+        }
+    }
 
     if (ui->tabWidget->currentWidget() == ui->tabStructures)
     {
@@ -2126,4 +2396,10 @@ void TabStructures::on_tabWidget_currentChanged(int index)
             ok = ui->treeFortresses->topLevelItemCount() > 0;
     }
     ui->pushExport->setEnabled(ok);
+}
+
+void TabStructures::stopWork()
+{
+    if (thread.isRunning())
+        thread.stop = true;
 }

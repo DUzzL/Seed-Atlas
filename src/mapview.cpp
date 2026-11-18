@@ -1,5 +1,7 @@
 #include "mapview.h"
+#include "dpmap.h"
 
+#include "datapackworld.h"
 #include "gotodialog.h"
 #include "util.h"
 
@@ -26,6 +28,8 @@ bool MapOverlay::event(QEvent *e)
 
 void MapOverlay::paintEvent(QPaintEvent *)
 {
+    if (!showText)
+        return;
     QPainter painter(this);
     QString s = bname + QString::asprintf(" [%d,%d]", pos.x, pos.z);
     QRect r = painter.fontMetrics()
@@ -102,6 +106,18 @@ void MapView::setSeed(WorldInfo wi, int dim, LayerOpt lopt)
     velx = velz = 0;
     this->lopt = lopt;
 
+    if (wi.dp && !wi.dp->usable())
+    {
+        // Data packs are loaded, but there is no world to show (yet). The
+        // built-in generator would show another world, so the map stays empty
+        // and says why.
+        deleteWorld();
+        setPlaceholder(wi.dp->stateText());
+        update(2);
+        return;
+    }
+    setPlaceholder(QString());
+
     WorldInfo sameY = wi;
     if (world)
         sameY.y = world->wi.y;
@@ -112,6 +128,7 @@ void MapView::setSeed(WorldInfo wi, int dim, LayerOpt lopt)
         world = new QWorld(wi, dim, lopt);
         QObject::connect(world, &QWorld::update, this, &MapView::mapUpdate);
         world->setBiomeHighlights(biomeHighlights);
+        applyDatapackHighlights();
     }
     else
     {
@@ -223,12 +240,80 @@ void MapView::setBiomeHighlights(const QVector<int>& biomeIds)
     }
 }
 
+void MapView::setDatapackHighlights(const QStringList& biomeIds)
+{
+    dpHighlightIds = biomeIds;
+    applyDatapackHighlights();
+    if (world)
+        update(1);
+}
+
+void MapView::applyDatapackHighlights()
+{
+    if (!world || !world->wi.dp || !world->wi.dp->world)
+        return;
+    // the biomes are numbered anew by every load: find them by id
+    std::vector<int> indices;
+    if (!dpHighlightIds.isEmpty())
+    {
+        const std::vector<dp::BiomeInfo>& biomes = world->wi.dp->world->biomes();
+        for (int i = 0; i < (int) biomes.size(); i++)
+            if (dpHighlightIds.contains(biomes[i].id))
+                indices.push_back(i);
+    }
+    world->setDatapackHighlights(indices);
+}
+
+void MapView::setPlaceholder(const QString& text)
+{
+    if (placeholder == text)
+        return;
+    placeholder = text;
+    QWidget::update();
+}
+
+void MapView::setDatapackStructures(const QStringList& ids)
+{
+    if (ids == dpStructureIds)
+        return;
+    dpStructureIds = ids;
+    settingsToWorld();
+    update(2);
+}
+
+std::vector<char> MapView::getDatapackStructureMask() const
+{
+    std::vector<char> mask;
+    if (!world || !world->dpCatalog)
+        return mask;
+    const QSet<QString> ids(dpStructureIds.begin(), dpStructureIds.end());
+    for (const DpStructureEntry& e : world->dpCatalog->entries)
+    {
+        bool show = e.supported;
+        if (e.vanillaOpt != D_NONE)
+            show = show && sshow[e.vanillaOpt] && world->mconfig.enabled(e.vanillaOpt);
+        else
+            show = show && ids.contains(e.id);
+        mask.push_back(show ? 1 : 0);
+    }
+    return mask;
+}
+
 void MapView::settingsToWorld()
 {
     if (!world)
         return;
+    // Structures, spawn and strongholds of the built-in generator would be
+    // wrong for a datapack world: only the grid and, in an Overworld-like
+    // dimension, the slime chunks (which depend on the seed alone) are shown
+    // there; the structures of a datapack world come from its own level (see
+    // QWorld::lvdp).
+    const bool datapack = world->wi.datapack();
+    const bool slime = !datapack || dpEngineDim(*world->wi.dp) == DIM_OVERWORLD;
     for (int s = 0; s < D_STRUCT_NUM; s++)
-        world->sshow[s] = sshow[s] && world->mconfig.enabled(s);
+        world->sshow[s] = sshow[s] && world->mconfig.enabled(s)
+            && (!datapack || s == D_GRID || (s == D_SLIME && slime));
+    world->setDatapackShow(getDatapackStructureMask());
     world->showBB = config.showBBoxes;
     world->gridspacing = config.gridSpacing;
     world->gridmultiplier = config.gridMultiplier;
@@ -364,6 +449,8 @@ VarPos MapView::getActivePos()
 {
     if (world && world->selopt != D_NONE)
         return world->selvp;
+    if (world && world->dpSelected)
+        return VarPos(Pos{world->dpSel.x, world->dpSel.z}, -1);
     return VarPos(overlay->pos, -1);
 }
 
@@ -437,11 +524,11 @@ void MapView::showContextMenu(const QPoint &pos)
                     midy = 63;
             }
         }
-        cpy_dat.push_back({ tr("Copy tp:"), QString::asprintf("/tp @p %d %d %d", midx, midy, midz) });
+        cpy_dat.push_back({ tr("Copy /tp command:"), QString::asprintf("/tp @p %d %d %d", midx, midy, midz) });
         icon = &getMapIcon(world ? world->selopt : -1, &vp);
     }
-    cpy_dat.push_back({ tr("Copy tp:"),     QString::asprintf("/tp @p %d ~ %d", vp.p.x, vp.p.z) });
-    cpy_dat.push_back({ tr("Copy coords:"), QString::asprintf("%d %d", vp.p.x, vp.p.z) });
+    cpy_dat.push_back({ tr("Copy /tp command:"),     QString::asprintf("/tp @p %d ~ %d", vp.p.x, vp.p.z) });
+    cpy_dat.push_back({ tr("Copy coordinates:"), QString::asprintf("%d %d", vp.p.x, vp.p.z) });
     cpy_dat.push_back({ tr("Copy chunk:"),  QString::asprintf("%d %d", vp.p.x >> 4, vp.p.z >> 4) });
     cpy_dat.push_back({ tr("Copy region:"), QString::asprintf("%d %d", vp.p.x >> 9, vp.p.z >> 9) });
 
@@ -497,6 +584,25 @@ void MapView::copyText(QString txt)
 {
     QClipboard *clipboard = QGuiApplication::clipboard();
     clipboard->setText(txt);
+}
+
+void MapView::setCursorTextVisible(bool visible)
+{
+    overlay->showText = visible;
+    overlay->update();
+}
+
+void MapView::reportCursorInfo(const QString& biome, Pos pos, bool hasWorld)
+{
+    const qreal scale = getScale();
+    if (biome == reportedBiome && pos.x == reportedPos.x && pos.z == reportedPos.z &&
+        scale == reportedScale && hasWorld == reportedWorld)
+        return;
+    reportedBiome = biome;
+    reportedPos = pos;
+    reportedScale = scale;
+    reportedWorld = hasWorld;
+    emit cursorInfoChanged(biome, pos.x, pos.z, scale, hasWorld);
 }
 
 void MapView::onGoto()
@@ -557,6 +663,7 @@ void MapView::paintEvent(QPaintEvent *)
         Pos p = {(int)clampimax(floor(bx)), (int)clampimax(floor(bz))};
         overlay->pos = p;
         overlay->bname = world->getBiomeName(p);
+        reportCursorInfo(overlay->bname, p, true);
 
         if (measure)
         {
@@ -588,11 +695,12 @@ void MapView::paintEvent(QPaintEvent *)
             scheduleFrame();
 
             if (active)
-            {   // processing animation
+            {   // processing animation, in the top right corner: the
+                // window's floating cards cover the other corners
                 qreal cyc = actelapsed.nsecsElapsed() * 1e-9;
                 qreal ang = 360 * (1.0 - (cyc - (int) cyc));
                 int r = 20;
-                QRect rec = QRect(r, height() - 2*r, r, r);
+                QRect rec = QRect(width() - 2*r, r, r, r);
 
                 QConicalGradient gradient;
                 gradient.setCenter(rec.center());
@@ -609,18 +717,26 @@ void MapView::paintEvent(QPaintEvent *)
             actelapsed.start();
         }
     }
+    else
+    {
+        reportCursorInfo(QString(), Pos{0, 0}, false);
+        if (!placeholder.isEmpty())
+        {
+            QFont f = font();
+            f.setPointSizeF(f.pointSizeF() + 1);
+            painter.setFont(f);
+            // the empty map has the window colour of the theme
+            painter.setPen(palette().color(QPalette::WindowText));
+            painter.drawText(rect().adjusted(40, 80, -40, -80),
+                Qt::AlignCenter | Qt::TextWordWrap, placeholder);
+        }
+    }
 }
 
 void MapView::resizeEvent(QResizeEvent *e)
 {
     QWidget::resizeEvent(e);
     overlay->resize(width(), height());
-    QWidget *coordinateFinder = findChild<QWidget*>("mapCoordinateFinder", Qt::FindDirectChildrenOnly);
-    if (coordinateFinder)
-    {
-        coordinateFinder->move(qMax(14, (width() - coordinateFinder->width()) / 2), 14);
-        coordinateFinder->raise();
-    }
 }
 
 void MapView::wheelEvent(QWheelEvent *e)

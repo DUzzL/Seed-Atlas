@@ -3,7 +3,7 @@
  <class>LayerDialog</class>
  <widget class="QDialog" name="LayerDialog">
   <property name="windowTitle">
-   <string>Layer Display Options</string>
+   <string>Layer display options</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">
@@ -44,22 +44,31 @@
    </item>
    <item row="7" column="0">
     <widget class="QRadioButton" name="radioNoiseD">
+     <property name="toolTip">
+      <string>The depth value at the selected Y level, which the 1.18+ generator uses for cave biomes</string>
+     </property>
      <property name="text">
-      <string>Depth</string>
+      <string>Depth (1.18+)</string>
      </property>
     </widget>
    </item>
    <item row="8" column="0">
     <widget class="QRadioButton" name="radioNoiseW">
+     <property name="toolTip">
+      <string>Weirdness climate value, which selects biome variants and where peaks and valleys form. Each climate value is built from several noise layers (octaves), from broad to fine. The list can show only the broadest ones, to see the large-scale pattern.</string>
+     </property>
      <property name="text">
-      <string>Weirdness octaves:</string>
+      <string>Weirdness (1.18+):</string>
      </property>
     </widget>
    </item>
    <item row="0" column="0">
     <widget class="QRadioButton" name="radioBiomes">
+     <property name="toolTip">
+      <string>The normal biome map. At 1:4, one sample covers 4 by 4 blocks.</string>
+     </property>
      <property name="text">
-      <string>Biome scale:</string>
+      <string>Biomes at scale:</string>
      </property>
     </widget>
    </item>
@@ -85,15 +94,21 @@
    </item>
    <item row="3" column="0">
     <widget class="QRadioButton" name="radioNoiseT">
+     <property name="toolTip">
+      <string>Temperature climate value. Each climate value is built from several noise layers (octaves), from broad to fine. The list can show only the broadest ones, to see the large-scale pattern.</string>
+     </property>
      <property name="text">
-      <string>Temperature octaves:</string>
+      <string>Temperature (1.18+):</string>
      </property>
     </widget>
    </item>
    <item row="10" column="0">
     <widget class="QRadioButton" name="radioOcean">
+     <property name="toolTip">
+      <string>The ocean temperature layer of 1.13 to 1.17 (warm, lukewarm, cold, frozen), at 1:256</string>
+     </property>
      <property name="text">
-      <string>Ocean layer</string>
+      <string>Ocean temperature (1.13 - 1.17)</string>
      </property>
     </widget>
    </item>
@@ -109,8 +124,11 @@
    </item>
    <item row="14" column="0">
     <widget class="QRadioButton" name="radioHeight">
+     <property name="toolTip">
+      <string>An estimate of the terrain height, computed without generating the full terrain</string>
+     </property>
      <property name="text">
-      <string>Approx. surface height:</string>
+      <string>Approximate surface height:</string>
      </property>
     </widget>
    </item>
@@ -126,15 +144,21 @@
    </item>
    <item row="11" column="0">
     <widget class="QRadioButton" name="radioNoOcean">
+     <property name="toolTip">
+      <string>The Beta 1.7 biome map without its ocean overlay</string>
+     </property>
      <property name="text">
-      <string>No beta oceans</string>
+      <string>Beta 1.7 biomes without oceans</string>
      </property>
     </widget>
    </item>
    <item row="5" column="0">
     <widget class="QRadioButton" name="radioNoiseC">
+     <property name="toolTip">
+      <string>Continentalness climate value: low is ocean, high is far inland. Each climate value is built from several noise layers (octaves), from broad to fine. The list can show only the broadest ones, to see the large-scale pattern.</string>
+     </property>
      <property name="text">
-      <string>Continentalness octaves:</string>
+      <string>Continentalness (1.18+):</string>
      </property>
     </widget>
    </item>
@@ -147,22 +171,31 @@
    </item>
    <item row="16" column="0">
     <widget class="QRadioButton" name="radioStruct">
+     <property name="toolTip">
+      <string>Hide the Overworld biomes and show every position where a structure is attempted, before the biome check. These positions depend only on the structure seed (the lower 48 bits of the seed).</string>
+     </property>
      <property name="text">
-      <string>Structure potential</string>
+      <string>Possible structure positions</string>
      </property>
     </widget>
    </item>
    <item row="6" column="0">
     <widget class="QRadioButton" name="radioNoiseE">
+     <property name="toolTip">
+      <string>Erosion climate value: low gives mountainous, high flat terrain. Each climate value is built from several noise layers (octaves), from broad to fine. The list can show only the broadest ones, to see the large-scale pattern.</string>
+     </property>
      <property name="text">
-      <string>Erosion octaves:</string>
+      <string>Erosion (1.18+):</string>
      </property>
     </widget>
    </item>
    <item row="9" column="0">
     <widget class="QRadioButton" name="radioRiver">
+     <property name="toolTip">
+      <string>The 1.13 to 1.17 biome layer right after rivers are added, before oceans get their temperature variants, at 1:4</string>
+     </property>
      <property name="text">
-      <string>River layer</string>
+      <string>Biomes before ocean temperatures (1.13 - 1.17)</string>
      </property>
     </widget>
    </item>
@@ -188,22 +221,31 @@
    </item>
    <item row="4" column="0">
     <widget class="QRadioButton" name="radioNoiseH">
+     <property name="toolTip">
+      <string>Humidity (vegetation) climate value. Each climate value is built from several noise layers (octaves), from broad to fine. The list can show only the broadest ones, to see the large-scale pattern.</string>
+     </property>
      <property name="text">
-      <string>Humidity octaves:</string>
+      <string>Humidity (1.18+):</string>
      </property>
     </widget>
    </item>
    <item row="12" column="0">
     <widget class="QRadioButton" name="radioBetaT">
+     <property name="toolTip">
+      <string>The temperature value that Beta 1.7 uses to pick biomes</string>
+     </property>
      <property name="text">
-      <string>Beta temperature</string>
+      <string>Beta 1.7 temperature</string>
      </property>
     </widget>
    </item>
    <item row="13" column="0">
     <widget class="QRadioButton" name="radioBetaH">
+     <property name="toolTip">
+      <string>The humidity value that Beta 1.7 uses to pick biomes</string>
+     </property>
      <property name="text">
-      <string>Beta humidity</string>
+      <string>Beta 1.7 humidity</string>
      </property>
     </widget>
    </item>

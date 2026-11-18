@@ -113,6 +113,12 @@ bool Headless::loadSession(QString sessionpath, bool reset)
     {
         return false;
     }
+    if (session.datapack)
+    {   // the datapack generator runs in the app, which holds the packs
+        warn(nullptr, "This session searches a datapack world. Datapack searches run in "
+            "the app only: open the session there, with the datapacks loaded.");
+        return false;
+    }
     // search with the world generation settings the session was made with
     applyExtGen(session.sc.extgen);
 

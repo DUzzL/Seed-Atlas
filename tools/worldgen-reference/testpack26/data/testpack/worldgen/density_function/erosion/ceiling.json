@@ -1,0 +1,82 @@
+{
+  "left": 0.35,
+  "right": {
+    "left": 1.2,
+    "right": {
+      "input": {
+        "functions": [
+          {
+            "left": 0.5,
+            "right": {
+              "noise": "testpack:tube",
+              "type": "minecraft:noise",
+              "xz_scale": 2.0,
+              "y_scale": 2.0
+            },
+            "type": "minecraft:mul"
+          },
+          {
+            "left": 0.75,
+            "right": {
+              "noise": "testpack:tube",
+              "type": "minecraft:noise",
+              "xz_scale": 1.3333333333333333,
+              "y_scale": 1.3333333333333333
+            },
+            "type": "minecraft:mul"
+          },
+          {
+            "left": 1.0,
+            "right": {
+              "noise": "testpack:tube",
+              "type": "minecraft:noise",
+              "xz_scale": 1.0,
+              "y_scale": 1.0
+            },
+            "type": "minecraft:mul"
+          },
+          {
+            "left": 2.0,
+            "right": {
+              "noise": "testpack:tube",
+              "type": "minecraft:noise",
+              "xz_scale": 0.5,
+              "y_scale": 0.5
+            },
+            "type": "minecraft:mul"
+          },
+          {
+            "left": 3.0,
+            "right": {
+              "noise": "testpack:tube",
+              "type": "minecraft:noise",
+              "xz_scale": 0.3333333333333333,
+              "y_scale": 0.3333333333333333
+            },
+            "type": "minecraft:mul"
+          }
+        ],
+        "input": {
+          "left": 3.0,
+          "right": {
+            "noise": "testpack:wide",
+            "type": "minecraft:noise",
+            "xz_scale": 1.0,
+            "y_scale": 0.0
+          },
+          "type": "minecraft:mul"
+        },
+        "thresholds": [
+          -0.75,
+          -0.5,
+          0.5,
+          0.75
+        ],
+        "type": "minecraft:interval_select"
+      },
+      "type": "minecraft:abs"
+    },
+    "type": "minecraft:mul"
+  },
+  "type": "minecraft:add"
+}

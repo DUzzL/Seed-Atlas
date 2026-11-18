@@ -1,9 +1,15 @@
+#include "widgets.h"
+#include "appactivity.h"
 #include "tabbiomes.h"
 #include "ui_tabbiomes.h"
 
 #include "message.h"
 #include "util.h"
 #include "resultlist.h"
+#include "datapackworld.h"
+#include "dpsearch.h"
+#include "formdpconditions.h"
+#include "tabdatapacks.h"
 
 #include <QDebug>
 #include <QFileDialog>
@@ -102,8 +108,16 @@ public:
         , resultCount(resultCount), workerState(workerState), failed(failed)
     {
         std::fill(std::begin(index), std::end(index), uint8_t(NONE));
+        if (wi.dp)
+        {   // a datapack world: biomes are indices into its own registry, the
+            // level is in blocks
+            dpIndex.assign(std::max(0, dpBiomeCount(wi.dp)), uint8_t(NONE));
+            for (int i = 0; i < biomes.size() && i < NONE; i++)
+                if (biomes[i] >= 0 && biomes[i] < (int) dpIndex.size())
+                    dpIndex[biomes[i]] = uint8_t(i);
+        }
         uint64_t set[4] = {};
-        for (int i = 0; i < biomes.size() && i < NONE; i++)
+        for (int i = 0; i < biomes.size() && i < NONE && !wi.dp; i++)
         {
             const int id = biomes[i];
             if (id >= 0 && id < 256)
@@ -112,7 +126,7 @@ public:
                 set[id >> 6] |= 1ULL << (id & 63);
             }
         }
-        climate = dim == DIM_OVERWORLD && wi.mc >= MC_1_18;
+        climate = !wi.dp && dim == DIM_OVERWORLD && wi.mc >= MC_1_18;
         if (climate && getBiomeClimateBounds(&bounds, wi.mc, set))
             nparas = getClimateBoundParas(&bounds, paras);
         tilesX = (uint64_t(int64_t(x2) - x1) + TILE) / TILE;
@@ -131,8 +145,11 @@ public:
             try
             {
                 Generator g;
-                setupGenerator(&g, wi.mc, wi.large);
-                applySeed(&g, dim, wi.seed);
+                if (!wi.dp)
+                {
+                    setupGenerator(&g, wi.mc, wi.genFlags());
+                    applySeed(&g, dim, wi.seed);
+                }
                 Tile tile;
                 while (!stopped())
                 {
@@ -212,7 +229,17 @@ private:
         tile.label.assign(cells, -1);
         tile.areas.clear();
 
-        if (climate)
+        if (wi.dp)
+        {   // the 1:4 cells of the datapack generator
+            std::vector<int> ids(cells);
+            if (!dpGenBiomes(wi.dp, wi.seed, ids.data(), 4, tile.x, tile.z, tile.w, tile.h,
+                    y, stop))
+                return false;
+            for (size_t k = 0; k < cells; k++)
+                if (ids[k] >= 0 && ids[k] < (int) dpIndex.size())
+                    tile.cls[k] = dpIndex[ids[k]];
+        }
+        else if (climate)
         {   // exact: the biome as getBiomeAt(), after the exact climate bounds
             for (int j = 0; j < tile.h; j++)
             {
@@ -465,6 +492,7 @@ private:
     std::atomic_bool *failed;
 
     uint8_t index[256];
+    std::vector<uint8_t> dpIndex; // per biome of a datapack world
     bool climate = false;
     BiomeClimateBounds bounds;
     int paras[NP_MAX];
@@ -498,7 +526,7 @@ static QVector<BiomeCenter> locateWithTolerance(const WorldInfo& wi, int dim,
         return results;
     }
     Generator g;
-    setupGenerator(&g, wi.mc, wi.large);
+    setupGenerator(&g, wi.mc, wi.genFlags());
     applySeed(&g, dim, wi.seed);
     total->fetch_add(biomes.size(), std::memory_order_relaxed);
     const Range r = {4, x1, z1, int(width), int(height), y, 1};
@@ -538,12 +566,15 @@ static QVector<BiomeCenter> locateWithTolerance(const WorldInfo& wi, int dim,
 
 void AnalysisBiomes::run()
 {
+    BusyActivity busy; // not to be throttled while out of view
     workers.reset();
     workDone.store(0, std::memory_order_relaxed);
     workTotal.store(0, std::memory_order_relaxed);
     resultCount.store(0, std::memory_order_relaxed);
     Generator g;
-    setupGenerator(&g, wi.mc, wi.large);
+    setupGenerator(&g, wi.mc, wi.genFlags());
+    if (wi.dp && !wi.dp->usable())
+        return;
 
     if (dat.locateBiomes.isEmpty() && seeds.size() > 1)
     {   // With little work per seed the tiles of one seed cannot keep all
@@ -617,6 +648,8 @@ void AnalysisBiomes::runStatistics(Generator *g)
 
 QVector<uint64_t> AnalysisBiomes::countBiomes(uint64_t seed, bool parallel)
 {
+    if (wi.dp)
+        return countBiomesDatapack(seed, parallel);
     QVector<uint64_t> idcnt(257);
     const int w = dat.x2 - dat.x1 + 1;
     const int h = dat.z2 - dat.z1 + 1;
@@ -677,7 +710,7 @@ QVector<uint64_t> AnalysisBiomes::countBiomes(uint64_t seed, bool parallel)
                 QVector<uint64_t>(257));
             auto scanTiles = [&](size_t workerIndex) {
                 Generator local;
-                setupGenerator(&local, wi.mc, wi.large);
+                setupGenerator(&local, wi.mc, wi.genFlags());
                 applySeed(&local, dim, seed);
                 QVector<uint64_t>& localCounts = counts[workerIndex];
                 const int s = dat.scale / 4, mid = s / 2;
@@ -753,7 +786,7 @@ QVector<uint64_t> AnalysisBiomes::countBiomes(uint64_t seed, bool parallel)
                 QVector<uint64_t>(257));
             auto scanSamples = [&](size_t workerIndex) {
                 Generator local;
-                setupGenerator(&local, wi.mc, wi.large);
+                setupGenerator(&local, wi.mc, wi.genFlags());
                 applySeed(&local, dim, seed);
                 QVector<uint64_t>& localCounts = counts[workerIndex];
                 uint64_t localDone = 0;
@@ -793,6 +826,114 @@ QVector<uint64_t> AnalysisBiomes::countBiomes(uint64_t seed, bool parallel)
     return idcnt;
 }
 
+// The biome counts of one seed in a datapack world: one entry per biome of
+// the world and, last, the number of biomes found (as the 257 entries of
+// countBiomes() for the built-in generator). The y is in blocks.
+QVector<uint64_t> AnalysisBiomes::countBiomesDatapack(uint64_t seed, bool parallel)
+{
+    const int nb = dpBiomeCount(wi.dp);
+    QVector<uint64_t> idcnt(nb + 1);
+    const int w = dat.x2 - dat.x1 + 1;
+    const int h = dat.z2 - dat.z1 + 1;
+    const uint64_t n = w * (uint64_t)h;
+    const int y = wi.y;
+    const size_t workerCount = parallel ? mappingThreadCount() : 1;
+    const auto runJobs = [&](uint64_t jobs, const std::function<void(size_t)>& job) {
+        if (!jobs)
+            return;
+        if (parallel)
+            runMappingWorkers(jobs, workers, job);
+        else
+            job(0);
+    };
+    const uint64_t sampleCount = std::min(dat.samples, n);
+    if (dat.samples >= n)
+    {   // the whole area, in small cancellable tiles
+        const int step = mappingTileSize(w, h, 64, 256);
+        const uint64_t tilesX = (uint64_t(w) + step - 1) / step;
+        const uint64_t tilesZ = (uint64_t(h) + step - 1) / step;
+        const uint64_t tileCount = tilesX * tilesZ;
+        if (parallel)
+            workTotal.fetch_add(tileCount, std::memory_order_relaxed);
+        std::atomic_uint64_t nextTile(0);
+        std::vector<std::vector<uint64_t>> counts(std::min<uint64_t>(tileCount, workerCount),
+            std::vector<uint64_t>(nb));
+        runJobs(tileCount, [&](size_t workerIndex) {
+            std::vector<uint64_t>& local = counts[workerIndex];
+            std::vector<int> ids;
+            while (!stop.load(std::memory_order_relaxed))
+            {
+                const uint64_t index = nextTile.fetch_add(1, std::memory_order_relaxed);
+                if (index >= tileCount)
+                    break;
+                const int tx = int(int64_t(dat.x1) + int64_t(index % tilesX) * step);
+                const int tz = int(int64_t(dat.z1) + int64_t(index / tilesX) * step);
+                const int tw = std::min(step, dat.x2-tx+1);
+                const int th = std::min(step, dat.z2-tz+1);
+                ids.resize(size_t(tw) * th);
+                if (!dpGenBiomes(wi.dp, seed, ids.data(), dat.scale, tx, tz, tw, th, y, &stop))
+                    break;
+                for (int id : ids)
+                    if (id >= 0 && id < nb)
+                        local[id]++;
+                if (parallel)
+                    workDone.fetch_add(1, std::memory_order_relaxed);
+            }
+            releaseDatapackSampler();
+        });
+        for (const std::vector<uint64_t>& local : counts)
+            for (int id = 0; id < nb; id++)
+                idcnt[id] += local[id];
+    }
+    else
+    {   // the first samples of a random permutation of the area
+        uint64_t offset = n ? getRnd64() % n : 0;
+        uint64_t stride = n ? getRnd64() % n : 1;
+        if (!stride)
+            stride = 1;
+        while (n > 1 && greatestCommonDivisor(stride, n) != 1)
+            stride = stride == n-1 ? 1 : stride+1;
+        if (parallel)
+            workTotal.fetch_add(sampleCount, std::memory_order_relaxed);
+        std::atomic_uint64_t nextSample(0);
+        std::vector<std::vector<uint64_t>> counts(std::min<uint64_t>(sampleCount, workerCount),
+            std::vector<uint64_t>(nb));
+        runJobs(sampleCount, [&](size_t workerIndex) {
+            std::vector<uint64_t>& local = counts[workerIndex];
+            uint64_t localDone = 0;
+            while (!stop.load(std::memory_order_relaxed))
+            {
+                const uint64_t i = nextSample.fetch_add(1, std::memory_order_relaxed);
+                if (i >= sampleCount)
+                    break;
+                const uint64_t index = uint64_t(
+                    (static_cast<unsigned __int128>(i) * stride + offset) % n);
+                const int id = dpBiomeAt(wi.dp, seed, dat.scale,
+                    dat.x1 + int(index % w), y, dat.z1 + int(index / w));
+                if (id >= 0 && id < nb)
+                    local[id]++;
+                if (++localDone == 256)
+                {
+                    if (parallel)
+                        workDone.fetch_add(localDone, std::memory_order_relaxed);
+                    localDone = 0;
+                }
+            }
+            if (parallel)
+                workDone.fetch_add(localDone, std::memory_order_relaxed);
+            releaseDatapackSampler();
+        });
+        for (const std::vector<uint64_t>& local : counts)
+            for (int id = 0; id < nb; id++)
+                idcnt[id] += local[id];
+    }
+    int bcnt = 0;
+    for (int id = 0; id < nb; id++)
+        bcnt += !!idcnt[id];
+    idcnt[nb] = bcnt;
+    return idcnt;
+}
+
 bool AnalysisBiomes::runLocate(Generator *g)
 {
     (void)g;
@@ -800,9 +941,10 @@ bool AnalysisBiomes::runLocate(Generator *g)
         return true;
     std::atomic_bool allocationFailed(false);
     QTreeWidgetItem *seeditem = nullptr;
-    const int y = wi.y >> 2;
+    // a datapack world takes its level in blocks
+    const int y = wi.dp ? wi.y : wi.y >> 2;
     QVector<BiomeCenter> centers;
-    if (tolerance <= 1)
+    if (tolerance <= 1 || wi.dp)
     {
         AreaLocator locator(wi, dat.locateDim, dat.locateBiomes,
             dat.x1, dat.z1, dat.x2, dat.z2, y, minsize, &stop, &workDone,
@@ -838,7 +980,13 @@ bool AnalysisBiomes::runLocate(Generator *g)
         const int biomeId = dat.locateBiomes[center.biome];
         QTreeWidgetItem* item = new QTreeWidgetItem(seeditem);
         item->setText(0, "-");
-        item->setData(1, Qt::DisplayRole, getBiomeDisplay(wi.mc, biomeId));
+        if (wi.dp && wi.dp->usable() && biomeId >= 0 && biomeId < (int) wi.dp->labels.size())
+        {
+            item->setData(1, Qt::DisplayRole, wi.dp->labels[biomeId]);
+            item->setData(1, Qt::ToolTipRole, wi.dp->world->biomes()[biomeId].id);
+        }
+        else
+            item->setData(1, Qt::DisplayRole, getBiomeDisplay(wi.mc, biomeId));
         item->setData(1, Qt::UserRole, biomeId);
         item->setData(2, Qt::DisplayRole, QVariant::fromValue(center.size));
         item->setData(3, Qt::DisplayRole, QVariant::fromValue(center.pos.x));
@@ -912,6 +1060,20 @@ QVariant BiomeTableModel::headerData(int section, Qt::Orientation orientation, i
     if (orientation == Qt::Horizontal && section < ids.size())
     {
         int id = ids[section];
+        if (dp && dp->usable())
+        {
+            const bool count = id == countId;
+            const bool known = id >= 0 && id < (int) dp->labels.size();
+            if (role == Qt::UserRole)
+                return id;
+            if (role == Qt::UserRole+1) // export role
+                return count ? QString("#") : known ? dp->world->biomes()[id].id : QString("?");
+            if (role == Qt::DisplayRole)
+                return count ? tr("Biomes") : known ? dp->labels[id] : QString("?");
+            if (role == Qt::ToolTipRole && known && !count)
+                return dp->world->biomes()[id].id;
+            return QVariant();
+        }
         const char *bname = biome2str(cmp.mc, id);
         if (role == Qt::UserRole)
             return id; // identifier
@@ -925,11 +1087,25 @@ QVariant BiomeTableModel::headerData(int section, Qt::Orientation orientation, i
     return QVariant();
 }
 
+bool BiomeTableModel::lessId(int a, int b)
+{
+    if (!dp || !dp->usable())
+        return cmp(a, b);
+    // the number of biomes first, then the biomes by name
+    if (a == countId || b == countId)
+        return a == countId && b != countId;
+    const int n = (int) dp->labels.size();
+    const QString la = a < n ? dp->labels[a] : QString(), lb = b < n ? dp->labels[b] : QString();
+    const int byName = QString::localeAwareCompare(la, lb);
+    return byName != 0 ? byName < 0 : a < b;
+}
+
 void BiomeTableModel::insertIds(QSet<int>& nids)
 {
     for (int id : std::as_const(nids))
     {
-        QList<int>::iterator it = std::lower_bound(ids.begin(), ids.end(), id, cmp);
+        QList<int>::iterator it = std::lower_bound(ids.begin(), ids.end(), id,
+            [this](int a, int b) { return lessId(a, b); });
         if (it == ids.end() || *it != id)
         {
             int i = std::distance(ids.begin(), it);
@@ -948,7 +1124,7 @@ void BiomeTableModel::insertSeeds(QList<uint64_t>& nseeds)
     endInsertRows();
 }
 
-void BiomeTableModel::reset(int mc)
+void BiomeTableModel::reset(int mc, std::shared_ptr<const DatapackWorld> world)
 {
     beginResetModel();
     seeds.clear();
@@ -957,6 +1133,8 @@ void BiomeTableModel::reset(int mc)
     cmp.mode = IdCmp::SORT_DIM;
     cmp.dim = DIM_UNDEF;
     cmp.mc = mc;
+    dp = world;
+    countId = dp ? dpBiomeCount(dp) : 256;
     endResetModel();
 }
 
@@ -1015,6 +1193,9 @@ TabBiomes::TabBiomes(MainWindow *parent)
     , nextupdate()
 {
     ui->setupUi(this);
+    ui->pushStart->setProperty("primary", true);
+    setEmptyHint(ui->treeLocate, tr("No biome areas yet. Pick biomes and press Analyze."));
+    setEmptyHint(ui->table, tr("No statistics yet. Press Analyze."));
 
     proxy->setSourceModel(model);
     proxy->setDynamicSortFilter(false);
@@ -1067,6 +1248,13 @@ TabBiomes::TabBiomes(MainWindow *parent)
             str2biome[s] = id;
     }
 
+    // in a datapack world the dimension is the one of the Datapacks tool
+    labelDpDimension = new QLabel(ui->tabStats);
+    labelDpDimension->setObjectName("labelDescription");
+    labelDpDimension->setWordWrap(true);
+    labelDpDimension->hide();
+    ui->gridLayout_4->addWidget(labelDpDimension, 1, 0, 1, 3);
+
 }
 
 TabBiomes::~TabBiomes()
@@ -1106,6 +1294,7 @@ void TabBiomes::save(QSettings& settings)
     for (int id : selectedBiomeList())
         biomeIds.append(id);
     settings.setValue("analysis/biomeids", biomeIds);
+    settings.setValue("analysis/dpbiomeids", dpSelected);
     settings.setValue("analysis/biomesize_chunks", ui->lineBiomeSize->text().toInt());
     settings.setValue("analysis/tolerance", ui->lineTolerance->text().toInt());
 }
@@ -1143,6 +1332,8 @@ void TabBiomes::load(QSettings& settings)
     const QVariantList storedBiomes = settings.value("analysis/biomeids").toList();
     for (const QVariant& value : storedBiomes)
         selectedBiomes.insert(value.toInt());
+    dpSelected = settings.value("analysis/dpbiomeids").toStringList();
+    dpShown.reset();
     refreshBiomes(settings.value("analysis/biomeid", -1).toInt());
     if (settings.contains("analysis/biomesize_chunks"))
     {
@@ -1171,6 +1362,21 @@ void TabBiomes::refreshBiomes(int activeid)
         : analysed.size() == 1
         ? tr("Results from seed %1. Analyze again for the current map.").arg(qint64(analysed.front()))
         : tr("Results from other seeds. Analyze again for the current map."));
+    if (wi.dp)
+    {
+        refreshDatapackBiomes();
+        return;
+    }
+    for (QCheckBox *check : {ui->checkOverworld, ui->checkNether, ui->checkEnd})
+        check->setVisible(true);
+    labelDpDimension->hide();
+    ui->lineTolerance->setEnabled(true);
+    ui->lineTolerance->setToolTip(QString());
+    if (dpShown)
+    {   // back from a datapack world: the vanilla selection is still there
+        dpShown.reset();
+        ui->comboBiome->clear();
+    }
     const int dim = parent->getDim();
     const int locateTab = ui->tabWidget->indexOf(ui->tabLocate);
     const bool canLocate = dim != DIM_END;
@@ -1225,8 +1431,63 @@ void TabBiomes::refreshBiomes(int activeid)
     updateBiomeSelectionControls();
 }
 
+bool TabBiomes::datapack() const
+{
+    return parent->datapackMode();
+}
+
+void TabBiomes::refreshDatapackBiomes()
+{
+    const std::shared_ptr<const DatapackWorld> world = parent->datapacks->current();
+    // the dimension is picked in the Datapacks tool; the analysis has no
+    // border tolerance there (that search is the built-in generator's)
+    for (QCheckBox *check : {ui->checkOverworld, ui->checkNether, ui->checkEnd})
+        check->setVisible(false);
+    labelDpDimension->setText(world && world->usable()
+        ? tr("Datapack world: the biomes of %1 (pick the dimension in Datapacks)")
+            .arg(world->dimensionId)
+        : tr("Datapack world: %1").arg(world ? world->shortText() : QString()));
+    labelDpDimension->show();
+    ui->lineTolerance->setEnabled(false);
+    ui->lineTolerance->setToolTip(tr("Not available for datapack worlds: their areas are "
+        "searched without a border tolerance."));
+    ui->tabLocate->setEnabled(world && world->usable());
+    if (world == dpShown && ui->comboBiome->count())
+        return;
+    dpShown = world;
+    const QSignalBlocker blocker(ui->comboBiome);
+    ui->comboBiome->clear();
+    if (world && world->usable())
+    {
+        const QColor border = QApplication::palette().color(QPalette::Mid);
+        for (int i : dpBiomeOrder(*world))
+        {
+            const dp::BiomeInfo& b = world->world->biomes()[i];
+            ui->comboBiome->addItem(dpSwatchIcon(b.color, border), world->labels[i],
+                QVariant::fromValue(i));
+            ui->comboBiome->setItemData(ui->comboBiome->count() - 1, b.id, Qt::ToolTipRole);
+        }
+    }
+    ui->comboBiome->setCurrentIndex(-1);
+    ui->comboBiome->setCheckedData(selectedBiomeList());
+    updateBiomeSelectionControls();
+}
+
 QVector<int> TabBiomes::selectedBiomeList() const
 {
+    if (datapack())
+    {   // the selected ids, as indices into the biomes of the shown world
+        QVector<int> ids;
+        const DpBiomeNames names{parent->datapacks->current()};
+        for (const QString& id : dpSelected)
+        {
+            const int i = names.index(id);
+            if (i >= 0)
+                ids.append(i);
+        }
+        std::sort(ids.begin(), ids.end());
+        return ids;
+    }
     QVector<int> ids = selectedBiomes.values().toVector();
     std::sort(ids.begin(), ids.end());
     return ids;
@@ -1237,17 +1498,23 @@ void TabBiomes::updateBiomeSelectionControls()
     QStringList names;
     WorldInfo wi;
     parent->getSeed(&wi);
-    for (int id : selectedBiomeList())
-        names.append(getBiomeDisplay(wi.mc, id));
+    const QVector<int> selected = selectedBiomeList();
+    for (int id : selected)
+    {
+        if (wi.dp && wi.dp->usable() && id < (int) wi.dp->labels.size())
+            names.append(wi.dp->labels[id]);
+        else if (!wi.dp)
+            names.append(getBiomeDisplay(wi.mc, id));
+    }
     QString summary = tr("Selected biomes: %1").arg(names.join(", "));
     ui->buttonHighlight->setToolTip(summary);
-    if (selectedBiomes.isEmpty() && ui->buttonHighlight->isChecked())
+    if (selected.isEmpty() && ui->buttonHighlight->isChecked())
         ui->buttonHighlight->setChecked(false);
-    ui->buttonHighlight->setEnabled(!selectedBiomes.isEmpty());
+    ui->buttonHighlight->setEnabled(!selected.isEmpty());
     if (!ui->buttonHighlight->isChecked())
     {
-        ui->buttonHighlight->setText(selectedBiomes.size() > 1
-                ? tr("Highlight %n biomes", "", selectedBiomes.size())
+        ui->buttonHighlight->setText(selected.size() > 1
+                ? tr("Highlight %n biomes", "", selected.size())
                 : tr("Highlight on map"));
     }
 }
@@ -1378,7 +1645,12 @@ void TabBiomes::onBufferTimeout()
         for (int i = 0, n = proxy->columnCount(); i < n; i++)
         {
             int id = proxy->headerData(i, Qt::Horizontal, Qt::UserRole).toInt();
-            ui->table->setColumnWidth(i, qMax(80, colwidth[id] + 28));
+            // the names of datapack biomes are not known in advance: room
+            // for them, within limits
+            int name = 0;
+            if (model->dp)
+                name = qMin(180, txtWidth(fm, proxy->headerData(i, Qt::Horizontal).toString()));
+            ui->table->setColumnWidth(i, qMax(80, qMax(colwidth[id], name) + 28));
         }
         int rowheight = fm.height() + 4;
         ui->table->verticalHeader()->setDefaultSectionSize(rowheight);
@@ -1413,6 +1685,12 @@ void TabBiomes::on_pushStart_clicked()
     thread.stop = false;
 
     parent->getSeed(&thread.wi);
+    if (thread.wi.dp && !thread.wi.dp->usable())
+    {
+        warn(parent, tr("The datapack world is not ready: %1")
+            .arg(thread.wi.dp->stateText().replace('\n', ' ')));
+        return;
+    }
     thread.seeds.clear();
     if (ui->comboSeedSource->currentIndex() == 0)
         thread.seeds.push_back(thread.wi.seed);
@@ -1422,6 +1700,11 @@ void TabBiomes::on_pushStart_clicked()
     thread.dims[0] = ui->checkOverworld->isChecked() ? DIM_OVERWORLD : DIM_UNDEF;
     thread.dims[1] = ui->checkNether->isChecked() ? DIM_NETHER : DIM_UNDEF;
     thread.dims[2] = ui->checkEnd->isChecked() ? DIM_END : DIM_UNDEF;
+    if (thread.wi.dp)
+    {   // the one dimension of the datapack world
+        thread.dims[0] = DIM_OVERWORLD;
+        thread.dims[1] = thread.dims[2] = DIM_UNDEF;
+    }
 
     int x1 = ui->lineX1->text().toInt();
     int z1 = ui->lineZ1->text().toInt();
@@ -1446,7 +1729,7 @@ void TabBiomes::on_pushStart_clicked()
 
     if (ui->tabWidget->currentWidget() == ui->tabLocate)
     {
-        if (selectedBiomes.isEmpty())
+        if (selectedBiomeList().isEmpty())
         {
             warn(parent, tr("Select at least one biome."));
             return;
@@ -1458,7 +1741,7 @@ void TabBiomes::on_pushStart_clicked()
         thread.dat.locateDim = parent->getDim();
         const int chunks = ui->lineBiomeSize->text().toInt();
         thread.minsize = chunks > INT_MAX / 16 ? INT_MAX : chunks * 16;
-        thread.tolerance = ui->lineTolerance->text().toInt();
+        thread.tolerance = thread.wi.dp ? 0 : ui->lineTolerance->text().toInt();
         if (thread.minsize <= 0)
             thread.minsize = 1;
         scale = 4;
@@ -1466,7 +1749,7 @@ void TabBiomes::on_pushStart_clicked()
     }
     else
     {
-        model->reset(thread.wi.mc);
+        model->reset(thread.wi.mc, thread.wi.dp);
         thread.dat.locate = -1;
         thread.dat.locateBiomes.clear();
     }
@@ -1535,8 +1818,14 @@ void TabBiomes::exportResults(CsvWriter& csv)
         area("#Z2", datl.z2, datl.scale);
         csv.row({"#scale", QString("1:%1").arg(datl.scale)});
         QStringList biomeNames;
+        const std::shared_ptr<const DatapackWorld> dpw = thread.wi.dp;
         for (int id : std::as_const(datl.locateBiomes))
-            biomeNames.append(QString::fromLatin1(biome2str(MC_NEWEST, id)));
+        {
+            if (dpw && dpw->usable() && id >= 0 && id < dpBiomeCount(dpw))
+                biomeNames.append(dpw->world->biomes()[id].id);
+            else
+                biomeNames.append(QString::fromLatin1(biome2str(MC_NEWEST, id)));
+        }
         csv.row({"#biomes", biomeNames.join(",")});
 
         csv.row({ tr("seed"), tr("biome"), tr("area"), tr("x"), tr("z") });
@@ -1581,16 +1870,35 @@ void TabBiomes::on_radioFullSample_toggled(bool checked)
 
 void TabBiomes::on_comboBiome_selectionChanged()
 {
-    selectedBiomes.clear();
-    for (int biomeId : ui->comboBiome->checkedData())
-        selectedBiomes.insert(biomeId);
+    if (datapack())
+    {
+        const std::shared_ptr<const DatapackWorld> world = parent->datapacks->current();
+        dpSelected.clear();
+        for (int i : ui->comboBiome->checkedData())
+            if (world && world->usable() && i >= 0 && i < dpBiomeCount(world))
+                dpSelected.append(world->world->biomes()[i].id);
+    }
+    else
+    {
+        selectedBiomes.clear();
+        for (int biomeId : ui->comboBiome->checkedData())
+            selectedBiomes.insert(biomeId);
+    }
     updateBiomeSelectionControls();
     if (ui->buttonHighlight->isChecked())
-        parent->getMapView()->setBiomeHighlights(selectedBiomeList());
+        on_buttonHighlight_toggled(true);
 }
 
 void TabBiomes::on_buttonHighlight_toggled(bool checked)
 {
+    if (datapack())
+    {   // the highlight of datapack biomes is the one of the Datapacks tool
+        if (parent->tabDatapacks)
+            parent->tabDatapacks->setHighlightedBiomes(checked ? dpSelected : QStringList());
+        ui->buttonHighlight->setText(checked ? tr("Clear highlight") : tr("Highlight on map"));
+        updateBiomeSelectionControls();
+        return;
+    }
     parent->getMapView()->setBiomeHighlights(checked ? selectedBiomeList() : QVector<int>());
     ui->buttonHighlight->setText(checked ? tr("Clear highlight") : tr("Highlight on map"));
     updateBiomeSelectionControls();
@@ -1608,7 +1916,8 @@ void TabBiomes::on_treeLocate_itemClicked(QTreeWidgetItem *item, int column)
         WorldInfo wi;
         parent->getSeed(&wi);
         wi.seed = seed;
-        parent->setSeed(wi, dim);
+        // a datapack world keeps the dimension picked for vanilla worlds
+        parent->setSeed(wi, parent->datapackMode() ? DIM_UNDEF : dim);
     }
 
     dat = item->data(0, Qt::UserRole+2);
@@ -1630,4 +1939,10 @@ void TabBiomes::on_tabWidget_currentChanged(int)
             ok = ui->treeLocate->topLevelItemCount() > 0;
     }
     ui->pushExport->setEnabled(ok);
+}
+
+void TabBiomes::stopWork()
+{
+    if (thread.isRunning())
+        thread.stop = true;
 }

@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:range_choice",
+  "input": "testpack:erosion/base",
+  "min_inclusive": -0.2,
+  "max_exclusive": 0.25,
+  "when_in_range": {
+    "type": "minecraft:add",
+    "argument1": -0.1,
+    "argument2": {
+      "type": "minecraft:mul",
+      "argument1": 3.0,
+      "argument2": "testpack:erosion/blob"
+    }
+  },
+  "when_out_of_range": "testpack:erosion/base"
+}

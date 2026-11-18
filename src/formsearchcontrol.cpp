@@ -1,9 +1,13 @@
 #include "formsearchcontrol.h"
+
+#include <QFileInfo>
 #include "widgets.h"
 #include "ui_formsearchcontrol.h"
 
 #include "mainwindow.h"
 #include "message.h"
+#include "datapackworld.h"
+#include "formdpconditions.h"
 #include "rangedialog.h"
 #include "resultlist.h"
 #include "search.h"
@@ -59,6 +63,17 @@ QVariant SeedTableModel::headerData(int section, Qt::Orientation orientation, in
             return QVariant::fromValue(tr("top 16"));
         if (section == COL_HEX48)
             return QVariant::fromValue(tr("lower 48 bit"));
+    }
+    if (role == Qt::ToolTipRole && orientation == Qt::Horizontal)
+    {   // the header texts are kept short (and stable for exports)
+        if (section == COL_SEED)
+            return QVariant::fromValue(tr("The world seed"));
+        if (section == COL_TOP16)
+            return QVariant::fromValue(tr("The upper 16 bits of the seed. Seeds that differ only "
+                "here share their structure positions but not their biomes."));
+        if (section == COL_HEX48)
+            return QVariant::fromValue(tr("The lower 48 bits of the seed (the structure seed) in "
+                "hexadecimal. They decide where most structures can generate."));
     }
     if (role == Qt::DisplayRole && orientation == Qt::Vertical)
         return QVariant::fromValue(section + 1);
@@ -127,16 +142,43 @@ FormSearchControl::FormSearchControl(MainWindow *parent)
     ui->labelStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     styleInfoButton(ui->buttonSearchHelp);
 
-    ui->comboSearchType->addItem(tr("incremental"), SEARCH_INC);
-    ui->comboSearchType->addItem(tr("48-bit only"), SEARCH_48ONLY);
-    ui->comboSearchType->addItem(tr("48-bit family blocks"), SEARCH_BLOCKS);
-    ui->comboSearchType->addItem(tr("seed list from file..."), SEARCH_LIST);
+    // Plain names; the technical name of each search type is in its tooltip.
+    // The item order is not stored (the data is), so it can follow use.
+    const struct { int type; QString name, tip; } searchTypes[] = {
+        { SEARCH_INC, tr("All seeds in order"),
+          tr("Checks every seed, one after another, from the start seed on. "
+             "The right choice for most searches, especially for biomes. "
+             "(Technical name: incremental)") },
+        { SEARCH_BLOCKS, tr("Structure seeds first"),
+          tr("First finds structure seeds (the lower 48 bits of a seed, which decide where "
+             "most structures can be) that can match, then checks all 65,536 world seeds "
+             "that share each of them. Faster when the conditions ask for rare structure "
+             "positions. (Technical name: 48-bit family blocks)") },
+        { SEARCH_48ONLY, tr("Structure seeds only"),
+          tr("Lists structure seeds (lower 48 bits) that may match, without checking full "
+             "world seeds, so biomes and other full-seed conditions are not confirmed. Useful "
+             "as input for the seed generator later. (Technical name: 48-bit only)") },
+        { SEARCH_LIST, tr("Seeds from a file..."),
+          tr("Checks only the seeds listed in a text file, one seed per line. "
+             "(Technical name: seed list from file)") },
+    };
+    for (const auto& t : searchTypes)
+    {
+        ui->comboSearchType->addItem(t.name, t.type);
+        ui->comboSearchType->setItemData(ui->comboSearchType->count() - 1, t.tip, Qt::ToolTipRole);
+    }
+    ui->label->setToolTip(tr("How the search goes through the seeds. Hover over an entry "
+        "for when to pick it."));
+    ui->buttonMore->setToolTip(tr("All seeds in order: limit the range of seeds. "
+        "Seeds from a file: choose the file."));
+    ui->label_2->setToolTip(tr("The seed the search continues from"));
 
     checkAdvanced = new QCheckBox(tr("Advanced options"), this);
     checkAdvanced->setToolTip(tr("Show the expert options: search type, start seed, "
-        "48-bit seed generator and result columns, the Locations sampling pattern, "
-        "and the quad-structure and algorithm helper filters"));
-    ui->gridLayout->addWidget(checkAdvanced, 5, 0, 1, 7);
+        "structure seed generator and result columns, and the Locations sampling pattern"));
+    ui->layoutOptions->insertWidget(0, checkAdvanced);
+    ui->labelProgress->setMinimumWidth(0);
+    setEmptyHint(ui->results, tr("No matching seeds yet. Add conditions, then start the search."));
     connect(checkAdvanced, &QCheckBox::toggled, this, &FormSearchControl::advancedChanged);
 
     model = new SeedTableModel(ui->results);
@@ -147,6 +189,7 @@ FormSearchControl::FormSearchControl(MainWindow *parent)
     ui->results->setModel(proxy);
 
     ui->results->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    ui->results->setShowGrid(false);
     ui->results->horizontalHeader()->setMinimumSectionSize(24);
     ui->results->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     ui->results->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -266,7 +309,7 @@ bool FormSearchControl::setList64(QString path, bool quiet)
         else if (!quiet)
         {
             int button = warn(this, tr("Warning"),
-                tr("Failed to load 64-bit seed list from file:\n\"%1\"").arg(path),
+                tr("Failed to load the seed list from file:\n\"%1\"").arg(path),
                 tr("Reset list path?"), QMessageBox::Reset | QMessageBox::Ignore);
             if (button != QMessageBox::Ignore)
             {
@@ -316,7 +359,6 @@ void FormSearchControl::searchLockUi(bool lock)
     else
     {
         ui->buttonStart->setText(tr("Start search"));
-        ui->buttonStart->setIcon(QIcon(":/icons/search.png"));
         ui->buttonStart->setChecked(false);
         ui->buttonStart->setEnabled(true);
         ui->comboSearchType->setEnabled(true);
@@ -391,7 +433,6 @@ void FormSearchControl::invalidateResults()
         // what it reports until it has finished (see searchFinish())
         discardSearch = true;
         ui->buttonStart->setText(tr("Start search"));
-        ui->buttonStart->setIcon(QIcon(":/icons/search.png"));
         ui->buttonStart->setChecked(false);
         ui->buttonStart->setEnabled(false);
         sthread.stopSearch();
@@ -412,18 +453,26 @@ void FormSearchControl::on_buttonClear_clicked()
 
 void FormSearchControl::on_buttonStart_clicked()
 {
+    if (ui->buttonStart->isChecked() && parent->datapackMode())
+    {   // a datapack world: its own conditions, tested with the datapack generator
+        startDatapackSearch();
+        update();
+        return;
+    }
     if (ui->buttonStart->isChecked())
     {
         Session session;
         parent->getSeed(&session.wi);
+        session.wi.dp = nullptr; // a vanilla search
         session.cv = parent->formCond->getConditions();
+        session.dpcv = parent->formDpCond->getConditions();
         session.sc = getSearchConfig();
         int ok = true;
 
         if (session.cv.empty())
         {
-            warn(this, tr("Add at least one filter first: pick it in the row above the list "
-                "and press \"Add\", or use \"Advanced filter...\"."));
+            warn(this, tr("Add at least one condition first: pick it in the row above the list "
+                "and press \"+ Add\", or use \"More options...\"."));
             ok = false;
         }
         if (session.sc.searchtype == SEARCH_LIST && slist64.empty())
@@ -491,45 +540,14 @@ void FormSearchControl::on_buttonStart_clicked()
 
             // results found for another version or world type do not
             // belong to this search, nor does the position to resume from
-            if (!model->seeds.empty() &&
-                    (session.wi.mc != resultsMc || session.wi.large != resultsLarge))
-            {
-                invalidateResults();
-                session.sc.startseed = 0;
-            }
-            resultsMc = session.wi.mc;
-            resultsLarge = session.wi.large;
+            // (also without results: the position would skip seeds of the other world)
+            session.sc.startseed = prepareResultsFor(session.wi, session.sc.startseed);
 
             ok = sthread.set(parent, session);
         }
 
         if (ok)
-        {
-            // keep the results: a changed filter has already discarded them,
-            // so the list only holds seeds found up to the resume position
-            if (!resultfile.fileName().isEmpty())
-            {   // the file holds the search and its results so far: the ones
-                // kept for a resumed search are written again after the header
-                resultfile.close();
-                if (resultfile.open(QIODevice::ReadWrite | QIODevice::Truncate | QIODevice::Text))
-                {
-                    QTextStream stream(&resultfile);
-                    session.writeHeader(stream);
-                    for (const SeedTableModel::Seed& s : std::as_const(model->seeds))
-                        stream << QString::asprintf("%" PRId64 "\n", (int64_t)s.seed);
-                    stream.flush();
-                }
-            }
-            ui->lineStart->setText(QString::asprintf("%" PRId64, (int64_t)session.sc.startseed));
-            ui->buttonStart->setText(tr("Abort search"));
-            ui->buttonStart->setIcon(QIcon(":/icons/cancel.png"));
-            searchLockUi(true);
-            nextupdate = 0;
-            updt = 20;
-            sthread.startSearch();
-            elapsed.start();
-            stimer.start(250);
-        }
+            beginSearch(session);
         else
         {
             ui->buttonStart->setChecked(false);
@@ -538,7 +556,6 @@ void FormSearchControl::on_buttonStart_clicked()
     else
     {
         ui->buttonStart->setText(tr("Start search"));
-        ui->buttonStart->setIcon(QIcon(":/icons/search.png"));
         ui->buttonStart->setChecked(false);
 
         // disable until finish
@@ -547,6 +564,114 @@ void FormSearchControl::on_buttonStart_clicked()
     }
 
     update();
+}
+
+ResultsWorld ResultsWorld::of(const WorldInfo& wi)
+{
+    ResultsWorld w;
+    w.set = true;
+    w.mc = wi.mc;
+    w.worldType = wi.worldType();
+    if (wi.dp)
+    {
+        w.datapack = true;
+        w.preset = wi.dp->preset;
+        w.dimension = wi.dp->dimensionId;
+        for (const PackEntry& pack : wi.dp->packs)
+            if (pack.enabled)
+                w.packs.append(QFileInfo(pack.path).fileName());
+    }
+    return w;
+}
+
+bool FormSearchControl::hasResultsOrProgress()
+{
+    return !model->seeds.empty() || getSearchConfig().startseed != 0;
+}
+
+uint64_t FormSearchControl::prepareResultsFor(const WorldInfo& world, uint64_t startseed)
+{
+    const ResultsWorld next = ResultsWorld::of(world);
+    if ((!model->seeds.empty() || resultsOf.set) && next != resultsOf)
+    {
+        invalidateResults();
+        startseed = 0;
+    }
+    resultsOf = next;
+    return startseed;
+}
+
+void FormSearchControl::startDatapackSearch()
+{
+    Session session;
+    parent->getSeed(&session.wi);
+    session.cv = parent->formCond->getConditions();
+    session.dpcv = parent->formDpCond->getConditions();
+    session.sc = getSearchConfig();
+    session.gen48 = parent->formGen48->getConfig(false);
+    session.datapack = true;
+    if (session.wi.dp)
+    {
+        const ResultsWorld world = ResultsWorld::of(session.wi);
+        session.dppacks = world.packs;
+        session.dpdimension = world.dimension;
+    }
+    bool ok = true;
+    if (!session.wi.dp || !session.wi.dp->usable())
+    {
+        warn(this, tr("The datapack world is not ready: %1")
+            .arg(session.wi.dp ? session.wi.dp->stateText().replace('\n', ' ')
+                : tr("no datapack world")));
+        ok = false;
+    }
+    else if (session.dpcv.empty())
+    {
+        warn(this, tr("Add at least one datapack condition first: pick a biome in the row "
+            "above the list and press \"+ Add\", or use \"More options...\"."));
+        ok = false;
+    }
+    else if (session.sc.searchtype == SEARCH_LIST && slist64.empty())
+    {
+        warn(this, tr("No seed list file selected."));
+        ok = false;
+    }
+    if (ok)
+    {   // whole seeds only: the seed generator (48-bit lists) does not apply
+        session.slist = session.sc.searchtype == SEARCH_LIST ? slist64 : std::vector<uint64_t>();
+        session.sc.startseed = prepareResultsFor(session.wi, session.sc.startseed);
+        ok = sthread.set(parent, session);
+    }
+    if (ok)
+        beginSearch(session);
+    else
+        ui->buttonStart->setChecked(false);
+}
+
+void FormSearchControl::beginSearch(Session& session)
+{
+    // keep the results: a changed filter has already discarded them,
+    // so the list only holds seeds found up to the resume position
+    if (!resultfile.fileName().isEmpty())
+    {   // the file holds the search and its results so far: the ones
+        // kept for a resumed search are written again after the header
+        resultfile.close();
+        if (resultfile.open(QIODevice::ReadWrite | QIODevice::Truncate | QIODevice::Text))
+        {
+            QTextStream stream(&resultfile);
+            session.writeHeader(stream);
+            for (const SeedTableModel::Seed& s : std::as_const(model->seeds))
+                stream << QString::asprintf("%" PRId64 "\n", (int64_t)s.seed);
+            stream.flush();
+        }
+    }
+    ui->lineStart->setText(QString::asprintf("%" PRId64, (int64_t)session.sc.startseed));
+    ui->buttonStart->setText(tr("Abort search"));
+    searchLockUi(true);
+    nextupdate = 0;
+    updt = 20;
+    sthread.startSearch();
+    elapsed.start();
+    stimer.start(250);
 }
 
 void FormSearchControl::on_buttonMore_clicked()
@@ -629,28 +754,29 @@ void FormSearchControl::on_buttonSearchHelp_clicked()
     InfoPopup::toggle(ui->buttonSearchHelp, tr("Help: search types"),
         tr(
         "<html><head/><body><p>"
-        "The <b>incremental</b> search checks seeds in numerical order, "
-        "except for grouping seeds into work items for parallelization. "
-        "This is the recommended option for general searches. You can "
-        "restrict this type of search to a value range using the "
-        "&quot;...&quot; button."
+        "A world seed has 64 bits. The lower 48 bits, the <i>structure seed</i>, "
+        "decide where most structures can generate; the upper 16 bits change "
+        "the biomes and terrain."
         "</p><p>"
-        "When using <b>48-bit only</b>, the search checks partial seeds and "
-        "will not test the full conditions. Instead it yields seed bases "
-        "that may satisfy the conditions without knowing the upper 16-bit of "
-        "the seed. A session file saved from this search is suitable to be used "
-        "later with the 48-bit generator to look for matching seeds."
+        "<b>All seeds in order</b> (incremental) checks seeds in numerical "
+        "order. This is the recommended option for most searches. You can "
+        "limit it to a range of seeds with the &quot;...&quot; button."
         "</p><p>"
-        "With <b>48-bit family blocks</b> the search looks for suitable "
-        "48-bit seeds first and parallelizes the search through the upper "
-        "16-bits. This search type can be a better match for exhaustive searches "
-        "and those with very restrictive structure requirements."
+        "<b>Structure seeds first</b> (48-bit family blocks) looks for "
+        "structure seeds that can match first, and then checks all 65,536 world "
+        "seeds that share each of them. It suits searches with rare structure "
+        "requirements and searches through all seeds."
         "</p><p>"
-        "Load a <b>seed list from a file</b> to search through an "
-        "existing set of seeds. The seeds should be in decimal ASCII text, "
-        "separated by newline characters. You can browse for a file using "
-        "the &quot;...&quot; button. (The seed generator is ignored with "
-        "this option.)"
+        "<b>Structure seeds only</b> (48-bit only) checks only structure seeds "
+        "and does not test the full conditions. It lists structure seeds that "
+        "may match, whatever the upper 16 bits are. A session saved from this "
+        "search can later be used with the seed generator to look for "
+        "matching world seeds."
+        "</p><p>"
+        "<b>Seeds from a file</b> searches through an existing list of seeds: "
+        "a text file with one decimal seed per line. Choose the file with the "
+        "&quot;...&quot; button. (The seed generator is ignored with this "
+        "option.)"
         "</p></body></html>"
         ));
 }
@@ -826,8 +952,7 @@ int FormSearchControl::searchResultsAdd(std::vector<uint64_t> seeds, bool counto
     {   // pasted or loaded seeds belong to the world that is shown
         WorldInfo wi;
         parent->getSeed(&wi, false);
-        resultsMc = wi.mc;
-        resultsLarge = wi.large;
+        resultsOf = ResultsWorld::of(wi);
     }
 
     if (ui->checkStop->isChecked() && addcnt)
@@ -880,14 +1005,14 @@ void FormSearchControl::searchProgressReset()
     }
 
     if (!advanced && searchtype == SEARCH_INC && fmt.isEmpty())
-        fmt = tr("Ready", "Progressbar"); // the full 64-bit count means nothing to most users
+        fmt = QString(); // the full 64-bit count means nothing to most users
     else if (cnt)
         fmt += QString::asprintf("0 / %" PRIu64 " (0.00%%)", cnt);
     else
         fmt += "0 / ? (0.00%%)";
 
     ui->progressBar->setValue(0);
-    ui->progressBar->setFormat(fmt);
+    setProgressText(fmt);
 
     if (parent)
         parent->setProgressIndication();
@@ -923,13 +1048,22 @@ void FormSearchControl::updateSearchProgress(uint64_t prog, uint64_t end, int64_
         }
         else if (!advanced)
         {
-            fmt = tr("%L1 seeds checked", "Progressbar").arg(prog);
+            // all workers together, the position alone lags behind
+            fmt = tr("%L1 seeds checked", "Progressbar").arg(
+                std::max(prog, sthread.seedsChecked()));
         }
     }
-    ui->progressBar->setFormat(fmt);
+    setProgressText(fmt);
 
     if (parent)
         parent->setProgressIndication(value);
+}
+
+void FormSearchControl::setProgressText(const QString& format)
+{
+    ui->progressBar->setFormat(format);
+    ui->labelProgress->setText(format.isEmpty() ? QString() : ui->progressBar->text());
+    ui->labelProgress->setToolTip(ui->labelProgress->text());
 }
 
 void FormSearchControl::searchFinish(bool done)
@@ -939,7 +1073,7 @@ void FormSearchControl::searchFinish(bool done)
         discardSearch = false;
         stimer.stop();
         qbuf.clear();
-        ui->labelStatus->setText(tr("Search stopped because the filters changed."));
+        ui->labelStatus->setText(tr("Search stopped because the conditions changed."));
         searchLockUi(false);
         if (parent)
             parent->setProgressIndication();
@@ -954,7 +1088,7 @@ void FormSearchControl::searchFinish(bool done)
     {
         ui->lineStart->setText(QString::asprintf("%" PRId64, sthread.smax));
         ui->progressBar->setValue(10000);
-        ui->progressBar->setFormat(tr("Done", "Progressbar"));
+        setProgressText(tr("Done", "Progressbar"));
     }
     ui->labelStatus->setText(done
         ? tr("Search complete. %1 results.").arg(model->seeds.size())
@@ -981,6 +1115,10 @@ void FormSearchControl::progressTimeout()
     {   // instead of seeds/sec, isize and an eta for the whole seed space
         int found = ui->results->model()->rowCount();
         status = tr("Searching... %1 found so far").arg(found);
+        // datapack searches are slow: their speed tells what to expect
+        if (sthread.dpsearch && std::isfinite(avg))
+            status += QString::fromUtf8(" \u00b7 ") + tr("%L1 seeds per second")
+                .arg(avg, 0, 'f', avg < 10 ? 1 : 0);
     }
     ui->labelStatus->setText(status);
 

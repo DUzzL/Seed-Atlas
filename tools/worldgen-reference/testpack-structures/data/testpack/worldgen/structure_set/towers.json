@@ -1,0 +1,15 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 1001,
+    "spacing": 10,
+    "separation": 3,
+    "frequency": 0.7
+  },
+  "structures": [
+    {
+      "structure": "testpack:tower",
+      "weight": 1
+    }
+  ]
+}

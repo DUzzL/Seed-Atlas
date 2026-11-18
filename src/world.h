@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "search.h"
+#include "datapack/dpworld.h"
 
 #include <QRunnable>
 #include <QImage>
@@ -13,7 +14,18 @@
 #include <QThread>
 
 #include <bitset>
+#include <memory>
 #include <unordered_map>
+
+struct DpStructureCatalog; // dpmap.h
+
+// The map option of the structure level of datapack worlds (outside of the
+// D_ options of the built-in generator).
+enum { D_DATAPACK_STRUCTS = 1000 };
+
+// The highlighted biomes of a datapack world: one flag per biome of the
+// world (see dp::World::biomes()). Null or empty: no highlight.
+using DatapackHighlights = std::shared_ptr<const std::vector<char>>;
 
 
 struct Level;
@@ -45,8 +57,12 @@ void applyHeightShading(unsigned char *rgb, Range r,
         const Generator *g, const SurfaceNoise *sn, int stepbits, int mode,
         bool bicubic, const std::atomic_bool *abort);
 // Shades rgb from a height grid sampled with sampleHeightGrid() for r.
+// @graytop: the height that the grayscale mode shows as white
 void shadeHeights(unsigned char *rgb, Range r, const std::vector<float>& height,
-        int mode);
+        int mode, float graytop = 255);
+// The height at which the grayscale height map is white: 255, one gray level
+// per block, except for Amplified terrain, which reaches y 320.
+float heightGrayTop(const Generator *g);
 
 struct Scheduled : public QRunnable
 {
@@ -84,8 +100,10 @@ struct Quad : public Scheduled
     int pixs;
     int sopt;
     std::bitset<256> biomeHighlights;
+    DatapackHighlights dpHighlights; // datapack worlds have their own biome ids
     Range r;
 
+    // engine biome ids, or for a datapack world (wi.dp) indices of its biomes
     int *biomes;
     std::vector<float> terrainHeight; // terrain map heights, sampled once
     bool terrainSampled = false;
@@ -96,9 +114,17 @@ struct Quad : public Scheduled
     bool endValid = false;
     bool recolor = false; // colors changed while cached, update when reused
 
+    // datapack worlds: the heights of the height and terrain layers, in the
+    // layout of dpTileHeights() (ocean floor, and the surface with fluids)
+    std::vector<int> dpFloor, dpSurface;
+    // datapack structures: the structures the tile lists (from its level)
+    std::shared_ptr<const std::vector<char>> dpMask;
+
     // img and spos act as an atomic gate (with NULL or non-NULL indicating available results)
     QAtomicPointer<QImage> img;
     QAtomicPointer<std::vector<VarPos>> spos;
+    // the structure starts of a datapack world (valid and unknown ones)
+    QAtomicPointer<std::vector<dp::StructureStart>> dpstarts;
 };
 
 struct QWorld;
@@ -109,6 +135,7 @@ struct Level
 
     void init4map(QWorld *world, int pix, int layerscale);
     void init4struct(QWorld *world, int sopt);
+    void init4datapack(QWorld *world);
 
     void resizeLevel(std::vector<Quad*>& cache, int64_t x, int64_t z, int64_t w, int64_t h);
     void update(std::vector<Quad*>& cache, qreal bx0, qreal bz0, qreal bx1, qreal bz1,
@@ -131,6 +158,8 @@ struct Level
     int sopt;
     double vis;
     std::atomic_bool *isdel;
+    // the structure level of a datapack world: the structures its tiles list
+    std::shared_ptr<const std::vector<char>> dpMask;
 };
 
 struct PosElement
@@ -222,6 +251,11 @@ public:
     void recolorCachedQuads();
     void setBiomeHighlight(int biomeId);
     void setBiomeHighlights(const QVector<int>& biomeIds);
+    // the highlighted biomes of a datapack world, as indices of its biomes
+    void setDatapackHighlights(const std::vector<int>& biomes);
+    // The biome of a datapack world at a block position, as the map shows it
+    // at the current zoom: an index of its biomes, or -1.
+    int getDatapackBiome(Pos p);
 
     void startWorkers();
     void waitForIdle();
@@ -252,6 +286,7 @@ public:
     // which are managed in rectangular sections as levels
     std::vector<Level> lvb;     // levels for biomes
     std::vector<Level> lvs;     // levels for structures
+    Level lvdp;                 // structures of a datapack world
     int activelv;
 
     // processed Quads are cached until they are too far out of view
@@ -270,6 +305,24 @@ public:
     int gridspacing;
     int gridmultiplier;
     std::bitset<256> biomeHighlights;
+    DatapackHighlights dpHighlights;
+    // the sampler of the GUI thread for the biome under the cursor
+    std::unique_ptr<dp::Sampler> dpCursor;
+    // the structures of a datapack world: what they are and which are shown
+    // (one flag per structure of the world, set by the map view)
+    std::shared_ptr<const DpStructureCatalog> dpCatalog;
+    std::vector<char> dpShow;
+    bool dpShowAny = false;
+    // Sets which structures of a datapack world are shown. The structure
+    // tiles keep the starts of the structures that were shown when they were
+    // made; showing one more makes them again.
+    void setDatapackShow(const std::vector<char>& show);
+    // the selected structure start of a datapack world
+    bool dpSelected = false;
+    dp::StructureStart dpSel;
+    // the height of the column under the cursor in a datapack world, as the
+    // height layers show it (dp::NO_HEIGHT if there is none)
+    int getDatapackHeight(Pos p);
 
     // some features such as the world spawn and strongholds will be filled by
     // a designated worker thread once results are done

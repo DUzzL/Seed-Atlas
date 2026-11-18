@@ -1,0 +1,12 @@
+# Worlds of the structure start reference data (worldgen_reference.py --structures):
+# <seed> <grid> ...   grid = <name>:<chunk_x0>,<chunk_z0>,<count_x>,<count_z>,<step>
+# The tool generates the single chunks chunk_x0 + i * step, chunk_z0 + j * step
+# (i < count_x, j < count_z) to full. Vanilla decides the structure starts of
+# the chunks around each of them as well (a ring of about 12 chunks), so a step
+# of 24 covers the whole square around the grid; the data files list the chunks
+# that were covered.
+#
+# main: 360 x 360 chunks (5760 x 5760 blocks) around 0,0. The first stronghold
+# ring (1280 to 2816 blocks from 0,0) reaches into it.
+12345 main:-180,-180,15,15,24
+-42 main:-180,-180,15,15,24

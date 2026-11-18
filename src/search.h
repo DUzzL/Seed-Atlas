@@ -718,7 +718,13 @@ struct SearchThreadEnv
     Generator g;
     SurfaceNoise sn;
 
-    int mc, large;
+    int mc;
+    // The world type as setupGenerator() flags. The climate noises depend
+    // only on 'large' (Amplified has the climate of a default world), which
+    // is what the per-seed setup functions take; the Amplified part lives in
+    // the splines of g.bn, which init() sets up.
+    uint32_t genflags;
+    int large;
     uint64_t seed;
     int surfdim;
     int octaves;
@@ -790,7 +796,10 @@ struct SearchThreadEnv
     SearchThreadEnv();
     ~SearchThreadEnv();
 
-    QString init(int mc, bool large, const ConditionTree& condtree);
+    // @genflags: the world type, as WorldInfo::genFlags()
+    QString init(int mc, uint32_t genflags, const ConditionTree& condtree);
+    // not the Large Biomes option alone: that would drop the other world types
+    QString init(int mc, bool large, const ConditionTree& condtree) = delete;
 
     void setSeed(uint64_t seed);
     void init4Dim(int dim);

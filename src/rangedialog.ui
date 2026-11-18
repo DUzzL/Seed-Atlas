@@ -3,7 +3,7 @@
  <class>RangeDialog</class>
  <widget class="QDialog" name="RangeDialog">
   <property name="windowTitle">
-   <string>Search Range</string>
+   <string>Search range</string>
   </property>
   <property name="windowIcon">
    <iconset resource="../rc/icons.qrc">
@@ -37,7 +37,7 @@
    <item row="0" column="0" colspan="3">
     <widget class="QLabel" name="label">
      <property name="text">
-      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Set a value range for the incremental search. &lt;/p&gt;&lt;p&gt;Bounds are unsigned.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;The incremental search goes through the seeds from the minimum up to the maximum (both included).&lt;/p&gt;&lt;p&gt;Both values are unsigned: negative seeds count as numbers above 9223372036854775807.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
      </property>
     </widget>
    </item>

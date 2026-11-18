@@ -1,10 +1,12 @@
 #include "searchthread.h"
+#include "appactivity.h"
 
 #include "aboutdialog.h"
 #include "formsearchcontrol.h"
 #include "message.h"
 #include "seedtables.h"
 
+#include "datapackworld.h"
 #include "seedatlas-engine/quadbase.h"
 #include "seedatlas-engine/util.h"
 
@@ -32,6 +34,16 @@ void Session::writeHeader(QTextStream& stream)
 
     for (Condition &c : cv)
         stream << "#Cond: " << c.toHex() << "\n";
+    // only sessions with datapack conditions or of a datapack world have
+    // these lines, so that the others stay readable for older versions
+    if (datapack)
+    {
+        stream << "#Datapacks: " << dppacks.join(" | ") << "\n";
+        if (!dpdimension.isEmpty())
+            stream << "#DpDimension: " << dpdimension << "\n";
+    }
+    for (const DpCondition& c : dpcv)
+        stream << c.toLine() << "\n";
     stream.flush();
 }
 
@@ -81,6 +93,9 @@ bool Session::load(QWidget *widget, QTextStream& stream, bool quiet)
             return false;
     }
 
+    // "#Large:" resets the world type (files of older versions have no
+    // "#Amplified" line), so an "#Amplified" line before it is applied at the end
+    int amplifiedLine = -1;
     while (stream.status() == QTextStream::Ok && !stream.atEnd())
     {
         lno++;
@@ -92,8 +107,44 @@ bool Session::load(QWidget *widget, QTextStream& stream, bool quiet)
         if (line.startsWith("#Desc:")) continue;
         if (sc.read(line)) continue;
         if (gen48.read(line)) continue;
-        if (wi.read(line)) continue;
+        if (wi.read(line))
+        {
+            if (line.startsWith("#Amplified:"))
+                amplifiedLine = wi.amplified ? 1 : 0;
+            continue;
+        }
 
+        if (line.startsWith("#Datapacks:"))
+        {
+            datapack = true;
+            dppacks.clear();
+            for (const QString& pack : line.mid(11).split(" | ", Qt::SkipEmptyParts))
+                if (!pack.trimmed().isEmpty())
+                    dppacks.append(pack.trimmed());
+            continue;
+        }
+        if (line.startsWith("#DpDimension:"))
+        {
+            dpdimension = line.mid(13).trimmed();
+            continue;
+        }
+        if (line.startsWith("#DpCond:"))
+        {
+            DpCondition c;
+            if (DpCondition::fromLine(line, &c))
+            {
+                dpcv.push_back(c);
+                continue;
+            }
+            if (quiet)
+                return false;
+            int button = warn(widget, QApplication::tr("Warning"),
+                QApplication::tr("The datapack condition at line %1 cannot be read.").arg(lno),
+                QApplication::tr("Continue anyway?"), QMessageBox::Abort | QMessageBox::Yes);
+            if (button != QMessageBox::Yes)
+                return false;
+            continue;
+        }
         if (line.startsWith("#Cond:"))
         {   // Conditions
             Condition c;
@@ -133,6 +184,15 @@ bool Session::load(QWidget *widget, QTextStream& stream, bool quiet)
             }
         }
     }
+    if (amplifiedLine >= 0)
+    {
+        wi.amplified = amplifiedLine != 0;
+        if (wi.amplified)
+            wi.large = false;
+    }
+    // the lines can come in any order, so the world type is checked against
+    // the version only now (Amplified needs 1.18+)
+    wi.normalize();
     return true;
 }
 
@@ -149,7 +209,7 @@ SearchMaster::SearchMaster(QWidget *parent)
     , env()
     , searchtype()
     , mc()
-    , large()
+    , genflags()
     , condtree()
     , itemsize()
     , threadcnt()
@@ -182,6 +242,63 @@ SearchMaster::~SearchMaster()
 }
 
 bool SearchMaster::set(QWidget *widget, const Session& s)
+{
+    dpsearch.reset();
+    if (s.wi.dp)
+    {   // a datapack world: its own conditions, whole seeds only
+        if (s.sc.searchtype != SEARCH_INC && s.sc.searchtype != SEARCH_LIST)
+        {
+            warn(widget, tr("Datapack worlds are searched seed by seed: choose \"All seeds in "
+                "order\" or \"Seeds from a file\" as the search type."));
+            return false;
+        }
+        if (s.sc.searchtype == SEARCH_INC && !s.slist.empty())
+        {
+            warn(widget, tr("The seed generator (structure seeds) does not apply to datapack "
+                "worlds. Set it to \"Auto\" to search them."));
+            return false;
+        }
+        QString err, warning;
+        std::shared_ptr<const DpSearch> compiled = DpSearch::compile(s.wi.dp, s.dpcv, &err, &warning);
+        if (!compiled)
+        {
+            warn(widget, err);
+            return false;
+        }
+        condtree.set(std::vector<Condition>(), s.wi.mc);
+        dpsearch = compiled;
+    }
+    else
+    {
+        if (!setVanilla(widget, s))
+            return false;
+    }
+
+    this->searchtype = s.sc.searchtype;
+    this->mc = s.wi.mc;
+    this->genflags = s.wi.genFlags();
+    this->itemsize = 1;
+    this->threadcnt = std::min(configuredThreadCount(), std::max(1, s.sc.threads));
+    this->slist = s.slist;
+    this->gen48 = s.gen48;
+    if (dpsearch)
+        this->gen48.mode = GEN48_NONE;
+    this->idx = 0;
+    this->scnt = ~(uint64_t)0;
+    this->prog = 0;
+    this->checked = 0;
+    this->lastchecked = 0;
+    this->seedunits = s.sc.searchtype == SEARCH_INC && s.slist.empty();
+    this->seed = s.sc.startseed;
+    this->smin = s.sc.smin;
+    this->smax = s.sc.smax;
+    this->isdone = false;
+    this->stop = false;
+    this->stoponres = s.sc.stoponres;
+    return true;
+}
+
+bool SearchMaster::setVanilla(QWidget *widget, const Session& s)
 {
     char refbuf[100] = {};
     char disabled[100] = {};
@@ -336,30 +453,13 @@ bool SearchMaster::set(QWidget *widget, const Session& s)
     QString err = condtree.set(s.cv, s.wi.mc);
     if (err.isEmpty())
     {
-        err = env.init(s.wi.mc, s.wi.large, condtree);
+        err = env.init(s.wi.mc, s.wi.genFlags(), condtree);
     }
     if (!err.isEmpty())
     {
         warn(widget, tr("Failed to setup search environment:\n%1").arg(err));
         return false;
     }
-
-    this->searchtype = s.sc.searchtype;
-    this->mc = s.wi.mc;
-    this->large = s.wi.large;
-    this->itemsize = 1;
-    this->threadcnt = std::min(configuredThreadCount(), std::max(1, s.sc.threads));
-    this->slist = s.slist;
-    this->gen48 = s.gen48;
-    this->idx = 0;
-    this->scnt = ~(uint64_t)0;
-    this->prog = 0;
-    this->seed = s.sc.startseed;
-    this->smin = s.sc.smin;
-    this->smax = s.sc.smax;
-    this->isdone = false;
-    this->stop = false;
-    this->stoponres = s.sc.stoponres;
     return true;
 }
 
@@ -739,11 +839,11 @@ void SearchMaster::startSearch()
     // every worker; shorter searches are fast on the CPU anyway.
     gputests = GpuClimateFilter::Tests();
     uint64_t gpumin = (uint64_t) 2 * 0x10000 * std::max(threadcnt, 1);
-    if (searchtype == SEARCH_INC && slist.empty() && scnt >= gpumin &&
+    if (!dpsearch && searchtype == SEARCH_INC && slist.empty() && scnt >= gpumin &&
         GpuClimateFilter::enabled())
         gputests = gpuTestsFor(condtree, mc, env);
 
-    fast48pure = treeFast48IsPure(condtree);
+    fast48pure = !dpsearch && treeFast48IsPure(condtree);
     lowstate.reset();
     if (searchtype == SEARCH_INC && !slist.empty() && fast48pure)
     {
@@ -854,6 +954,7 @@ bool SearchMaster::getProgress(QString *status, uint64_t *prog, uint64_t *end, u
     *min = *avg = *max = nan("");
 
     bool valid = false;
+    uint64_t total = checked;
     for (SearchWorker *worker: workers)
     {
         if (worker->prog < *prog)
@@ -862,7 +963,9 @@ bool SearchMaster::getProgress(QString *status, uint64_t *prog, uint64_t *end, u
             *seed = worker->seed.load(std::memory_order_acquire);
             valid = true;
         }
+        total += worker->itemdone.load(std::memory_order_relaxed);
     }
+    lastchecked = total;
 
     if (isdone)
     {
@@ -875,7 +978,10 @@ bool SearchMaster::getProgress(QString *status, uint64_t *prog, uint64_t *end, u
     enum { SAMPLE_SEC = 20 };
     if (valid)
     {
-        TProg tp = { (uint64_t) progtimer.nsecsElapsed(), *prog };
+        // The position is that of the worker that is furthest behind, which
+        // moves at the speed of one worker while it is inside a large item.
+        // Where the progress counts seeds, the speed is that of all workers.
+        TProg tp = { (uint64_t) progtimer.nsecsElapsed(), seedunits ? total : *prog };
         proghist.push_front(tp);
         while (proghist.size() > 1 && proghist.back().ns < tp.ns - SAMPLE_SEC*1e9)
             proghist.pop_back();
@@ -913,8 +1019,9 @@ bool SearchMaster::getProgress(QString *status, uint64_t *prog, uint64_t *end, u
         *min = samples[n*1/4]; // lower quartile
         *avg = speedtot / weightot; // median
         *max = samples[n*3/4]; // upper quartile
-        if (*avg && has_zeros)
+        if (has_zeros)
         {   // probably a slow sampling regime, use whole range for estimate
+            // (also where the median is zero: less than one seed per update)
             speedtot = 0;
             for (qreal s : samples)
                 speedtot += s;
@@ -979,6 +1086,10 @@ bool SearchMaster::requestItem(SearchWorker *item)
     // GPU batches need large items (of a size the worker chooses), the CPU
     // keeps the adaptive size, which keeps the progress fine-grained
     int itemsize = item->wantgpu && !gputests.empty() ? item->gpuitemsize : this->itemsize;
+
+    // the worker has finished the seeds of its previous item
+    checked += item->scnt;
+    item->itemdone.store(0, std::memory_order_relaxed);
 
     item->prog      = prog;
     item->idx       = idx;
@@ -1215,6 +1326,7 @@ SearchWorker::SearchWorker(SearchMaster *master)
     this->sstart        = master->seed;
     this->scnt          = 0;
     this->seed.store(master->seed);
+    this->itemdone.store(0);
     this->itemkind      = ITEM_SEEDS;
     this->scanns        = 0;
     this->wantgpu       = false;
@@ -1275,10 +1387,81 @@ bool SearchWorker::flushResults()
     return true;
 }
 
+// A search in a datapack world: every seed is generated with the datapack
+// generator (no 48-bit passes, no GPU prefilter). A seed whose test was cut
+// short by a stop is not reported; the stop also keeps the progress of the
+// item from moving on, so a resumed search tests it again.
+void SearchWorker::runDatapack()
+{
+    const DpSearch *dp = master->dpsearch.get();
+    const std::atomic_bool *abort = &master->stop;
+    while (!*env.stop && getNextItem())
+    {
+        if (master->searchtype == SEARCH_LIST)
+        {
+            uint64_t ie = idx+scnt < len ? idx+scnt : len;
+            for (uint64_t i = idx; i < ie && !*env.stop; i++)
+            {
+                if (dp->test(slist[i], abort) == DpSearch::OK)
+                    report(slist[i]);
+                itemdone.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        else
+        {
+            uint64_t s = sstart;
+            for (int i = 0; i < scnt && !*env.stop; i++)
+            {
+                if (dp->test(s, abort) == DpSearch::OK)
+                    report(s);
+                itemdone.fetch_add(1, std::memory_order_relaxed);
+                if (s == ~(uint64_t)0)
+                    break; // done
+                s++;
+            }
+        }
+        flushResults();
+    }
+    releaseDatapackSampler();
+}
+
 int SearchWorker::testSeed(uint64_t s)
 {
     env.setSeed(s);
     return testTreeAt({0, 0}, &env, PASS_FULL_64, nullptr);
+}
+
+bool SearchWorker::clockDue()
+{
+    if (++cpcount < cpstride)
+        return false;
+    cpcount = 0;
+    const qint64 ns = cptimer.nsecsElapsed();
+    const qint64 dt = ns - cpchecked;
+    cpchecked = ns;
+    // seeds that are fast to test share a look at the clock, while a slow
+    // stretch brings it back to every seed at once
+    if (dt > 2000000)
+        cpstride = 1;
+    else if (dt < 100000 && cpstride < 64)
+        cpstride *= 2;
+    return true;
+}
+
+void SearchWorker::itemProgress(uint64_t next)
+{
+    if (cptimer.nsecsElapsed() < 250000000)
+        return;
+    // the results below the new position have to be out first: a search that
+    // stops resumes from the position and would not find them again
+    if (next > seed.load(std::memory_order_relaxed) && flushResults())
+    {
+        QMutexLocker locker(&master->mutex);
+        prog += next - seed.load(std::memory_order_relaxed);
+        seed.store(next, std::memory_order_release);
+    }
+    cptimer.start();
+    cpchecked = 0;
 }
 
 // Incremental search with the GPU prefilter: the GPU removes the seeds that
@@ -1295,6 +1478,7 @@ void SearchWorker::runIncGpu(GpuClimateFilter *gpu)
     QElapsedTimer sincegpu; // CPU time since the GPU was last measured
     double retry = 2e9;     // when to try the GPU again (ns)
     sincegpu.start();
+    cptimer.start();
     wantgpu = true;
 
     while (!*env.stop && getNextItem())
@@ -1307,32 +1491,51 @@ void SearchWorker::runIncGpu(GpuClimateFilter *gpu)
         if (owned && wantgpu)
         {
             if (!forced && cnt > 4096 && (gpuitems % 16 == 0 || cpunsps == 0))
-            {   // a CPU sample to compare with
+            {   // a CPU sample to compare with: up to 2048 seeds, but cut
+                // short after 100 ms, since seeds that are slow to test
+                // would otherwise keep the GPU waiting for minutes
                 const uint32_t ncpu = 2048;
+                uint32_t n = 0;
                 timer.start();
-                for (uint32_t i = 0; i < ncpu && !*env.stop; i++)
-                    if (testSeed(start + i) == COND_OK)
-                        report(start + i);
-                double ns = (double) timer.nsecsElapsed() / ncpu;
-                cpunsps = cpunsps ? 0.5 * (cpunsps + ns) : ns;
-                start += ncpu;
-                cnt -= ncpu;
+                while (n < ncpu && !*env.stop)
+                {
+                    if (testSeed(start + n) == COND_OK)
+                        report(start + n);
+                    n++;
+                    itemdone.store(n, std::memory_order_relaxed);
+                    itemProgress(start + n);
+                    if (timer.nsecsElapsed() > 100000000)
+                        break;
+                }
+                if (n)
+                {
+                    double ns = (double) timer.nsecsElapsed() / n;
+                    cpunsps = cpunsps ? 0.5 * (cpunsps + ns) : ns;
+                }
+                start += n;
+                cnt -= n;
             }
             gpuitems++;
             timer.start();
             passed.clear();
+            const uint32_t sampled = (uint32_t) itemdone.load(std::memory_order_relaxed);
             if (cnt && !*env.stop && !owned->filter(start, cnt, passed))
             {
                 owned.reset(); // the GPU failed: the CPU takes over
             }
             else
             {
-                for (uint64_t s : passed)
+                // (the seeds that passed are in ascending order)
+                const uint64_t rejected = sampled + cnt - passed.size();
+                itemdone.store(rejected, std::memory_order_relaxed);
+                for (size_t j = 0; j < passed.size() && !*env.stop; j++)
                 {
-                    if (*env.stop)
-                        break;
-                    if (testSeed(s) == COND_OK)
-                        report(s);
+                    if (testSeed(passed[j]) == COND_OK)
+                        report(passed[j]);
+                    itemdone.store(rejected + j + 1, std::memory_order_relaxed);
+                    // all seeds up to the next one that passed are done
+                    if (clockDue())
+                        itemProgress(j + 1 < passed.size() ? passed[j + 1] : start + cnt);
                 }
                 if (cnt)
                 {
@@ -1350,9 +1553,15 @@ void SearchWorker::runIncGpu(GpuClimateFilter *gpu)
         if (cnt)
         {   // on the CPU
             timer.start();
+            const uint64_t before = itemdone.load(std::memory_order_relaxed);
             for (uint32_t i = 0; i < cnt && !*env.stop; i++)
+            {
                 if (testSeed(start + i) == COND_OK)
                     report(start + i);
+                itemdone.store(before + i + 1, std::memory_order_relaxed);
+                if (clockDue())
+                    itemProgress(start + i + 1);
+            }
             if (owned)
             {
                 double ns = (double) timer.nsecsElapsed() / cnt;
@@ -1385,9 +1594,16 @@ void SearchWorker::runIncGpu(GpuClimateFilter *gpu)
 
 void SearchWorker::run()
 {
+    BusyActivity busy; // not to be throttled while out of view
     Pos origin = {0,0};
     resbuf.clear();
-    if (!env.init(master->mc, master->large, master->condtree).isEmpty())
+    if (master->dpsearch)
+    {
+        runDatapack();
+        flushResults();
+        return;
+    }
+    if (!env.init(master->mc, master->genflags, master->condtree).isEmpty())
     {
         *env.stop = true;
         return;
@@ -1445,7 +1661,7 @@ void SearchWorker::run()
         if (!slist && !master->gputests.empty())
         {
             GpuClimateFilter *gpu = new GpuClimateFilter;
-            if (gpu->init(master->gputests, master->large))
+            if (gpu->init(master->gputests, (master->genflags & LARGE_BIOMES) != 0))
             {
                 runIncGpu(gpu);
                 break;

@@ -1,4 +1,5 @@
 #include "util.h"
+#include "glyphs.h"
 
 #include "config.h"
 
@@ -177,9 +178,6 @@ int txtWidth(const QFontMetrics& fm, const QString& s)
 {
     return fm.horizontalAdvance(s);
 }
-int txtWidth(const QFontMetrics& fm) { return txtWidth(fm, "#"); }
-int txtWidth(const QFont& f, const QString& s) { return txtWidth(QFontMetrics(f), s); }
-int txtWidth(const QFont& f) { return txtWidth(QFontMetrics(f)); }
 
 RandGen::RandGen()
 {
@@ -505,6 +503,13 @@ QPixmap getPix(QString rc, int width)
     }
 
     return pix;
+}
+
+QIcon getIcon(const QString& name, int width)
+{
+    if (hasGlyph(name))
+        return glyphIcon(name);
+    return QIcon(getPix(name, width));
 }
 
 QIcon getColorIcon(const QColor& col, const QPen& pen)

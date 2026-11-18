@@ -20,6 +20,8 @@ set(HEADERS
 	rng.h
 	util.h
 	quadbase.h
+	strongholds.h
+	eyesearch.h
 )
 set(SOURCES
 	finders.c
@@ -30,6 +32,8 @@ set(SOURCES
 	noise.c
 	util.c
 	quadbase.c
+	strongholds.c
+	eyesearch.c
 )
 
 add_library(objects OBJECT ${SOURCES})

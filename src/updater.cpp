@@ -91,14 +91,14 @@ void showUpdatePrompt(QWidget *parent, Config *config, const QString& version, b
         "until then this copy keeps working.");
 
     QMessageBox message(QMessageBox::Information,
-        QApplication::translate("UpdaterDialog", "Seed Atlas Update"),
+        QApplication::translate("UpdaterDialog", "Seed Atlas update"),
         text, QMessageBox::NoButton, parent);
     QPushButton *downloadButton = message.addButton(
         QApplication::translate("UpdaterDialog", "Download"), QMessageBox::AcceptRole);
     QPushButton *notNowButton = message.addButton(
         QApplication::translate("UpdaterDialog", "Not now"), QMessageBox::RejectRole);
     QCheckBox *doNotAskAgain = new QCheckBox(
-        QApplication::translate("UpdaterDialog", "Do not check for updates at start"), &message);
+        QApplication::translate("UpdaterDialog", "Do not check for updates at startup"), &message);
     message.setCheckBox(doNotAskAgain);
     message.setDefaultButton(downloadButton);
     message.setEscapeButton(notNowButton);
@@ -112,7 +112,7 @@ void showUpdatePrompt(QWidget *parent, Config *config, const QString& version, b
     if (!QDesktopServices::openUrl(kReleaseUrl))
     {
         QMessageBox::warning(parent,
-            QApplication::translate("UpdaterDialog", "Seed Atlas Update"),
+            QApplication::translate("UpdaterDialog", "Seed Atlas update"),
             QApplication::translate(
                 "UpdaterDialog", "The GitHub release page could not be opened:\n%1")
                 .arg(kReleaseUrl.toString()));
@@ -124,7 +124,7 @@ void showCheckError(QWidget *parent, const QString& message, bool quiet)
     if (!quiet)
     {
         QMessageBox::warning(parent,
-            QApplication::translate("UpdaterDialog", "Seed Atlas Update"), message);
+            QApplication::translate("UpdaterDialog", "Seed Atlas update"), message);
     }
 }
 
@@ -133,7 +133,7 @@ void showInformation(QWidget *parent, const QString& message, bool quiet)
     if (!quiet)
     {
         QMessageBox::information(parent,
-            QApplication::translate("UpdaterDialog", "Seed Atlas Update"), message);
+            QApplication::translate("UpdaterDialog", "Seed Atlas update"), message);
     }
 }
 

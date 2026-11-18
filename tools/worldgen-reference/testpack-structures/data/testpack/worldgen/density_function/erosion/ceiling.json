@@ -1,0 +1,23 @@
+{
+  "type": "minecraft:add",
+  "argument1": 0.35,
+  "argument2": {
+    "type": "minecraft:mul",
+    "argument1": 1.2,
+    "argument2": {
+      "type": "minecraft:weird_scaled_sampler",
+      "rarity_value_mapper": "type_2",
+      "noise": "testpack:tube",
+      "input": {
+        "type": "minecraft:mul",
+        "argument1": 3.0,
+        "argument2": {
+          "type": "minecraft:noise",
+          "noise": "testpack:wide",
+          "xz_scale": 1.0,
+          "y_scale": 0.0
+        }
+      }
+    }
+  }
+}

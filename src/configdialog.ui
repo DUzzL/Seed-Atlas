@@ -37,8 +37,11 @@
          <layout class="QGridLayout" name="gridLayout_2">
           <item row="3" column="0" colspan="2">
            <widget class="QLabel" name="label_13">
+            <property name="toolTip">
+             <string>Fixed-width font for code and number fields</string>
+            </property>
             <property name="text">
-             <string>Code font:</string>
+             <string>Monospace font:</string>
             </property>
            </widget>
           </item>
@@ -77,7 +80,7 @@
           <item row="1" column="0" colspan="2">
            <widget class="QLabel" name="label_4">
             <property name="text">
-             <string>GUI style:</string>
+             <string>Theme:</string>
             </property>
            </widget>
           </item>
@@ -174,6 +177,9 @@
           </item>
           <item row="1" column="0">
            <widget class="QLabel" name="labelMatching">
+            <property name="toolTip">
+             <string>The Seed Finder stops adding seeds once the list of matching seeds holds this many</string>
+            </property>
             <property name="text">
              <string>Maximum number of matching seeds:</string>
             </property>
@@ -260,7 +266,7 @@
        <item row="1" column="0">
         <widget class="QGroupBox" name="groupBox_2">
          <property name="title">
-          <string>Map View</string>
+          <string>Map view</string>
          </property>
          <layout class="QGridLayout" name="gridLayout_7">
           <item row="5" column="2" colspan="2">
@@ -269,7 +275,7 @@
           <item row="7" column="0" colspan="4">
            <widget class="QCheckBox" name="checkSmooth">
             <property name="toolTip">
-             <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Simulate inertia for the map view&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+             <string>Let the map keep gliding for a moment after you drag it</string>
             </property>
             <property name="text">
              <string>Smooth map motion</string>
@@ -281,8 +287,11 @@
           </item>
           <item row="6" column="0" colspan="4">
            <widget class="QCheckBox" name="checkBBoxes">
+            <property name="toolTip">
+             <string>When zoomed in, draw a box around structures whose size is known, plus extra markers such as the 128-block circle of quad structures and the links of End gateways</string>
+            </property>
             <property name="text">
-             <string>Outline known bounding boxes</string>
+             <string>Outline structures</string>
             </property>
            </widget>
           </item>
@@ -291,6 +300,9 @@
           </item>
           <item row="4" column="0" colspan="2">
            <widget class="QLabel" name="label_7">
+            <property name="toolTip">
+             <string>Memory used to keep map tiles that were already generated, so panning back is fast</string>
+            </property>
             <property name="text">
              <string>Map cache size:</string>
             </property>
@@ -299,16 +311,19 @@
           <item row="2" column="0" colspan="2">
            <widget class="QLabel" name="label_6">
             <property name="toolTip">
-             <string>Use a fixed grid in blocks instead of outlining the generated map tiles
-Leave blank for the default behaviour</string>
+             <string>Draw the grid every this many blocks instead of along the map tiles.
+Leave it empty for the default grid.</string>
             </property>
             <property name="text">
-             <string>Custom grid spacing:</string>
+             <string>Custom grid spacing (blocks):</string>
             </property>
            </widget>
           </item>
           <item row="3" column="0" colspan="2">
            <widget class="QLabel" name="label_10">
+            <property name="toolTip">
+             <string>When you zoom out so far that the custom grid gets too dense, multiply its spacing by this factor instead of hiding it</string>
+            </property>
             <property name="text">
              <string>Custom grid multiplier:</string>
             </property>
@@ -373,6 +388,9 @@ Leave blank for the default behaviour</string>
           </item>
           <item row="0" column="0" colspan="2">
            <widget class="QLabel" name="label_14">
+            <property name="toolTip">
+             <string>Size of the structure icons on the map and in the layer sidebar (1 = normal)</string>
+            </property>
             <property name="text">
              <string>Icon scale:</string>
             </property>

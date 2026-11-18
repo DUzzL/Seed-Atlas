@@ -151,17 +151,38 @@ void ExtGenConfig::save(QSettings& settings)
     }
 }
 
+QString worldTypeName(int type)
+{
+    switch (type)
+    {
+    case WORLD_LARGE_BIOMES:    return QCoreApplication::translate("WorldType", "Large Biomes");
+    case WORLD_AMPLIFIED:       return QCoreApplication::translate("WorldType", "Amplified");
+    default:                    return QCoreApplication::translate("WorldType", "Default");
+    }
+}
+
+QString worldText(int mc, int type)
+{
+    QString text = mc2str(mc);
+    if (type != WORLD_DEFAULT)
+        text += " " + worldTypeName(type);
+    return text;
+}
+
 bool WorldInfo::equals(const WorldInfo& wi) const
 {
-    return mc == wi.mc && large == wi.large && seed == wi.seed && y == wi.y;
+    return mc == wi.mc && large == wi.large && amplified == wi.amplified
+        && seed == wi.seed && y == wi.y && dp == wi.dp;
 }
 
 void WorldInfo::reset()
 {
     mc = MC_DEFAULT;
     large = false;
+    amplified = false;
     seed = 0;
     y = 255;
+    dp.reset();
 }
 
 void WorldInfo::load(QSettings& settings)
@@ -186,14 +207,19 @@ void WorldInfo::load(QSettings& settings)
             mc = legacy;
     }
     large = settings.value("map/large", large).toBool();
+    // A separate key: versions without Amplified keep reading "map/large".
+    // Settings without the key were written by such a version.
+    amplified = settings.value("map/amplified", false).toBool();
     seed = settings.value("map/seed", (qlonglong)seed).toLongLong();
     y = settings.value("map/y", y).toInt();
+    normalize();
 }
 
 void WorldInfo::save(QSettings& settings)
 {
     settings.setValue("map/mc", mc2str(mc));
     settings.setValue("map/large", large);
+    settings.setValue("map/amplified", amplified);
     settings.setValue("map/seed", (qlonglong)seed);
     settings.setValue("map/y", y);
 }
@@ -212,8 +238,18 @@ bool WorldInfo::read(const QString& line)
         return true;
     }
     if (sscanf(p, "#Large:    %d", &tmp) == 1)
-    {
+    {   // This line names the world type of every file written before
+        // Amplified existed: without an "#Amplified" line after it, the world
+        // is not Amplified, whatever it was before.
         large = tmp;
+        amplified = false;
+        return true;
+    }
+    if (sscanf(p, "#Amplified: %d", &tmp) == 1)
+    {
+        amplified = tmp != 0;
+        if (amplified)
+            large = false;
         return true;
     }
     return false;
@@ -223,6 +259,11 @@ void WorldInfo::write(QTextStream& stream)
 {
     stream << "#MC:       " << mc2str(mc) << "\n";
     stream << "#Large:    " << large << "\n";
+    // Only for an Amplified world, and after "#Large": earlier versions do
+    // not know the line (they report it), so the files of the other world
+    // types stay as they were.
+    if (amplified)
+        stream << "#Amplified: 1\n";
     stream.flush();
 }
 
@@ -325,41 +366,6 @@ const char *mapopt2str(int opt) // to resource string
     case D_GATEWAY:     return "gateway";
     default:            return "";
     }
-}
-
-int str2mapopt(const char *s) // from resource string
-{
-    if (!strcmp(s, "grid"))         return D_GRID;
-    if (!strcmp(s, "slime"))        return D_SLIME;
-    if (!strcmp(s, "desert"))       return D_DESERT;
-    if (!strcmp(s, "jungle"))       return D_JUNGLE;
-    if (!strcmp(s, "igloo"))        return D_IGLOO;
-    if (!strcmp(s, "hut"))          return D_HUT;
-    if (!strcmp(s, "village"))      return D_VILLAGE;
-    if (!strcmp(s, "mansion"))      return D_MANSION;
-    if (!strcmp(s, "monument"))     return D_MONUMENT;
-    if (!strcmp(s, "ruins"))        return D_OCEANRUIN;
-    if (!strcmp(s, "shipwreck"))    return D_SHIPWRECK;
-    if (!strcmp(s, "treasure"))     return D_TREASURE;
-    if (!strcmp(s, "mineshaft"))    return D_MINESHAFT;
-    if (!strcmp(s, "well"))         return D_WELL;
-    if (!strcmp(s, "geode"))        return D_GEODE;
-    if (!strcmp(s, "outpost"))      return D_OUTPOST;
-    if (!strcmp(s, "ancient_city")) return D_ANCIENTCITY;
-    if (!strcmp(s, "trails"))       return D_TRAILRUINS;
-    if (!strcmp(s, "chambers"))     return D_CHAMBERS;
-    if (!strcmp(s, "camp"))         return D_CAMP;
-    if (!strcmp(s, "portal"))       return D_PORTAL;
-    if (!strcmp(s, "portaln"))      return D_PORTALN;
-    if (!strcmp(s, "spawn"))        return D_SPAWN;
-    if (!strcmp(s, "stronghold"))   return D_STRONGHOLD;
-    if (!strcmp(s, "fortress"))     return D_FORTESS;
-    if (!strcmp(s, "bastion"))      return D_BASTION;
-    if (!strcmp(s, "endcity"))      return D_ENDCITY;
-    if (!strcmp(s, "end_ship"))     return D_ENDCITYSHIP;
-    if (!strcmp(s, "gateway"))      return D_GATEWAY;
-    if (!strcmp(s, "orevein"))      return D_OREVEIN;
-    return D_NONE;
 }
 
 int mapopt2stype(int opt)

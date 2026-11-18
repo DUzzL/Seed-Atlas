@@ -23,6 +23,7 @@ public slots:
 public:
     Pos pos;
     QString bname;
+    bool showText = true; // off while a status strip shows the cursor info
 };
 
 class MapView : public QWidget
@@ -58,6 +59,22 @@ public:
     void refreshBiomeColors();
     void setBiomeHighlight(int biomeId);
     void setBiomeHighlights(const QVector<int>& biomeIds);
+    // The highlighted biomes of datapack worlds, by biome id
+    // ("minecraft:plains"). They are kept apart from the highlight of the
+    // built-in biomes and apply to every datapack world that has them.
+    void setDatapackHighlights(const QStringList& biomeIds);
+    QStringList getDatapackHighlights() const { return dpHighlightIds; }
+    // The structures of datapack worlds that are shown, by id. Vanilla
+    // structures that have a map option (villages, ...) follow that option
+    // instead (see dpVanillaStructureOpt()).
+    void setDatapackStructures(const QStringList& ids);
+    QStringList getDatapackStructures() const { return dpStructureIds; }
+    // the structures of the shown datapack world that the map shows, one
+    // flag per structure of the world (empty without a datapack world)
+    std::vector<char> getDatapackStructureMask() const;
+    // A message in the middle of the map while there is no world to show
+    // (e.g. while data packs are loading).
+    void setPlaceholder(const QString& text);
 
     void timeout();
 
@@ -67,13 +84,19 @@ public:
 
     QPixmap screenshot();
 
+    // the biome name and position under the cursor are drawn in the map's
+    // corner unless the window shows them elsewhere (cursorInfoChanged)
+    void setCursorTextVisible(bool visible);
+
 private:
     void settingsToWorld();
+    void reportCursorInfo(const QString& biome, Pos pos, bool hasWorld);
     void runAni();
     void scheduleFrame();
 
 signals:
     void layerChange(int mode, int disp);
+    void cursorInfoChanged(const QString& biome, int x, int z, qreal scale, bool hasWorld);
 
 public slots:
     void mapUpdate();
@@ -116,12 +139,22 @@ private:
     int updatecounter;
     QTimer frameTimer;
     QVector<int> biomeHighlights;
+    QStringList dpHighlightIds;
+    QStringList dpStructureIds;
+    QString placeholder;
+    void applyDatapackHighlights();
 
     std::vector<Shape> shapes;
 
     bool sshow[D_STRUCT_NUM];
     LayerOpt lopt;
     Config config;
+
+    // last values sent with cursorInfoChanged()
+    QString reportedBiome;
+    Pos reportedPos = {0, 0};
+    qreal reportedScale = 0;
+    bool reportedWorld = false;
 };
 
 #endif // MAPVIEW_H

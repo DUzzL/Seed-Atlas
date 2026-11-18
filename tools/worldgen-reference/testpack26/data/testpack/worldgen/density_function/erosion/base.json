@@ -1,0 +1,21 @@
+{
+  "left": {
+    "left": 0.9,
+    "right": "minecraft:overworld/erosion",
+    "type": "minecraft:mul"
+  },
+  "right": {
+    "input": {
+      "left": 1.5,
+      "right": {
+        "noise": "testpack:rough",
+        "type": "minecraft:noise",
+        "xz_scale": 0.4,
+        "y_scale": 0.0
+      },
+      "type": "minecraft:mul"
+    },
+    "type": "minecraft:cube"
+  },
+  "type": "minecraft:add"
+}

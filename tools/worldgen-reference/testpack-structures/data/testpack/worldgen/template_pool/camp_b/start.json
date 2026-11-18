@@ -1,0 +1,32 @@
+{
+  "fallback": "minecraft:empty",
+  "elements": [
+    {
+      "weight": 2,
+      "element": {
+        "element_type": "minecraft:list_pool_element",
+        "projection": "rigid",
+        "elements": [
+          {
+            "element_type": "minecraft:single_pool_element",
+            "location": "testpack:camp/b1",
+            "projection": "rigid",
+            "processors": "minecraft:empty"
+          },
+          {
+            "element_type": "minecraft:single_pool_element",
+            "location": "testpack:camp/b2",
+            "projection": "rigid",
+            "processors": "minecraft:empty"
+          }
+        ]
+      }
+    },
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:empty_pool_element"
+      }
+    }
+  ]
+}

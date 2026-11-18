@@ -6,17 +6,32 @@
    <string>Form</string>
   </property>
   <layout class="QGridLayout" name="gridLayout">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
    <item row="3" column="0">
     <widget class="QLabel" name="label_3">
+     <property name="toolTip">
+      <string>How many positions per seed to test the Seed Finder conditions at. Each position takes the place of the world origin (0, 0) in the conditions.</string>
+     </property>
      <property name="text">
-      <string>Number of samples:</string>
+      <string>Number of positions:</string>
      </property>
     </widget>
    </item>
    <item row="10" column="0" colspan="5">
     <widget class="QLabel" name="labelStatus">
      <property name="text">
-      <string>Idle</string>
+      <string>Ready</string>
      </property>
     </widget>
    </item>
@@ -40,7 +55,7 @@
    <item row="1" column="0">
     <widget class="QLabel" name="label_2">
      <property name="text">
-      <string>Sampling strategy:</string>
+      <string>Sampling pattern:</string>
      </property>
     </widget>
    </item>
@@ -148,6 +163,9 @@
    </item>
    <item row="4" column="0">
     <widget class="QLabel" name="label_4">
+     <property name="toolTip">
+      <string>The block position that the pattern of positions starts from</string>
+     </property>
      <property name="text">
       <string>Centered on:</string>
      </property>
@@ -155,8 +173,11 @@
    </item>
    <item row="2" column="0">
     <widget class="QLabel" name="label">
+     <property name="toolTip">
+      <string>Distance in blocks between neighboring positions. For random samples it is the typical distance from the center (standard deviation).</string>
+     </property>
      <property name="text">
-      <string>Spread (α):</string>
+      <string>Spacing in blocks (α):</string>
      </property>
     </widget>
    </item>
@@ -176,7 +197,7 @@
      </item>
      <item>
       <property name="text">
-       <string>From matching seeds list</string>
+       <string>All matching seeds</string>
       </property>
      </item>
     </widget>

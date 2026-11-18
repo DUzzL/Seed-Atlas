@@ -8,7 +8,10 @@
 #include <QFont>
 #include <QTextStream>
 
+#include <memory>
 #include <vector>
+
+struct DatapackWorld; // datapackworld.h
 
 
 #define APP_STRING "seed-atlas"
@@ -68,16 +71,100 @@ const ExtGenConfig& activeExtGen();
 void applyExtGen(const ExtGenConfig& extgen);
 
 
+// The world type: one of the vanilla world presets. (Other generation
+// options, such as the settings of ExtGenConfig, are independent of it.)
+enum WorldType
+{
+    WORLD_DEFAULT,
+    WORLD_LARGE_BIOMES,
+    WORLD_AMPLIFIED,
+    WORLD_TYPE_NUM,
+};
+
+// Amplified differs from a default world only from 1.18 on: before, it has the
+// same biomes, and there is no terrain model for those versions.
+inline bool worldTypeAvailable(int type, int mc)
+{
+    switch (type)
+    {
+    case WORLD_DEFAULT:         return true;
+    case WORLD_LARGE_BIOMES:    return mc >= MC_1_3;
+    case WORLD_AMPLIFIED:       return mc >= MC_1_18;
+    }
+    return false;
+}
+
+// The setupGenerator() flags of a world type.
+inline uint32_t worldGenFlags(bool large, bool amplified)
+{
+    return (large ? LARGE_BIOMES : 0) | (amplified ? AMPLIFIED : 0);
+}
+
+// The level of the "surface" entry of the map's Y picker: a level above all
+// terrain, where every column has its surface biome. The terrain of a default
+// world ends near y 260 (only a few peaks pass 256), that of an Amplified
+// world reaches the build limit, so y 256 lies inside its tallest mountains.
+// Its level is y 319: the topmost biome cell of the world spans y 316 to 319,
+// there is no biome at y 320.
+inline int surfaceLevel(bool amplified)
+{
+    return amplified ? 319 : 256;
+}
+
+inline int worldTypeOf(bool large, bool amplified)
+{
+    return amplified ? WORLD_AMPLIFIED : large ? WORLD_LARGE_BIOMES : WORLD_DEFAULT;
+}
+
+// The name of a world type as Minecraft shows it ("Large Biomes").
+QString worldTypeName(int type);
+// A version with its world type for status texts: "1.21", "1.21 Amplified".
+QString worldText(int mc, int type);
+
 struct WorldInfo
 {
     int mc;
-    bool large;
+    // The world type: at most one of the two is set (see normalize()). Set up
+    // generators with genFlags(), never from one of them alone.
+    bool large;         // Large Biomes
+    bool amplified;     // Amplified (1.18+)
     uint64_t seed;
     int y;
+    // The datapack world, when data packs are loaded (see datapackworld.h):
+    // the packs, the world preset and the dimension. Null for a world of the
+    // built-in generator, which is all that searches, analyses and sessions
+    // know; it is neither saved nor part of a session.
+    std::shared_ptr<const DatapackWorld> dp;
 
     WorldInfo() { reset(); }
 
     bool equals(const WorldInfo& wi) const;
+    bool datapack() const { return dp != nullptr; }
+
+    // the world type flags for setupGenerator()
+    uint32_t genFlags() const { return worldGenFlags(large, amplified); }
+    int worldType() const { return worldTypeOf(large, amplified); }
+    void setWorldType(int type)
+    {
+        large = type == WORLD_LARGE_BIOMES;
+        amplified = type == WORLD_AMPLIFIED;
+    }
+    // Makes the world type valid: Amplified gives way to Large Biomes if both
+    // are set (vanilla has no such preset) and falls back to the default
+    // world for versions without it. The surface level follows the world
+    // type (see surfaceLevel(); 255 is the level of reset()). Call it wherever
+    // values enter.
+    void normalize()
+    {
+        if (amplified && (large || !worldTypeAvailable(WORLD_AMPLIFIED, mc)))
+            amplified = false;
+        if (dp)
+            return; // the levels of a datapack world are those of its dimension
+        if (amplified && (y == 255 || y == surfaceLevel(false)))
+            y = surfaceLevel(true);
+        else if (!amplified && y == surfaceLevel(true))
+            y = surfaceLevel(false);
+    }
 
     void reset();
     void load(QSettings& settings);
@@ -163,7 +250,6 @@ enum {
 
 QString mapopt2display(int opt);
 const char *mapopt2str(int opt);
-int str2mapopt(const char *s);
 int mapopt2stype(int opt);
 
 struct MapConfig
