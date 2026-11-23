@@ -82,7 +82,9 @@ bool Session::load(QWidget *widget, QTextStream& stream, bool quiet)
         if (button != QMessageBox::Yes)
             return false;
     }
-    else if (cmpVers(major, minor, patch) > 0)
+    // 1.3.0 follows 4.3.dev0 in release order and reads its session format.
+    else if (cmpVers(major, minor, patch) > 0 &&
+             !(major == 4 && (minor < 3 || (minor == 3 && patch == -1))))
     {
         if (quiet)
             return false;
