@@ -2,7 +2,7 @@
 
 The complete corresponding source code of every published Seed Atlas build is
 provided as `Seed-Atlas-<version>-Source.zip` (for example
-`Seed-Atlas-4.3.dev0-Source.zip`), where `<version>` is the version shown in
+`Seed-Atlas-4.3.0-Source.zip`), where `<version>` is the version shown in
 the About dialog and stored in `VERSION.txt`.
 
 The archive is attached to the GitHub release of the build
